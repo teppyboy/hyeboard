@@ -16,9 +16,18 @@ export class CanvasClient {
   }
 
   private async request<T>(path: string): Promise<T> {
-    const response = await fetch(`${CANVAS_BASE}${path}`, { headers: this.headers() });
+    let response: Response;
+    try {
+      response = await fetch(`${CANVAS_BASE}${path}`, { headers: this.headers() });
+    } catch (error) {
+      throw new HyeboardError("CANVAS_REQUEST_FAILED", error instanceof Error ? error.message : "Canvas request failed", 502);
+    }
     if (!response.ok) throw new HyeboardError("CANVAS_REQUEST_FAILED", `Canvas request failed: ${response.status}`, response.status);
-    return response.json() as Promise<T>;
+    try {
+      return await response.json() as T;
+    } catch {
+      throw new HyeboardError("CANVAS_REQUEST_FAILED", "Canvas returned a non-JSON response", 502);
+    }
   }
 
   getDashboardCards() { return this.request<CanvasDashboardCard[]>("/api/v1/dashboard/dashboard_cards"); }

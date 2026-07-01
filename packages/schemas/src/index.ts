@@ -71,9 +71,12 @@ export const classSessionSchema = z.object({
   room: z.string().optional(),
   startTime: z.string(),
   endTime: z.string(),
+  timeLabel: z.string().optional(),
   weekday: z.number().optional(),
   periodStart: z.number().optional(),
   periodEnd: z.number().optional(),
+  canvasCourseId: z.number().optional(),
+  url: z.string().optional(),
   instructor: z.string().optional(),
   type: z.string().optional(),
 });
@@ -118,6 +121,8 @@ export const examSessionSchema = z.object({
   examMethod: z.string().optional(),
   examDate: z.string(),
   startTime: z.string().optional(),
+  examSession: z.number().optional(),
+  examNumber: z.string().optional(),
   room: z.string().optional(),
   termCode: z.string().optional(),
 });
@@ -169,6 +174,7 @@ export const billSchema = z.object({
   remainingAmount: z.number(),
   status: z.string(),
   dueAt: z.string().optional(),
+  paidAt: z.string().optional(),
   invoiceUrl: z.string().optional(),
 });
 
@@ -199,6 +205,7 @@ export const serviceRequestSchema = z.object({
 export const dashboardSummarySchema = z.object({
   student: studentSchema.optional(),
   currentTerm: termSchema.optional(),
+  courseCount: z.object({ inTerm: z.number(), completed: z.number() }).optional(),
   nextClass: classSessionSchema.nullable().optional(),
   todaySchedule: z.array(classSessionSchema),
   courses: z.array(courseSchema),

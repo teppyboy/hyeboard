@@ -30,6 +30,20 @@ export type StudentHubClassSession = {
   type?: string;
 };
 
+export type StudentHubScheduleAlertSession = {
+  sessionStart?: string | number;
+  courseSectionCode?: string;
+  weekDay?: string | number;
+  name?: string;
+  sessionEnd?: string | number;
+  typeLesson?: string;
+  name1?: string;
+  roomName?: string;
+  canvasCourseId?: number;
+};
+
+export type StudentHubCourseCount = { inTerm?: number; completed?: number };
+
 export type StudentHubGrade = {
   pointCode?: string;
   courseCode?: string;
@@ -60,7 +74,9 @@ export type StudentHubExam = {
   examMethod?: string;
   examDate?: string;
   timeStart?: string;
+  examSession?: string | number;
   roomName?: string;
+  examNumber?: string;
 };
 
 export type StudentHubBill = {
@@ -70,10 +86,13 @@ export type StudentHubBill = {
   totalAmount?: number;
   paidAmount?: number;
   remainingAmount?: number;
-  billStatus?: string;
+  billStatus?: string | number;
   paymentStatus?: string;
+  payDate?: string;
   dateEnd?: string;
   termCode?: string;
+  billDescription?: string;
+  parentBillCode?: string;
   invoiceUrl?: string;
   electronicInvoiceUrl?: string;
 };
@@ -84,6 +103,51 @@ export type StudentHubNotificationPage = {
 };
 
 export type StudentHubNews = { id?: string | number; title?: string; date?: string; image?: string; category?: string; link?: string };
+
+export type StudentHubTrainingPointLockAssessment = {
+  studentCode?: string;
+  studentName?: string;
+  className?: string;
+  faculty?: string;
+  status?: string;
+  termCode?: string;
+  totalBase?: number;
+  totalSV?: number;
+  totalBCS?: number;
+  totalCVHT?: number;
+  totalKV?: number;
+  totalCTSV?: number;
+};
+
+export type StudentHubTrainingPointAssessment = {
+  assessmentStatus?: string;
+  canAssess?: boolean;
+  termCode?: string;
+  criteriaAssessmentList?: Array<{
+    name?: string;
+    baseScore?: number;
+    maxScore?: number;
+    orderIndex?: number;
+  }>;
+};
+
+export type StudentHubServiceRequest = {
+  id?: string | number;
+  requestId?: string | number;
+  requestType?: string;
+  requestTypeName?: string;
+  type?: string;
+  title?: string;
+  detail?: string;
+  description?: string;
+  reason?: string;
+  status?: string;
+  statusName?: string;
+  createdAt?: string;
+  createdDate?: string;
+};
+
+export type StudentHubRequestType = { label?: string; value?: string | number };
 
 export type CanvasDashboardCard = {
   id?: string | number;

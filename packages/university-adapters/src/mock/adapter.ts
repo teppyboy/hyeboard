@@ -57,13 +57,13 @@ const terms: Term[] = [
 ];
 
 const courses: Course[] = [
-  { id: "canvas-5359", source: "canvas", code: "INT2204", name: "Web Application Development", credits: 3, instructor: "Dr. Nguyen", progress: 68, status: "active", nextDeadline: addHours(18) },
+  { id: "canvas-5359", source: "canvas", code: "INT2204", name: "Web Application Development", credits: 3, instructor: "Dr. Nguyen", progress: 68, status: "active", nextDeadline: addHours(18), url: "https://portal.uet.vnu.edu.vn/courses/5359" },
   { id: "studenthub-mat1093", source: "studenthub", code: "MAT1093", name: "Linear Algebra", credits: 3, instructor: "Assoc. Prof. Tran", progress: 52, status: "active" },
-  { id: "canvas-int2210", source: "canvas", code: "INT2210", name: "Data Structures and Algorithms", credits: 4, instructor: "Dr. Le", progress: 74, status: "active", nextDeadline: addHours(48) },
+  { id: "canvas-int2210", source: "canvas", code: "INT2210", name: "Data Structures and Algorithms", credits: 4, instructor: "Dr. Le", progress: 74, status: "active", nextDeadline: addHours(48), url: "https://portal.uet.vnu.edu.vn/courses/2210" },
 ];
 
 const timetable: ClassSession[] = [
-  { id: "tkb-1", courseCode: "INT2204", courseName: "Web Application Development", room: "G2-301", startTime: addHours(2), endTime: addHours(4), weekday: 2, instructor: "Dr. Nguyen", type: "lecture" },
+  { id: "tkb-1", courseCode: "INT2204", courseName: "Web Application Development", room: "G2-301", startTime: addHours(2), endTime: addHours(4), timeLabel: "09:50 - 12:30", weekday: 2, periodStart: 4, periodEnd: 6, canvasCourseId: 5359, url: "https://portal.uet.vnu.edu.vn/courses/5359", instructor: "Dr. Nguyen", type: "lecture" },
   { id: "tkb-2", courseCode: "MAT1093", courseName: "Linear Algebra", room: "G3-105", startTime: addHours(25), endTime: addHours(27), weekday: 3, instructor: "Assoc. Prof. Tran", type: "lecture" },
 ];
 
@@ -83,7 +83,7 @@ const grades: Grade[] = [
 const gpa: GpaSummary = { gpa: 3.48, cpa: 3.41, totalCredits: 18, totalAccumulatedCredits: 92, totalCourses: 31, passedProgramCourses: 29 };
 
 const exams: ExamSession[] = [
-  { id: "exam-1", courseCode: "INT2210", courseName: "Data Structures and Algorithms", examDate: addHours(24 * 12), startTime: "08:00", room: "G2-401", examType: "midterm", termCode: "20251" },
+  { id: "exam-1", courseCode: "INT2210", courseName: "Data Structures and Algorithms", examDate: addHours(24 * 12), startTime: addHours(24 * 12), room: "G2-401", examType: "midterm", examMethod: "written", examSession: 1, examNumber: "14", termCode: "20251" },
 ];
 
 const notifications: Notification[] = [
@@ -97,10 +97,11 @@ const tuition: TuitionStatus = {
   remainingAmount: 6500000,
   bills: [
     { id: "bill-1", title: "Tuition 2025-2026 I", totalAmount: 14500000, paidAmount: 8000000, remainingAmount: 6500000, status: "partial", termCode: "20251", dueAt: addHours(24 * 9) },
+    { id: "bill-2", title: "Early payment credit", totalAmount: -500000, paidAmount: 0, remainingAmount: 0, status: "credit", paidAt: addHours(-24 * 4) },
   ],
 };
 
-const news: NewsItem[] = [{ id: "news-1", title: "Academic calendar update", date: addHours(-48), category: "Academic" }];
+const news: NewsItem[] = [{ id: "news-1", title: "Academic calendar update", date: addHours(-48), category: "Academic", url: "https://uet.edu.vn/academic-calendar-update/" }];
 
 export function createMockAdapter(): UniversityAdapter {
   return {
@@ -117,7 +118,7 @@ export function createMockAdapter(): UniversityAdapter {
     async getStudentProfile() { return student; },
     async getTerms() { return terms; },
     async getDashboard(): Promise<DashboardSummary> {
-      return { student, currentTerm: terms[0], nextClass: timetable[0] ?? null, todaySchedule: timetable.slice(0, 1), courses, assignments, grades, gpa, exams, tuition, notifications };
+      return { student, currentTerm: terms[0], courseCount: { inTerm: 3, completed: 24 }, nextClass: timetable[0] ?? null, todaySchedule: timetable.slice(0, 1), courses, assignments, grades, gpa, exams, tuition, notifications };
     },
     async getTimetable() { return timetable; },
     async getCourses() { return courses; },

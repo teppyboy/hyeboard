@@ -3,7 +3,7 @@ import "./styles.css";
 import type { Assignment, Bill, ClassSession, Course, DashboardSummary, DocumentItem, ExamSession, Grade, NewsItem, Notification, ServiceRequest, TrainingPoint } from "@hyeboard/schemas";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, redirect, RouterProvider, useNavigate } from "@tanstack/react-router";
-import { Bell, BookOpen, CalendarDays, CheckCircle2, ClipboardList, ExternalLink, FileText, GraduationCap, KeyRound, LayoutDashboard, LibraryBig, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Receipt, School, Search, Settings, Sun, UserRound, WalletCards } from "lucide-react";
+import { Bell, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ClipboardList, ExternalLink, FileText, GraduationCap, KeyRound, LayoutDashboard, LibraryBig, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Receipt, School, Search, Settings, Sun, UserRound, WalletCards } from "lucide-react";
 import { createContext, StrictMode, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -19,6 +18,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { api, ApiError, clearSessionToken, getSessionToken } from "@/lib/api";
 import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
+
+declare const __HYEB_GIT_COMMIT__: string;
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },
@@ -45,7 +46,25 @@ const nav = [
   { to: "/exams", label: "Exams", icon: LibraryBig },
   { to: "/tuition", label: "Tuition", icon: Receipt },
   { to: "/documents", label: "Documents", icon: FileText },
+  { to: "/training-points", label: "Training Points", icon: CheckCircle2 },
   { to: "/settings", label: "Settings", icon: Settings },
+] as const;
+
+const weekdays = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+  { value: 7, label: "Sun" },
+] as const;
+
+const periodBlocks = [
+  { start: 1, end: 3, label: "07:00 - 09:40" },
+  { start: 4, end: 6, label: "09:50 - 12:30" },
+  { start: 7, end: 9, label: "13:30 - 16:10" },
+  { start: 10, end: 12, label: "16:20 - 19:00" },
 ] as const;
 
 type HyeboardState = ReturnType<typeof useHyeboardState>;
@@ -176,6 +195,11 @@ function ProfileCard({ collapsed = false }: { collapsed?: boolean } = {}) {
   );
 }
 
+function SidebarFooter({ collapsed = false }: { collapsed?: boolean } = {}) {
+  if (collapsed) return <div className="mt-auto" />;
+  return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">Powered by Hyeboard ({__HYEB_GIT_COMMIT__})</p>;
+}
+
 function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
   const state = useHyeboard();
   const university = state.universities.data?.find((item) => item.id === state.universityId);
@@ -189,7 +213,6 @@ function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
         )}
       >
         <p className="truncate text-sm font-semibold tracking-tight">{university?.shortName ?? "Hyeboard"}</p>
-        <p className="truncate text-xs text-muted-foreground">Student command center</p>
       </div>
     </div>
   );
@@ -206,7 +229,7 @@ function RootLayout() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className={cn("app-shell grid min-h-screen", sidebarCollapsed ? "lg:grid-cols-[76px_1fr]" : "lg:grid-cols-[270px_1fr]")}>
-        <aside className="hidden border-r border-border bg-sidebar lg:block">
+        <aside className="hidden min-h-screen border-r border-border bg-sidebar lg:flex lg:flex-col">
           <div className={cn("transition-[padding] duration-300 ease-[var(--ease-out-quint)]", sidebarCollapsed ? "px-0 pb-2" : "flex items-center")}>
             <div className={cn("min-w-0", sidebarCollapsed ? "w-full" : "flex-1")}><BrandMark collapsed={sidebarCollapsed} /></div>
             <Button
@@ -221,6 +244,7 @@ function RootLayout() {
           </div>
           <SidebarNav collapsed={sidebarCollapsed} />
           <ProfileCard collapsed={sidebarCollapsed} />
+          <SidebarFooter collapsed={sidebarCollapsed} />
         </aside>
 
         <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
@@ -387,13 +411,13 @@ function DashboardPage() {
         </div>
         <Card className="animate-card min-w-64">
           <CardHeader className="pb-2"><CardDescription>Next class</CardDescription><CardTitle className="text-2xl">{data?.nextClass?.courseCode ?? "Clear"}</CardTitle></CardHeader>
-          <CardContent><p className="text-sm text-muted-foreground">{data?.nextClass ? formatDateTime(data.nextClass.startTime) : "No upcoming class"}</p></CardContent>
+          <CardContent><p className="text-sm text-muted-foreground">{data?.nextClass ? (data.nextClass.timeLabel ?? formatDateTime(data.nextClass.startTime)) : "No upcoming class"}</p></CardContent>
         </Card>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric title="GPA" value={data?.gpa?.gpa?.toFixed(2) ?? "-"} detail={`CPA ${data?.gpa?.cpa?.toFixed(2) ?? "-"}`} icon={GraduationCap} tone="accent" />
-        <Metric title="Credits" value={String(data?.gpa?.totalAccumulatedCredits ?? "-")} detail={`${data?.gpa?.totalCredits ?? 0} this term`} icon={BookOpen} />
+        <Metric title="Credits" value={String(data?.gpa?.totalAccumulatedCredits ?? "-")} detail={data?.courseCount ? `${data.courseCount.completed} completed · ${data.courseCount.inTerm} this term` : `${data?.gpa?.totalCredits ?? 0} this term`} icon={BookOpen} />
         <Metric title="Assignments" value={String(data?.assignments?.length ?? 0)} detail={`${data?.assignments?.filter((item) => item.status === "missing").length ?? 0} missing`} icon={ClipboardList} />
         <Metric title="Tuition" value={formatCurrency(data?.tuition?.remainingAmount)} detail="remaining balance" icon={WalletCards} />
       </section>
@@ -425,8 +449,77 @@ function DashboardPage() {
 
 function TimetablePage() {
   const state = useHyeboard();
+  const [view, setView] = useState<"calendar" | "list">("calendar");
   const query = useFeatureQuery("timetable", () => api.timetable(state.universityId, state.termCode));
-  return <FeatureFrame title="Timetable" description="Weekly classes from StudentHub." query={query}>{(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <ScheduleItem key={item.id} item={item} />)}</CardContent></Card> : <Empty text="No sessions found for this term." />}</FeatureFrame>;
+  return (
+    <FeatureFrame title="Timetable" description="Weekly StudentHub timetable laid out by verified VNU-UET periods." query={query}>
+      {(items) => items.length ? (
+        <div className="space-y-4">
+          <ViewToggle value={view} onChange={setView} />
+          {view === "calendar" ? <TimetableCalendar items={items} /> : <TimetableList items={items} />}
+        </div>
+      ) : <Empty text="No sessions found for this term." />}
+    </FeatureFrame>
+  );
+}
+
+function ViewToggle<T extends string>({ value, onChange, options = ["list", "calendar"] as T[] }: { value: T; onChange: (value: T) => void; options?: T[] }) {
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      {options.map((option) => <Button key={option} variant={value === option ? "default" : "outline"} size="sm" onClick={() => onChange(option)}>{option[0].toUpperCase() + option.slice(1)}</Button>)}
+    </div>
+  );
+}
+
+function sessionsForBlock(items: ClassSession[], weekday: number, block: { start: number; end: number }) {
+  return items
+    .filter((item) => item.weekday === weekday && (item.periodStart ?? 0) >= block.start && (item.periodStart ?? 0) <= block.end)
+    .sort((a, b) => (a.periodStart ?? 0) - (b.periodStart ?? 0) || a.courseName.localeCompare(b.courseName));
+}
+
+function TimetableCalendar({ items }: { items: ClassSession[] }) {
+  return (
+      <div className="overflow-x-auto rounded-xl border border-border bg-card">
+        <div className="min-w-[980px]">
+          <div className="grid grid-cols-[8.5rem_repeat(7,minmax(0,1fr))] border-b border-border bg-muted/60 text-xs font-medium text-muted-foreground">
+            <div className="px-3 py-3">Period</div>
+            {weekdays.map((day) => <div key={day.value} className="border-l border-border px-3 py-3 text-center">{day.label}</div>)}
+          </div>
+          {periodBlocks.map((block) => (
+            <div key={block.start} className="grid min-h-36 grid-cols-[8.5rem_repeat(7,minmax(0,1fr))] border-b border-border last:border-b-0">
+              <div className="bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+                <p className="font-semibold text-foreground">Period {block.start}-{block.end}</p>
+                <p>{block.label}</p>
+              </div>
+              {weekdays.map((day) => {
+                const sessions = sessionsForBlock(items, day.value, block);
+                return (
+                  <div key={day.value} className="space-y-2 border-l border-border p-2">
+                    {sessions.map((item) => <CalendarSessionCard key={item.id} item={item} />)}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+  );
+}
+
+function TimetableList({ items }: { items: ClassSession[] }) {
+  return <Card><CardContent className="divide-y divide-border p-5">{[...items].sort((a, b) => (a.weekday ?? 0) - (b.weekday ?? 0) || (a.periodStart ?? 0) - (b.periodStart ?? 0)).map((item) => <ScheduleItem key={item.id} item={item} />)}</CardContent></Card>;
+}
+
+function CalendarSessionCard({ item }: { item: ClassSession }) {
+  return (
+    <div className="rounded-lg border border-border bg-background p-2 text-xs">
+      <p className="line-clamp-2 font-medium text-foreground">{item.courseName}</p>
+      <p className="mt-1 text-muted-foreground">{item.courseCode} · {item.type ?? "Class"}</p>
+      <p className="text-muted-foreground">{item.room ?? "No room"}</p>
+      {item.instructor ? <p className="truncate text-muted-foreground">{item.instructor}</p> : null}
+      {item.url ? <a className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline" href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={11} /> Canvas</a> : null}
+    </div>
+  );
 }
 
 function CoursesPage() {
@@ -462,8 +555,31 @@ function summarizeGrades(grades: Grade[]) {
   };
 }
 
+type GradeSortKey = "name" | "credits" | "point10" | "point4";
+type GradeSortState = { key: GradeSortKey; direction: "asc" | "desc" };
+
+function sortGradeValue(grade: Grade, key: GradeSortKey): string | number {
+  if (key === "name") return grade.courseName;
+  if (key === "credits") return grade.credits ?? -1;
+  if (key === "point10") return grade.point10 ?? -1;
+  return grade.point4 ?? -1;
+}
+
+function sortGrades(grades: Grade[], sort: GradeSortState) {
+  return [...grades].sort((a, b) => {
+    const left = sortGradeValue(a, sort.key);
+    const right = sortGradeValue(b, sort.key);
+    const base = typeof left === "number" && typeof right === "number"
+      ? left - right
+      : String(left).localeCompare(String(right));
+    const ordered = sort.direction === "asc" ? base : -base;
+    return ordered || a.courseName.localeCompare(b.courseName);
+  });
+}
+
 function GradesPage() {
   const state = useHyeboard();
+  const [sort, setSort] = useState<GradeSortState>({ key: "name", direction: "asc" });
   const query = useFeatureQuery("grades", () => api.grades(state.universityId));
   const gpa = state.dashboard.data?.gpa;
   return (
@@ -484,6 +600,7 @@ function GradesPage() {
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, grades]) => {
               const summary = summarizeGrades(grades);
               const includesSummer = usesUetTermRules(state.universityId) && grades.some((grade) => grade.termCode && grade.termCode !== term && grade.termCode.endsWith("3"));
+              const sortedGrades = sortGrades(grades, sort);
               return (
               <div key={term} className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -495,7 +612,7 @@ function GradesPage() {
                   <Metric title="Average 10" value={summary.point10?.toFixed(2) ?? "-"} detail="weighted on 10-point scale" />
                   <Metric title="Credits" value={String(summary.credits || "-")} detail="counted in this term" />
                 </div>
-                <DataTable headers={["Course", "Credits", "Point 10", "Point 4"]} rows={grades.map((g) => [g.courseName, String(g.credits ?? "-"), String(g.point10 ?? "-"), String(g.point4 ?? "-")])} />
+                <GradeTable grades={sortedGrades} sort={sort} onSortChange={setSort} universityId={state.universityId} />
               </div>
             );})}
           </div>
@@ -505,10 +622,118 @@ function GradesPage() {
   );
 }
 
+function GradeTable({ grades, sort, onSortChange, universityId }: { grades: Grade[]; sort: GradeSortState; onSortChange: (sort: GradeSortState) => void; universityId: string }) {
+  const headers: Array<{ key: GradeSortKey; label: string; align?: "right" }> = [
+    { key: "name", label: "Course" },
+    { key: "credits", label: "Credits", align: "right" },
+    { key: "point10", label: "Point 10", align: "right" },
+    { key: "point4", label: "Point 4", align: "right" },
+  ];
+  const changeSort = (key: GradeSortKey) => {
+    const direction = sort.key === key && sort.direction === "asc" ? "desc" : "asc";
+    onSortChange({ key, direction });
+  };
+  if (!grades.length) return <Empty text="No rows available." />;
+  return (
+    <div className="overflow-hidden rounded-xl border border-border">
+      <table className="w-full border-collapse text-sm">
+        <thead className="bg-muted text-muted-foreground">
+          <tr>
+            {headers.map((header) => (
+              <th
+                key={header.key}
+                className={cn("px-3 py-2 font-medium", header.align === "right" ? "text-right" : "text-left")}
+                aria-sort={sort.key === header.key ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}
+              >
+                <button type="button" onClick={() => changeSort(header.key)} className={cn("inline-flex items-center gap-1 hover:text-foreground", header.align === "right" && "justify-end")}> 
+                  {header.label}
+                  <span className="text-[10px]">{sort.key === header.key ? (sort.direction === "asc" ? "▲" : "▼") : ""}</span>
+                </button>
+              </th>
+            ))}
+            <th className="px-3 py-2 text-left font-medium">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {grades.map((grade) => (
+            <tr key={grade.id} className="border-t border-border">
+              <td className="px-3 py-2">{grade.courseName}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{grade.credits ?? "-"}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{grade.point10 ?? "-"}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{grade.point4 ?? "-"}</td>
+              <td className="px-3 py-2">{usesUetTermRules(universityId) && grade.termCode?.endsWith("3") ? <Badge className="border border-border bg-background text-foreground">Summer term</Badge> : null}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ExamsPage() {
   const state = useHyeboard();
+  const [view, setView] = useState<"list" | "calendar">("list");
   const query = useFeatureQuery("exams", () => api.exams(state.universityId, state.termCode));
-  return <FeatureFrame title="Exams" description="Exam schedule from StudentHub." query={query}>{(items) => <DataTable headers={["Course", "Type", "Date", "Room"]} rows={items.map((exam) => [exam.courseName, exam.examType ?? "Exam", exam.startTime ? formatDateTime(exam.startTime) : exam.examDate, exam.room ?? "-"])} />}</FeatureFrame>;
+  return (
+    <FeatureFrame title="Exams" description="Exam schedule from StudentHub, including method, session, room, and seat number." query={query}>
+      {(items) => (
+        <div className="space-y-4">
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant={view === "list" ? "default" : "outline"} size="sm" onClick={() => setView("list")}>List</Button>
+            <Button variant={view === "calendar" ? "default" : "outline"} size="sm" onClick={() => setView("calendar")}>Calendar</Button>
+          </div>
+          {view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />}
+        </div>
+      )}
+    </FeatureFrame>
+  );
+}
+
+function examDateKey(exam: ExamSession) {
+  return (exam.startTime ?? exam.examDate).slice(0, 10);
+}
+
+function examTime(exam: ExamSession) {
+  return exam.startTime ? new Date(exam.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "-";
+}
+
+function formatDateOnly(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+}
+
+function ExamList({ items }: { items: ExamSession[] }) {
+  const sorted = [...items].sort((a, b) => (a.startTime ?? a.examDate).localeCompare(b.startTime ?? b.examDate));
+  return <DataTable headers={["Course", "Type", "Method", "Date", "Time", "Session", "Room", "No."]} rows={sorted.map((exam) => [exam.courseName, exam.examType ?? "Exam", exam.examMethod ?? "-", formatDateOnly(exam.examDate), examTime(exam), exam.examSession ? String(exam.examSession) : "-", exam.room ?? "-", exam.examNumber ?? "-"])} />;
+}
+
+function ExamCalendar({ items }: { items: ExamSession[] }) {
+  const groups = items.reduce<Record<string, ExamSession[]>>((acc, exam) => {
+    const key = examDateKey(exam);
+    (acc[key] ??= []).push(exam);
+    return acc;
+  }, {});
+  const days = Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      {days.map(([day, exams]) => (
+        <Card key={day}>
+          <CardHeader className="pb-3"><CardTitle className="text-base">{formatDateOnly(day)}</CardTitle><CardDescription>{exams.length} exam{exams.length > 1 ? "s" : ""}</CardDescription></CardHeader>
+          <CardContent className="divide-y divide-border pt-0">
+            {exams.sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? "")).map((exam) => (
+              <div key={exam.id} className="list-row">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{exam.courseName}</p>
+                  <p className="truncate text-xs text-muted-foreground">{exam.courseCode} · {exam.examMethod ?? exam.examType ?? "Exam"} · {exam.room ?? "No room"}</p>
+                </div>
+                <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{examTime(exam)}</Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
 }
 
 function TuitionPage() {
@@ -518,7 +743,7 @@ function TuitionPage() {
     <FeatureFrame title="Tuition" description="Bills, payment progress, and remaining balance, grouped by term." query={query}>
       {(tuition) => {
         const byTerm = tuition.bills.reduce<Record<string, Bill[]>>((acc, b) => {
-          const key = b.termCode ?? "Other";
+          const key = b.termCode ?? (b.status === "credit" ? "Credits / adjustments" : "Other");
           (acc[key] ??= []).push(b);
           return acc;
         }, {});
@@ -529,11 +754,10 @@ function TuitionPage() {
               <Metric title="Paid" value={formatCurrency(tuition.paidAmount)} detail="received" />
               <Metric title="Remaining" value={formatCurrency(tuition.remainingAmount)} detail="balance" />
             </div>
-            <Progress value={tuition.totalAmount ? Math.round((tuition.paidAmount / tuition.totalAmount) * 100) : 0} />
-            {Object.entries(byTerm).reverse().map(([term, bills]) => (
+            {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, bills]) => (
               <div key={term} className="space-y-2">
                 <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{term}</h2>
-                <DataTable headers={["Bill", "Status", "Due", "Remaining"]} rows={bills.map((b) => [b.title, b.status ?? "-", b.dueAt ? formatDateTime(b.dueAt) : "-", formatCurrency(b.remainingAmount)])} />
+                <DataTable headers={["Bill", "Status", "Paid at", "Total", "Paid", "Remaining"]} rows={bills.map((b) => [b.title, b.status ?? "-", b.paidAt ? formatDateTime(b.paidAt) : "-", formatCurrency(b.totalAmount), formatCurrency(b.paidAmount), formatCurrency(b.remainingAmount)])} />
               </div>
             ))}
           </div>
@@ -547,24 +771,31 @@ function DocumentsPage() {
   const state = useHyeboard();
   const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
   const showDocuments = capabilities?.documents ?? true;
-  const showTrainingPoints = capabilities?.trainingPoints ?? true;
   const showRequests = capabilities?.requests ?? true;
 
   const docs = useFeatureQuery("documents", () => api.documents(state.universityId), { enabled: showDocuments });
   const news = useFeatureQuery("news", () => api.news(state.universityId));
-  const trainingPoints = useFeatureQuery("training-points", () => api.trainingPoints(state.universityId), { enabled: showTrainingPoints });
   const requests = useFeatureQuery("requests", () => api.requests(state.universityId), { enabled: showRequests });
 
   return (
     <div className="space-y-4">
-      <FeatureHeader title="Documents & Services" description="Files, university news, training points, and student services." />
+      <FeatureHeader title="Documents & Services" description="Files, university news, and student services." />
       <div className="grid gap-4 xl:grid-cols-2">
         {showDocuments ? <MiniPanel title="Documents" query={docs}>{(items) => items.map((item) => <DocumentRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title="Documents" />}
-        <MiniPanel title="News" query={news}>{(items) => items.map((item) => <FeedItem key={item.id} title={item.title} detail={item.category ?? item.date ?? "news"} />)}</MiniPanel>
-        {showTrainingPoints ? <MiniPanel title="Training Points" query={trainingPoints}>{(items) => items.map((item) => <TrainingPointRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title="Training Points" />}
+        <MiniPanel title="News" query={news}>{(items) => items.map((item) => <FeedItem key={item.id} title={item.title} detail={item.category ?? item.date ?? "news"} url={item.url} />)}</MiniPanel>
         {showRequests ? <MiniPanel title="Requests" query={requests}>{(items) => items.map((item) => <RequestRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title="Requests" />}
       </div>
     </div>
+  );
+}
+
+function TrainingPointsPage() {
+  const state = useHyeboard();
+  const query = useFeatureQuery("training-points", () => api.trainingPoints(state.universityId));
+  return (
+    <FeatureFrame title="Training Points" description="StudentHub conduct-score criteria and current totals." query={query}>
+      {(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <TrainingPointRow key={item.id} item={item} />)}</CardContent></Card> : <Empty text="No training-point data yet." />}
+    </FeatureFrame>
   );
 }
 
@@ -743,6 +974,13 @@ function SettingsPage() {
                 {state.mode === "dark" ? <><Sun size={14} className="mr-1" />Light</> : <><Moon size={14} className="mr-1" />Dark</>}
               </Button>
             </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm">Theme style</span>
+              <div className="flex rounded-lg border border-border p-1" role="group" aria-label="Theme style">
+                <Button type="button" variant={state.palette === "geist" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("geist")}>Neutral</Button>
+                <Button type="button" variant={state.palette === "uet" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("uet")}>University</Button>
+              </div>
+            </div>
             {state.palette === "uet" ? (
               <div className="flex items-center justify-between">
                 <span className="text-sm">Theme color</span>
@@ -792,7 +1030,18 @@ function FeatureHeader({ title, description }: { title: string; description: str
 }
 
 function MiniPanel<T>({ title, query, children }: { title: string; query: { data?: T[]; error: Error | null; isLoading: boolean }; children: (data: T[]) => ReactNode }) {
-  return <Card className="animate-card"><CardHeader><CardTitle className="text-base">{title}</CardTitle></CardHeader><CardContent className="divide-y divide-border pt-0">{query.isLoading ? <Skeleton className="h-24" /> : query.error ? <p className="py-2 text-sm text-muted-foreground">{query.error.message}</p> : query.data?.length ? children(query.data) : <Empty text="No items yet." />}</CardContent></Card>;
+  const [open, setOpen] = useState(true);
+  return (
+    <Card className="animate-card">
+      <CardHeader className="pb-3">
+        <button type="button" className="flex w-full items-center justify-between gap-3 text-left" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={`Toggle ${title}`}>
+          <CardTitle className="text-base">{title}</CardTitle>
+          <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+        </button>
+      </CardHeader>
+      {open ? <CardContent className="divide-y divide-border pt-0">{query.isLoading ? <Skeleton className="h-24" /> : query.error ? <p className="py-2 text-sm text-muted-foreground">{query.error.message}</p> : query.data?.length ? children(query.data) : <Empty text="No items yet." />}</CardContent> : null}
+    </Card>
+  );
 }
 
 function Metric({ title, value, detail, icon: Icon, tone = "default" }: { title: string; value: string; detail: string; icon?: typeof LayoutDashboard; tone?: "default" | "accent" }) {
@@ -809,14 +1058,15 @@ function Metric({ title, value, detail, icon: Icon, tone = "default" }: { title:
 }
 
 function ScheduleItem({ item }: { item: ClassSession }) {
-  const label = item.periodStart != null
+  const label = item.timeLabel ?? (item.periodStart != null
     ? `Period ${item.periodStart}${item.periodEnd && item.periodEnd !== item.periodStart ? `–${item.periodEnd}` : ""}`
-    : formatDateTime(item.startTime);
+    : formatDateTime(item.startTime));
   return (
     <div className="list-row">
       <div className="min-w-0">
         <p className="truncate font-medium">{item.courseName}</p>
         <p className="truncate text-xs text-muted-foreground">{item.courseCode} · {item.room ?? "No room"} · {item.instructor ?? "Instructor TBD"}</p>
+        {item.url ? <a className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={12} /> Open Canvas class</a> : null}
       </div>
       <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{label}</Badge>
     </div>
@@ -836,15 +1086,21 @@ function AssignmentItem({ item }: { item: Assignment }) {
 }
 
 function CourseCard({ course }: { course: Course }) {
-  return (
-    <div className="rounded-lg border border-border p-4 transition-colors hover:bg-muted/40">
+  const className = "block rounded-lg border border-border p-4 transition-colors hover:bg-muted/40";
+  const content = (
+    <>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0"><p className="truncate text-sm font-semibold">{course.code}</p><p className="truncate text-sm text-muted-foreground">{course.name}</p></div>
         <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{course.status ?? "active"}</Badge>
       </div>
-      <Progress className="mt-4" value={course.progress ?? 50} />
       {course.nextDeadline ? <p className="mt-2 text-xs text-muted-foreground">Next: {formatDateTime(course.nextDeadline)}</p> : null}
-    </div>
+      {course.url ? <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary"><ExternalLink size={12} /> Open Canvas course</p> : null}
+    </>
+  );
+  return course.url ? (
+    <a className={className} href={course.url} target="_blank" rel="noreferrer">{content}</a>
+  ) : (
+    <div className={className}>{content}</div>
   );
 }
 
@@ -861,12 +1117,13 @@ function RequestRow({ item }: { item: ServiceRequest }) {
   return <FeedItem title={item.title} detail={item.status ?? item.type ?? "request"} />;
 }
 
-function FeedItem({ title, detail }: { title: string; detail: string }) {
+function FeedItem({ title, detail, url }: { title: string; detail: string; url?: string }) {
+  const titleNode = url ? <a href={url} target="_blank" rel="noreferrer" className="hover:underline">{title}</a> : title;
   return (
     <div className="list-row">
       <div className="flex min-w-0 items-start gap-3">
         <CheckCircle2 className="mt-0.5 shrink-0 text-primary" size={16} />
-        <div className="min-w-0"><p className="truncate text-sm font-medium">{title}</p><p className="truncate text-xs text-muted-foreground">{detail}</p></div>
+        <div className="min-w-0"><p className="truncate text-sm font-medium">{titleNode}</p><p className="truncate text-xs text-muted-foreground">{detail}</p></div>
       </div>
     </div>
   );
@@ -894,7 +1151,7 @@ function CanvasRequired({ message }: { message: string }) {
 }
 
 function QueryErrorPanel({ error }: { error: Error }) {
-  return error instanceof ApiError && error.code === "CANVAS_LOGIN_REQUIRED"
+  return error instanceof ApiError && error.code?.startsWith("CANVAS_")
     ? <CanvasRequired message={error.message} />
     : <LoginNeeded message={error.message} />;
 }
@@ -925,6 +1182,7 @@ const routeTree = rootRoute.addChildren([
     createRoute({ getParentRoute: () => appRoute, path: "/exams", component: ExamsPage }),
     createRoute({ getParentRoute: () => appRoute, path: "/tuition", component: TuitionPage }),
     createRoute({ getParentRoute: () => appRoute, path: "/documents", component: DocumentsPage }),
+    createRoute({ getParentRoute: () => appRoute, path: "/training-points", component: TrainingPointsPage }),
     createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsPage }),
   ]),
 ]);

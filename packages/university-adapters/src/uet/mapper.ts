@@ -1,6 +1,6 @@
 import { combineDateTime } from "@hyeboard/core";
-import type { Assignment, Bill, ClassSession, Course, ExamSession, Grade, GpaSummary, NewsItem, Notification, Student, Term, TuitionStatus } from "@hyeboard/schemas";
-import type { CanvasAssignment, CanvasDashboardCard, CanvasPlannerItem, StudentHubBill, StudentHubClassSession, StudentHubExam, StudentHubGpa, StudentHubGrade, StudentHubNews, StudentHubNotificationPage, StudentHubStudent, StudentHubTerm } from "./types";
+import type { Assignment, Bill, ClassSession, Course, ExamSession, Grade, GpaSummary, NewsItem, Notification, ServiceRequest, Student, Term, TrainingPoint, TuitionStatus } from "@hyeboard/schemas";
+import type { CanvasAssignment, CanvasDashboardCard, CanvasPlannerItem, StudentHubBill, StudentHubClassSession, StudentHubExam, StudentHubGpa, StudentHubGrade, StudentHubNews, StudentHubNotificationPage, StudentHubScheduleAlertSession, StudentHubServiceRequest, StudentHubStudent, StudentHubTerm, StudentHubTrainingPointAssessment, StudentHubTrainingPointLockAssessment } from "./types";
 
 const toNumber = (value: unknown): number | undefined => {
   if (typeof value === "number") return value;
@@ -11,10 +11,23 @@ const toNumber = (value: unknown): number | undefined => {
   return undefined;
 };
 
+function formatPersonName(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed !== trimmed.toLocaleUpperCase("vi-VN")) return trimmed;
+  return trimmed
+    .toLocaleLowerCase("vi-VN")
+    .replace(/(^|[\s-])(\p{L})/gu, (_match, prefix: string, letter: string) => `${prefix}${letter.toLocaleUpperCase("vi-VN")}`);
+}
+
+function formatInstructorList(value?: string): string | undefined {
+  return value?.split(";").map((item) => formatPersonName(item)).filter(Boolean).join(", ") || undefined;
+}
+
 export function mapStudent(input: StudentHubStudent): Student {
   return {
     id: String(input.id ?? input.studentCode ?? input.personCode ?? "uet-student"),
-    fullName: input.name ?? "UET Student",
+    fullName: formatPersonName(input.name) ?? "UET Student",
     universityId: "uet",
     studentCode: input.studentCode,
     email: input.schoolEmail ?? input.email,
@@ -52,15 +65,23 @@ function resolveSessionDate(weekday?: number): string {
 }
 
 // StudentHub's sessionStart/sessionEnd are "tiet hoc" (class period) ordinals, not
-// clock hours - real samples include sessionStart:4 and sessionStart:10 for the
-// same student, which cannot be literal hours (a 4am class). No verified
-// period-to-clock-time table exists for UET (checked HAR traffic and public web
-// search, found nothing citable), so we deliberately do NOT fabricate a precise
-// clock time for display. `periodStart`/`periodEnd` are exposed on ClassSession so
-// the UI can render an honest "Period 10-12" label; startTime/endTime still need
-// *some* ISO value to satisfy the schema and to sort sessions within a day, so we
-// derive an internal-only proxy hour from the period number that is never shown
-// to the user (UI prefers periodStart/periodEnd when present).
+// clock hours. The timetable page itself publishes the VNU-UET period table:
+// 1-3 = 07:00-09:40, 4-6 = 09:50-12:30, 7-9 = 13:30-16:10, 10-12 = 16:20-19:00.
+// Keep periodStart/periodEnd for auditability, and expose a display-ready
+// timeLabel when the period range is one of the verified ranges.
+const periodTimeRanges = new Map<string, { start: string; end: string }>([
+  ["1-3", { start: "07:00:00", end: "09:40:00" }],
+  ["4-6", { start: "09:50:00", end: "12:30:00" }],
+  ["7-9", { start: "13:30:00", end: "16:10:00" }],
+  ["10-12", { start: "16:20:00", end: "19:00:00" }],
+]);
+
+function periodRange(periodStart?: number, periodEnd?: number): { start: string; end: string; label: string } | undefined {
+  if (periodStart == null || periodEnd == null) return undefined;
+  const range = periodTimeRanges.get(`${periodStart}-${periodEnd}`);
+  return range ? { ...range, label: `${range.start.slice(0, 5)} - ${range.end.slice(0, 5)}` } : undefined;
+}
+
 function clampHour(hour: number): number {
   return Math.min(23, Math.max(0, hour));
 }
@@ -70,6 +91,7 @@ export function mapStudentHubClass(input: StudentHubClassSession): ClassSession 
   const periodEnd = toNumber(input.sessionEnd);
   const weekday = toNumber(input.weekday);
   const date = resolveSessionDate(weekday);
+  const verifiedRange = periodRange(periodStart, periodEnd);
   const sortStartHour = clampHour(6 + (periodStart ?? 1));
   const sortEndHour = clampHour(Math.max(sortStartHour + 1, 6 + (periodEnd ?? (periodStart ?? 1) + 1)));
   return {
@@ -77,13 +99,39 @@ export function mapStudentHubClass(input: StudentHubClassSession): ClassSession 
     courseCode: input.courseCode ?? "UET",
     courseName: input.courseName ?? "Class session",
     room: input.roomName ?? input.roomCode,
-    startTime: combineDateTime(date, `${String(sortStartHour).padStart(2, "0")}:00:00`),
-    endTime: combineDateTime(date, `${String(sortEndHour).padStart(2, "0")}:00:00`),
+    startTime: combineDateTime(date, verifiedRange?.start ?? `${String(sortStartHour).padStart(2, "0")}:00:00`),
+    endTime: combineDateTime(date, verifiedRange?.end ?? `${String(sortEndHour).padStart(2, "0")}:00:00`),
+    timeLabel: verifiedRange?.label,
     weekday,
     periodStart,
     periodEnd,
-    instructor: input.staffCode1,
+    instructor: formatInstructorList(input.staffCode1),
     type: input.type,
+  };
+}
+
+export function mapStudentHubScheduleAlert(input: StudentHubScheduleAlertSession, date: string): ClassSession {
+  const periodStart = toNumber(input.sessionStart);
+  const periodEnd = toNumber(input.sessionEnd);
+  const weekday = toNumber(input.weekDay);
+  const verifiedRange = periodRange(periodStart, periodEnd);
+  const sortStartHour = clampHour(6 + (periodStart ?? 1));
+  const sortEndHour = clampHour(Math.max(sortStartHour + 1, 6 + (periodEnd ?? (periodStart ?? 1) + 1)));
+  return {
+    id: input.courseSectionCode ?? `${input.name}-${input.weekDay}-${input.sessionStart}`,
+    courseCode: input.courseSectionCode?.split("_").at(1)?.split(" ").at(0) ?? "UET",
+    courseName: input.name ?? "Class session",
+    room: input.roomName,
+    startTime: combineDateTime(date, verifiedRange?.start ?? `${String(sortStartHour).padStart(2, "0")}:00:00`),
+    endTime: combineDateTime(date, verifiedRange?.end ?? `${String(sortEndHour).padStart(2, "0")}:00:00`),
+    timeLabel: verifiedRange?.label,
+    weekday,
+    periodStart,
+    periodEnd,
+    canvasCourseId: input.canvasCourseId,
+    url: input.canvasCourseId ? `https://portal.uet.vnu.edu.vn/courses/${input.canvasCourseId}` : undefined,
+    instructor: formatInstructorList(input.name1),
+    type: input.typeLesson,
   };
 }
 
@@ -111,29 +159,54 @@ export function mapStudentHubGpa(input: StudentHubGpa): GpaSummary {
 }
 
 export function mapStudentHubExam(input: StudentHubExam): ExamSession {
+  const examDate = input.examDate ?? new Date().toISOString();
+  const timeStart = input.timeStart?.match(/^\d{1,2}:\d{2}$/) ? `${input.timeStart}:00` : input.timeStart;
   return {
     id: input.courseSectionCode ?? `${input.courseCode}-${input.examDate}`,
     courseCode: input.courseCode ?? "UET",
     courseName: input.courseName ?? "Exam",
     examType: input.examType,
     examMethod: input.examMethod,
-    examDate: input.examDate ?? new Date().toISOString(),
-    startTime: input.timeStart,
+    examDate,
+    startTime: timeStart ? combineDateTime(examDate.slice(0, 10), timeStart) : undefined,
+    examSession: toNumber(input.examSession),
+    examNumber: input.examNumber,
     room: input.roomName,
     termCode: input.termCode,
   };
 }
 
+function parseStudentHubPayDate(value?: string): string | undefined {
+  if (!value || !/^\d{14}$/.test(value)) return undefined;
+  const date = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+  const time = `${value.slice(8, 10)}:${value.slice(10, 12)}:${value.slice(12, 14)}`;
+  return combineDateTime(date, time);
+}
+
+function billStatus(input: StudentHubBill): string {
+  const total = input.totalAmount ?? 0;
+  const paid = input.paidAmount ?? 0;
+  const remaining = input.remainingAmount ?? 0;
+  const rawStatus = String(input.billStatus ?? input.paymentStatus ?? "");
+  if (total < 0) return "credit";
+  if (remaining <= 0 && (paid > 0 || rawStatus === "1")) return "paid";
+  if (paid > 0 && remaining > 0) return "partial";
+  if (total > 0) return "unpaid";
+  return rawStatus || "unknown";
+}
+
 export function mapStudentHubBill(input: StudentHubBill): Bill {
+  const title = input.billTitle?.trim() || input.billDescription?.trim() || input.billCode || input.parentBillCode || "Tuition bill";
   return {
     id: input.billDetailCode ?? input.billCode ?? crypto.randomUUID(),
-    title: input.billTitle ?? "Tuition bill",
+    title,
     termCode: input.termCode,
     totalAmount: input.totalAmount ?? 0,
     paidAmount: input.paidAmount ?? 0,
     remainingAmount: input.remainingAmount ?? 0,
-    status: input.paymentStatus ?? input.billStatus ?? "unknown",
+    status: billStatus(input),
     dueAt: input.dateEnd,
+    paidAt: parseStudentHubPayDate(input.payDate),
     invoiceUrl: input.invoiceUrl ?? input.electronicInvoiceUrl,
   };
 }
@@ -141,9 +214,9 @@ export function mapStudentHubBill(input: StudentHubBill): Bill {
 export function mapTuition(inputs: StudentHubBill[]): TuitionStatus {
   const bills = inputs.map(mapStudentHubBill);
   return bills.reduce<TuitionStatus>((total, bill) => ({
-    totalAmount: total.totalAmount + bill.totalAmount,
-    paidAmount: total.paidAmount + bill.paidAmount,
-    remainingAmount: total.remainingAmount + bill.remainingAmount,
+    totalAmount: total.totalAmount + Math.max(0, bill.totalAmount),
+    paidAmount: total.paidAmount + Math.max(0, bill.paidAmount),
+    remainingAmount: total.remainingAmount + Math.max(0, bill.remainingAmount),
     bills: [...total.bills, bill],
   }), { totalAmount: 0, paidAmount: 0, remainingAmount: 0, bills: [] });
 }
@@ -170,14 +243,47 @@ export function mapStudentHubNews(input: StudentHubNews): NewsItem {
   };
 }
 
+export function mapTrainingPoints(assessment: StudentHubTrainingPointAssessment, locked?: StudentHubTrainingPointLockAssessment): TrainingPoint[] {
+  const termCode = locked?.termCode ?? assessment.termCode;
+  const totals: TrainingPoint[] = locked ? [{
+    id: `uet-training-total-${termCode ?? "current"}`,
+    title: "Final training score",
+    termCode,
+    score: locked.totalCTSV ?? locked.totalKV ?? locked.totalCVHT ?? locked.totalBCS ?? locked.totalSV ?? locked.totalBase ?? null,
+    maxScore: 100,
+    locked: locked.status === "LOCKED" || assessment.assessmentStatus === "LOCKED",
+  }] : [];
+  const criteria = (assessment.criteriaAssessmentList ?? []).map((item, index) => ({
+    id: `uet-training-${termCode ?? "current"}-${item.orderIndex ?? index}`,
+    title: item.name ?? `Criteria ${index + 1}`,
+    termCode,
+    score: item.baseScore ?? null,
+    maxScore: item.maxScore ?? null,
+    locked: assessment.assessmentStatus === "LOCKED" || !assessment.canAssess,
+  }));
+  return [...totals, ...criteria];
+}
+
+export function mapStudentHubRequest(input: StudentHubServiceRequest, index: number): ServiceRequest {
+  return {
+    id: String(input.id ?? input.requestId ?? index),
+    title: input.title ?? input.requestTypeName ?? input.requestType ?? input.type ?? "Student request",
+    type: input.requestTypeName ?? input.requestType ?? input.type,
+    status: input.statusName ?? input.status,
+    createdAt: input.createdAt ?? input.createdDate,
+  };
+}
+
 export function mapCanvasCourse(input: CanvasDashboardCard): Course {
+  const rawHref = input.href;
+  const href = rawHref?.startsWith("http") ? rawHref : rawHref ? `https://portal.uet.vnu.edu.vn${rawHref.startsWith("/") ? rawHref : `/${rawHref}`}` : undefined;
   return {
     id: `canvas-${input.id ?? input.courseCode ?? input.shortName}`,
     source: "canvas",
     code: input.courseCode ?? input.shortName ?? "CANVAS",
     name: input.longName ?? input.originalName ?? input.shortName ?? "Canvas course",
     status: input.enrollmentState === "active" ? "active" : undefined,
-    url: input.href,
+    url: href,
   };
 }
 

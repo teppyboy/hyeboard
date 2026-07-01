@@ -73,6 +73,8 @@ test("friendly demo login opens dashboard", async ({ page }) => {
   await loginDemo(page);
   await expect(page.getByText("React Router Lab")).toBeVisible();
   await expect(page.getByText("Web Application Development").first()).toBeVisible();
+  await expect(page.getByText("09:50 - 12:30").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Canvas class" })).toHaveAttribute("href", "https://portal.uet.vnu.edu.vn/courses/5359");
 });
 
 test("light and dark mode toggle changes rendered theme", async ({ page }) => {
@@ -85,26 +87,34 @@ test("light and dark mode toggle changes rendered theme", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("data-mode", "light");
 });
 
-test("settings shows a theme color picker only for the VNU-UET palette", async ({ page }) => {
+test("settings can switch between neutral and university theme styles", async ({ page }) => {
   await loginDemo(page);
   await page.goto("/settings");
+  await expect(page.getByRole("group", { name: "Theme style" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Neutral" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "University" })).toBeVisible();
   await expect(page.getByRole("group", { name: "Theme color" })).toHaveCount(0);
 
-  await page.evaluate(() => localStorage.setItem("hyeboard.palette", "uet"));
-  await page.reload();
+  await page.getByRole("button", { name: "University" }).click();
   const group = page.getByRole("group", { name: "Theme color" });
   await expect(group).toBeVisible();
   const greenSwatch = page.getByRole("button", { name: "Green" });
   await greenSwatch.click();
   await expect(greenSwatch).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("html")).toHaveCSS("--primary", "152 88% 28%");
+  await page.getByRole("button", { name: "Neutral" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "geist");
+  await expect(page.getByRole("group", { name: "Theme color" })).toHaveCount(0);
 });
 
 test("sidebar collapses and expands via toggle button", async ({ page }) => {
   await loginDemo(page);
   await expect(page.getByText("Demo", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Powered by Hyeboard \(/)).toBeVisible();
+  await expect(page.getByText("Student command center")).toHaveCount(0);
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await expect(page.getByText("Demo", { exact: true })).toBeHidden();
+  await expect(page.getByText(/Powered by Hyeboard \(/)).toBeHidden();
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
   await page.waitForTimeout(350);
   const logoBox = await page.locator("aside [data-testid='brand-icon']").boundingBox();
@@ -155,18 +165,23 @@ test("grades merge summer term into term two and show term GPA", async ({ page }
   await expect(page.getByText("Signals and Systems")).toBeVisible();
   await expect(page.getByText("Term GPA").first()).toBeVisible();
   await expect(page.getByText("3.40")).toBeVisible();
+  await page.getByRole("button", { name: "Point 10" }).first().click();
+  await expect(page.getByRole("columnheader", { name: /Point 10/ }).first()).toHaveAttribute("aria-sort", "ascending");
+  await page.getByRole("button", { name: "Point 10" }).first().click();
+  await expect(page.getByRole("columnheader", { name: /Point 10/ }).first()).toHaveAttribute("aria-sort", "descending");
 });
 
 test("feature routes render UI instead of JSON dumps", async ({ page }) => {
   await loginDemo(page);
   const routes = [
-    ["/timetable", "Timetable", "Linear Algebra"],
+    ["/timetable", "Timetable", "Period 4-6"],
     ["/courses", "Courses", "Data Structures and Algorithms"],
     ["/assignments", "Assignments", "Graph traversal quiz"],
     ["/grades", "Grades", "Transcript and GPA summary"],
-    ["/exams", "Exams", "Exam schedule"],
-    ["/tuition", "Tuition", "Bills, payment progress"],
+    ["/exams", "Exams", "Data Structures and Algorithms"],
+    ["/tuition", "Tuition", "Early payment credit"],
     ["/documents", "Documents & Services", "Course outline.pdf"],
+    ["/training-points", "Training Points", "Semester training points"],
   ] as const;
 
   for (const [path, heading, text] of routes) {
@@ -175,4 +190,20 @@ test("feature routes render UI instead of JSON dumps", async ({ page }) => {
     await expect(page.getByText(text).first()).toBeVisible();
     await expect(page.locator("pre")).toHaveCount(0);
   }
+
+  await page.goto("/documents");
+  await expect(page.getByText("Transcript request")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Academic calendar update" })).toHaveAttribute("href", "https://uet.edu.vn/academic-calendar-update/");
+  await page.getByRole("button", { name: "Toggle News" }).click();
+  await expect(page.getByRole("link", { name: "Academic calendar update" })).toBeHidden();
+
+  await page.goto("/courses");
+  await expect(page.locator(".bg-primary.transition-all")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Open Canvas course/ }).first()).toHaveAttribute("href", /portal\.uet\.vnu\.edu\.vn\/courses/);
+
+  await page.goto("/exams");
+  await expect(page.getByRole("button", { name: "Calendar" })).toBeVisible();
+  await page.getByRole("button", { name: "Calendar" }).click();
+  await expect(page.getByText("written")).toBeVisible();
+  await expect(page.getByText(/07:00 AM/)).toHaveCount(0);
 });

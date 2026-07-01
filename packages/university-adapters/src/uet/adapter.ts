@@ -1,7 +1,7 @@
 import { addHours, assertSupported, HyeboardError, type EncryptedSessionPayload } from "@hyeboard/core";
 import type { ClassSession, DashboardSummary, University } from "@hyeboard/schemas";
 import { CanvasClient } from "./canvas-client";
-import { mapCanvasCourse, mapCanvasMissingSubmission, mapCanvasPlannerItem, mapStudent, mapStudentHubBill, mapStudentHubClass, mapStudentHubExam, mapStudentHubGpa, mapStudentHubGrade, mapStudentHubNews, mapStudentHubNotifications, mapTerm, mapTuition } from "./mapper";
+import { mapCanvasCourse, mapCanvasMissingSubmission, mapCanvasPlannerItem, mapStudent, mapStudentHubBill, mapStudentHubClass, mapStudentHubExam, mapStudentHubGpa, mapStudentHubGrade, mapStudentHubNews, mapStudentHubNotifications, mapStudentHubRequest, mapStudentHubScheduleAlert, mapTerm, mapTrainingPoints, mapTuition } from "./mapper";
 import { StudentHubClient } from "./studenthub-client";
 import type { AdapterRequest, ImportedSession, LoginImportInput, UniversityAdapter } from "../types";
 
@@ -23,13 +23,8 @@ const university: University = {
     documents: false,
     tuition: true,
     news: true,
-    // No verified StudentHub response shape exists for training-points/requests
-    // (only the endpoint paths were identified from HAR research, never the
-    // payload shape). Rather than keep presenting hardcoded placeholder rows as
-    // real student data, these are declared unsupported until implemented for
-    // real, matching the attendance/documents pattern.
-    trainingPoints: false,
-    requests: false,
+    trainingPoints: true,
+    requests: true,
   },
 };
 
@@ -62,16 +57,36 @@ function isoWeekdayToday(): number {
   return day === 0 ? 7 : day;
 }
 
-function nextUpcomingSession(timetable: ClassSession[], todayWeekday: number): ClassSession | undefined {
+function nextUpcomingSession(timetable: ClassSession[], now = new Date()): ClassSession | undefined {
   if (!timetable.length) return undefined;
-  const sorted = [...timetable].sort((a, b) => {
-    const aOffset = ((a.weekday ?? todayWeekday) - todayWeekday + 7) % 7;
-    const bOffset = ((b.weekday ?? todayWeekday) - todayWeekday + 7) % 7;
-    if (aOffset !== bOffset) return aOffset - bOffset;
-    return (a.periodStart ?? 0) - (b.periodStart ?? 0);
-  });
-  return sorted[0];
+  const occurrence = (session: ClassSession) => {
+    const start = new Date(session.startTime);
+    if (Number.isNaN(start.getTime())) return Number.POSITIVE_INFINITY;
+    while (start <= now) start.setDate(start.getDate() + 7);
+    return start.getTime();
+  };
+  return [...timetable].sort((a, b) => occurrence(a) - occurrence(b))[0];
 }
+
+function futureSession(sessions: ClassSession[], now = new Date()): ClassSession | undefined {
+  return sessions.find((session) => new Date(session.startTime) > now);
+}
+
+function canvasFeatureError(error: unknown): never {
+  const message = error instanceof HyeboardError ? error.message : "Canvas data could not be loaded.";
+  throw new HyeboardError("CANVAS_UPSTREAM_UNAVAILABLE", `${message} Add or refresh your Canvas access token from the login page.`, 409);
+}
+
+function todayInVietnam(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+const flattenScheduleAlert = (items: Awaited<ReturnType<StudentHubClient["getScheduleAlert"]>>): ClassSession[] => items.flatMap((group) => group.map((item) => mapStudentHubScheduleAlert(item, todayInVietnam())));
 
 export function createUetAdapter(): UniversityAdapter {
   return {
@@ -110,10 +125,13 @@ export function createUetAdapter(): UniversityAdapter {
     async getStudentProfile(request) { return mapStudent(await studenthub(request).getProfile()); },
     async getTerms(request) { return (await studenthub(request).getTerms()).map(mapTerm); },
     async getDashboard(request): Promise<DashboardSummary> {
-      const [studentR, termsR, timetableR, coursesR, assignmentsR, gradesR, gpaR, examsR, tuitionR, notificationsR] = await Promise.allSettled([
+      const today = todayInVietnam();
+      const [studentR, termsR, timetableR, todayScheduleR, courseCountR, coursesR, assignmentsR, gradesR, gpaR, examsR, tuitionR, notificationsR] = await Promise.allSettled([
         this.getStudentProfile(request),
         this.getTerms(request),
         this.getTimetable(request),
+        studenthub(request).getScheduleAlert(today),
+        studenthub(request).getCourseCount(),
         this.getCourses(request),
         this.getAssignments(request),
         this.getGrades(request),
@@ -122,7 +140,7 @@ export function createUetAdapter(): UniversityAdapter {
         this.getTuition(request),
         this.getNotifications(request),
       ]);
-      const allResults = [studentR, termsR, timetableR, coursesR, assignmentsR, gradesR, gpaR, examsR, tuitionR, notificationsR];
+      const allResults = [studentR, termsR, timetableR, todayScheduleR, courseCountR, coursesR, assignmentsR, gradesR, gpaR, examsR, tuitionR, notificationsR];
       // If every single upstream call failed, the session itself is broken
       // (expired/invalid token) - surface a real error instead of silently
       // rendering an all-empty dashboard, so the user sees the same
@@ -134,6 +152,8 @@ export function createUetAdapter(): UniversityAdapter {
       const student = settle(studentR, undefined);
       const terms = settle(termsR, []);
       const timetable = settle(timetableR, [] as ClassSession[]);
+      const scheduleAlert = todayScheduleR.status === "fulfilled" ? flattenScheduleAlert(todayScheduleR.value) : [];
+      const courseCount = settle(courseCountR, undefined);
       const canvasCourses = settle(coursesR, []);
       const assignments = settle(assignmentsR, []);
       const grades = settle(gradesR, []);
@@ -143,14 +163,16 @@ export function createUetAdapter(): UniversityAdapter {
       const notifications = settle(notificationsR, []);
 
       const todayWeekday = isoWeekdayToday();
-      const todaySchedule = timetable
+      const timetableToday = timetable
         .filter((session) => session.weekday === todayWeekday)
         .sort((a, b) => (a.periodStart ?? 0) - (b.periodStart ?? 0));
-      const nextClass = todaySchedule[0] ?? nextUpcomingSession(timetable, todayWeekday) ?? null;
+      const todaySchedule = scheduleAlert.length ? scheduleAlert.sort((a, b) => (a.periodStart ?? 0) - (b.periodStart ?? 0)) : timetableToday;
+      const nextClass = futureSession(todaySchedule) ?? nextUpcomingSession(timetable) ?? null;
 
       return {
         student,
         currentTerm: terms[0],
+        courseCount: courseCount ? { inTerm: courseCount.inTerm ?? 0, completed: courseCount.completed ?? 0 } : undefined,
         nextClass,
         todaySchedule: todaySchedule.length ? todaySchedule : timetable.slice(0, 4),
         courses: canvasCourses,
@@ -163,15 +185,26 @@ export function createUetAdapter(): UniversityAdapter {
       };
     },
     async getTimetable(request) { return (await studenthub(request).getTimetable(request.termCode)).map(mapStudentHubClass); },
-    async getCourses(request) { requireCanvas(request); return (await canvas(request).getDashboardCards()).map(mapCanvasCourse); },
+    async getCourses(request) {
+      requireCanvas(request);
+      try {
+        return (await canvas(request).getDashboardCards()).map(mapCanvasCourse);
+      } catch (error) {
+        canvasFeatureError(error);
+      }
+    },
     async getCourseDetail(request) { return (await this.getCourses(request)).find((course) => course.id === request.courseId || course.code === request.courseId) ?? Promise.reject(new HyeboardError("COURSE_NOT_FOUND", "Course not found", 404)); },
     async getAssignments(request) {
       requireCanvas(request);
-      const [planner, missing] = await Promise.all([
-        fallback(canvas(request).getPlannerItems(), []),
-        fallback(canvas(request).getMissingSubmissions(), []),
-      ]);
-      return [...planner.map(mapCanvasPlannerItem), ...missing.map(mapCanvasMissingSubmission)];
+      try {
+        const [planner, missing] = await Promise.all([
+          canvas(request).getPlannerItems(),
+          canvas(request).getMissingSubmissions(),
+        ]);
+        return [...planner.map(mapCanvasPlannerItem), ...missing.map(mapCanvasMissingSubmission)];
+      } catch (error) {
+        canvasFeatureError(error);
+      }
     },
     async getGrades(request) { return (await studenthub(request).getGrades()).map(mapStudentHubGrade); },
     async getGpaSummary(request) { return mapStudentHubGpa(await studenthub(request).getGpa()); },
@@ -192,7 +225,15 @@ export function createUetAdapter(): UniversityAdapter {
     async getNews(request) { return (await studenthub(request).getNews()).map(mapStudentHubNews); },
     async getDocuments() { assertSupported(false, "Documents"); return []; },
     async getTuition(request) { return mapTuition(await studenthub(request).getBills()); },
-    async getTrainingPoints() { assertSupported(false, "Training points"); return []; },
-    async getRequests() { assertSupported(false, "Requests"); return []; },
+    async getTrainingPoints(request) {
+      const profile = await this.getStudentProfile(request);
+      const studentCode = profile.studentCode ?? request.session?.studentCode;
+      if (!studentCode) throw new HyeboardError("MISSING_STUDENT_CODE", "StudentHub did not return a student code", 500);
+      const assessment = await studenthub(request).getTrainingPointAssessment(studentCode);
+      const termCode = assessment.termCode ?? request.termCode ?? (await this.getTerms(request))[0]?.code;
+      const locked = termCode ? await fallback(studenthub(request).getTrainingPointLockAssessment(studentCode, termCode), undefined) : undefined;
+      return mapTrainingPoints(assessment, locked);
+    },
+    async getRequests(request) { return (await studenthub(request).getRequests()).map(mapStudentHubRequest); },
   };
 }
