@@ -1,14 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "hyeboard-api",
+  "name": "hyeboard",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-30",
   "observability": {
     "enabled": true,
     "head_sampling_rate": 0.1
   },
-  "vars": {
-    "HYEB_ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173"
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
   },
   "secrets": {
     "required": ["HYEB_SESSION_SECRET"]

@@ -10,8 +10,8 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "pnpm --filter @hyeboard/api dev",
-      url: "http://127.0.0.1:8787/health",
+      command: "pnpm --filter @hyeboard/worker dev",
+      url: "http://127.0.0.1:8787/api/health",
       reuseExistingServer: true,
       timeout: 60_000,
     },

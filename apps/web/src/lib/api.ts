@@ -1,6 +1,6 @@
 import type { ApiResponse, Assignment, ClassSession, Course, DashboardSummary, DocumentItem, ExamSession, Grade, NewsItem, ServiceRequest, Term, TrainingPoint, TuitionStatus, University } from "@hyeboard/schemas";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8787";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const SESSION_KEY = "hyeboard.sessionToken";
 
 // Only these codes mean the Hyeboard session itself is dead - everything else
@@ -8,6 +8,12 @@ const SESSION_KEY = "hyeboard.sessionToken";
 // a feature-specific problem that should NOT log the user out of a session
 // that is otherwise perfectly valid.
 const SESSION_INVALID_CODES = new Set(["MISSING_SESSION", "SESSION_EXPIRED", "INVALID_SESSION"]);
+
+// Fired whenever the local session token is cleared for any reason (explicit
+// sign-out, or an upstream 401 that means the session itself is dead). The
+// app shell listens for this to immediately bounce the user to /login
+// instead of leaving them stuck on a page that can no longer fetch data.
+export const SESSION_CLEARED_EVENT = "hyeboard:session-cleared";
 
 export class ApiError extends Error {
   constructor(message: string, public readonly code?: string, public readonly status?: number) {
@@ -27,6 +33,7 @@ export function setSessionToken(token: string) {
 export function clearSessionToken() {
   sessionStorage.removeItem(SESSION_KEY);
   localStorage.removeItem(SESSION_KEY);
+  window.dispatchEvent(new CustomEvent(SESSION_CLEARED_EVENT));
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

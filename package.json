@@ -4,10 +4,13 @@
   "type": "module",
   "packageManager": "pnpm@11.5.2",
   "scripts": {
-    "dev": "pnpm --parallel --filter @hyeboard/web --filter @hyeboard/api dev",
+    "dev": "pnpm --parallel --filter @hyeboard/web --filter @hyeboard/worker dev",
     "dev:web": "pnpm --filter @hyeboard/web dev",
-    "dev:api": "pnpm --filter @hyeboard/api dev",
-    "build": "pnpm -r build",
+    "dev:worker": "pnpm --filter @hyeboard/worker dev",
+    "build:web": "pnpm --filter @hyeboard/web build",
+    "build:worker": "pnpm --filter @hyeboard/worker build",
+    "build": "pnpm build:web && pnpm build:worker",
+    "deploy": "pnpm --filter @hyeboard/worker deploy",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test"

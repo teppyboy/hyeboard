@@ -16,7 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { api, ApiError, clearSessionToken, getSessionToken } from "@/lib/api";
+import { api, ApiError, clearSessionToken, getSessionToken, SESSION_CLEARED_EVENT } from "@/lib/api";
 import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
 
 declare const __HYEB_GIT_COMMIT__: string;
@@ -219,6 +219,7 @@ function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
 }
 
 function RootLayout() {
+  const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("hyeboard.sidebarCollapsed") === "true");
 
@@ -226,10 +227,16 @@ function RootLayout() {
     localStorage.setItem("hyeboard.sidebarCollapsed", String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
+  useEffect(() => {
+    const redirectToLogin = () => { void navigate({ to: "/login" }); };
+    window.addEventListener(SESSION_CLEARED_EVENT, redirectToLogin);
+    return () => window.removeEventListener(SESSION_CLEARED_EVENT, redirectToLogin);
+  }, [navigate]);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className={cn("app-shell grid min-h-screen", sidebarCollapsed ? "lg:grid-cols-[76px_1fr]" : "lg:grid-cols-[270px_1fr]")}>
-        <aside className="hidden min-h-screen border-r border-border bg-sidebar lg:flex lg:flex-col">
+        <aside className="sticky top-0 hidden h-screen self-start overflow-hidden border-r border-border bg-sidebar lg:flex lg:flex-col">
           <div className={cn("transition-[padding] duration-300 ease-[var(--ease-out-quint)]", sidebarCollapsed ? "px-0 pb-2" : "flex items-center")}>
             <div className={cn("min-w-0", sidebarCollapsed ? "w-full" : "flex-1")}><BrandMark collapsed={sidebarCollapsed} /></div>
             <Button
@@ -312,7 +319,7 @@ function NavSearch() {
         />
       </div>
       {open ? (
-        <div className="absolute left-0 right-0 top-[calc(100%+0.375rem)] z-20 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+        <div className="motion-popover absolute left-0 right-0 top-[calc(100%+0.375rem)] z-20 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
           {matches.length ? matches.map((item) => (
             <button key={item.to} type="button" onClick={() => go(item.to)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
               <item.icon size={15} className="text-muted-foreground" /> {item.label}
@@ -456,7 +463,7 @@ function TimetablePage() {
       {(items) => items.length ? (
         <div className="space-y-4">
           <ViewToggle value={view} onChange={setView} />
-          {view === "calendar" ? <TimetableCalendar items={items} /> : <TimetableList items={items} />}
+          <div key={view} className="view-panel">{view === "calendar" ? <TimetableCalendar items={items} /> : <TimetableList items={items} />}</div>
         </div>
       ) : <Empty text="No sessions found for this term." />}
     </FeatureFrame>
@@ -512,7 +519,7 @@ function TimetableList({ items }: { items: ClassSession[] }) {
 
 function CalendarSessionCard({ item }: { item: ClassSession }) {
   return (
-    <div className="rounded-lg border border-border bg-background p-2 text-xs">
+    <div className="motion-surface rounded-lg border border-border bg-background p-2 text-xs">
       <p className="line-clamp-2 font-medium text-foreground">{item.courseName}</p>
       <p className="mt-1 text-muted-foreground">{item.courseCode} · {item.type ?? "Class"}</p>
       <p className="text-muted-foreground">{item.room ?? "No room"}</p>
@@ -656,7 +663,7 @@ function GradeTable({ grades, sort, onSortChange, universityId }: { grades: Grad
         </thead>
         <tbody>
           {grades.map((grade) => (
-            <tr key={grade.id} className="border-t border-border">
+            <tr key={grade.id} className="table-row-motion border-t border-border">
               <td className="px-3 py-2">{grade.courseName}</td>
               <td className="px-3 py-2 text-right tabular-nums">{grade.credits ?? "-"}</td>
               <td className="px-3 py-2 text-right tabular-nums">{grade.point10 ?? "-"}</td>
@@ -682,7 +689,7 @@ function ExamsPage() {
             <Button variant={view === "list" ? "default" : "outline"} size="sm" onClick={() => setView("list")}>List</Button>
             <Button variant={view === "calendar" ? "default" : "outline"} size="sm" onClick={() => setView("calendar")}>Calendar</Button>
           </div>
-          {view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />}
+          <div key={view} className="view-panel">{view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />}</div>
         </div>
       )}
     </FeatureFrame>
@@ -1039,7 +1046,11 @@ function MiniPanel<T>({ title, query, children }: { title: string; query: { data
           <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
         </button>
       </CardHeader>
-      {open ? <CardContent className="divide-y divide-border pt-0">{query.isLoading ? <Skeleton className="h-24" /> : query.error ? <p className="py-2 text-sm text-muted-foreground">{query.error.message}</p> : query.data?.length ? children(query.data) : <Empty text="No items yet." />}</CardContent> : null}
+      <div className="collapsible-panel" data-open={open}>
+        <div>
+          <CardContent className="divide-y divide-border pt-0">{query.isLoading ? <Skeleton className="h-24" /> : query.error ? <p className="py-2 text-sm text-muted-foreground">{query.error.message}</p> : query.data?.length ? children(query.data) : <Empty text="No items yet." />}</CardContent>
+        </div>
+      </div>
     </Card>
   );
 }
@@ -1086,7 +1097,7 @@ function AssignmentItem({ item }: { item: Assignment }) {
 }
 
 function CourseCard({ course }: { course: Course }) {
-  const className = "block rounded-lg border border-border p-4 transition-colors hover:bg-muted/40";
+  const className = "motion-surface block rounded-lg border border-border p-4 hover:bg-muted/40";
   const content = (
     <>
       <div className="flex items-start justify-between gap-3">

@@ -5,7 +5,7 @@ Multi-university student dashboard. UET (VNU-UET) first, StudentHub + Canvas ada
 ## Stack
 
 - `apps/web`: React 19, Vite, TanStack Router (code-based routes, no file-based codegen), TanStack Query, Tailwind CSS v4, shadcn-style local UI primitives (`apps/web/src/components/ui/*`, not the shadcn CLI).
-- `apps/api`: Elysia on Cloudflare Workers (via `wrangler`), thin BFF/proxy — the frontend never calls StudentHub/Canvas directly.
+- `apps/worker`: Elysia on Cloudflare Workers (via `wrangler`), thin BFF/proxy serving the React app as static assets and API under `/api/*`. Single deployment target.
 - `packages/schemas`: zod schemas + inferred TS types, shared by web/api/adapters.
 - `packages/core`: Worker-safe helpers — `ok`/`fail` envelopes, `HyeboardError`, AES-GCM encrypted session token helpers (`encryptSession`/`decryptSession`), `assertSupported`.
 - `packages/university-adapters`: `UniversityAdapter` interface + registry (`mock`, `uet`). All university-specific logic (StudentHub/Canvas clients, response mapping) lives here, isolated from the API layer.
@@ -16,16 +16,18 @@ Run from repo root unless noted. Always use `pnpm` directly — do not wrap `pnp
 
 ```bash
 pnpm install
-pnpm dev                 # runs web (Vite, :5173) + api (wrangler dev, :8787) in parallel
+pnpm dev                 # runs web (Vite, :5173) + worker (wrangler dev, :8787) in parallel; Vite proxies /api/* to wrangler
 pnpm --filter @hyeboard/web dev
-pnpm --filter @hyeboard/api dev
-pnpm build                # tsc --noEmit + vite build across all packages
-pnpm test                 # tsc --noEmit across all packages (no separate test runner configured)
-pnpm --filter @hyeboard/web exec playwright test   # Playwright e2e (spins up web+api itself)
-pnpm --filter @hyeboard/api exec wrangler deploy --dry-run   # verify Worker still deploys, no real deploy
+pnpm --filter @hyeboard/worker dev
+pnpm build:web            # Vite build into apps/web/dist
+pnpm build                # build:web + build:worker (tsc)
+pnpm test                 # tsc --noEmit across all packages
+pnpm --filter @hyeboard/web exec playwright test   # Playwright e2e (spins up worker+web itself)
+pnpm deploy               # wrangler deploy — single Worker with static assets
+pnpm --filter @hyeboard/worker exec wrangler deploy --dry-run   # verify without real deploy
 ```
 
-`apps/api`'s `dev` script must keep the `--show-interactive-dev-session=false --log-level info` flags — wrangler's default interactive session redraws the terminal and hides log output when run under `pnpm --parallel`.
+`apps/worker`'s `dev` script must keep the `--show-interactive-dev-session=false --log-level info` flags — wrangler's default interactive session redraws the terminal and hides log output when run under `pnpm --parallel`.
 
 There is no separate lint tool wired up; `lint`/`typecheck`/`test` all alias to `tsc -p tsconfig.json --noEmit` per package. Treat a clean `pnpm build` + `pnpm test` + Playwright pass as the bar for "done," not just a green typecheck.
 
@@ -39,8 +41,8 @@ There is no separate lint tool wired up; `lint`/`typecheck`/`test` all alias to 
 
 ## Required env
 
-- `apps/api/.dev.vars` (gitignored): `HYEB_SESSION_SECRET` (32+ random bytes, base64 is fine), `HYEB_ALLOWED_ORIGINS` (comma-separated origins, defaults to `http://localhost:5173`).
-- `apps/web/.env.local` (optional): `VITE_API_BASE_URL` (defaults to `http://127.0.0.1:8787`).
+- `apps/worker/.dev.vars` (gitignored): `HYEB_SESSION_SECRET` (32+ random bytes, base64 is fine), `HYEB_ALLOWED_ORIGINS` (comma-separated origins, default `http://localhost:5173,http://127.0.0.1:5173`).
+- `apps/web/.env.local` (optional): `VITE_API_BASE_URL` (defaults to empty string = same-origin).
 
 ## Session/auth model
 

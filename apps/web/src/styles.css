@@ -204,6 +204,68 @@ textarea.control {
   background: hsl(var(--primary) / 0.06);
 }
 
+.view-panel {
+  animation: view-in 260ms var(--ease-out-quint) both;
+}
+
+.motion-surface {
+  transition: background 160ms var(--ease-out-quint), border-color 160ms var(--ease-out-quint), transform 160ms var(--ease-out-quint);
+  animation: card-in 300ms var(--ease-out-quint) both;
+}
+
+.motion-surface:hover {
+  transform: translateY(-1px);
+}
+
+.motion-popover {
+  animation: popover-in 160ms var(--ease-out-quint) both;
+}
+
+.table-row-motion {
+  transition: background 140ms var(--ease-out-quint);
+  animation: row-in 220ms var(--ease-out-quint) both;
+}
+
+.table-row-motion:hover {
+  background: hsl(var(--muted) / 0.4);
+}
+
+.collapsible-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  transition: grid-template-rows 260ms var(--ease-out-quint);
+}
+
+.collapsible-panel[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.collapsible-panel > div {
+  overflow: hidden;
+  min-height: 0;
+  visibility: hidden;
+}
+
+.collapsible-panel[data-open="true"] > div {
+  visibility: visible;
+}
+
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes popover-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes row-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @keyframes page-in {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
