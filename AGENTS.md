@@ -1,6 +1,6 @@
 # AGENTS.md — Hyeboard
 
-Multi-university student dashboard. UET (VNU-UET) first, StudentHub + Canvas adapter backend, Mock adapter for demo/dev/testing. pnpm monorepo, no git repo in this workspace currently — do not assume version control exists unless verified.
+Multi-university student dashboard. UET (VNU-UET) first, StudentHub + Canvas adapter backend, Mock adapter for demo/dev/testing. pnpm monorepo with a git repository at the project root.
 
 ## Stack
 
@@ -28,6 +28,14 @@ pnpm --filter @hyeboard/api exec wrangler deploy --dry-run   # verify Worker sti
 `apps/api`'s `dev` script must keep the `--show-interactive-dev-session=false --log-level info` flags — wrangler's default interactive session redraws the terminal and hides log output when run under `pnpm --parallel`.
 
 There is no separate lint tool wired up; `lint`/`typecheck`/`test` all alias to `tsc -p tsconfig.json --noEmit` per package. Treat a clean `pnpm build` + `pnpm test` + Playwright pass as the bar for "done," not just a green typecheck.
+
+## Git hygiene
+
+- This workspace is a git repo. Check `git status --short` before staging or committing.
+- Never commit raw HAR captures, secrets, env files, Playwright reports, or test artifacts. `.gitignore` excludes `*.har`, `.env*`, `.dev.vars`, `node_modules/`, build output, `.wrangler/`, and Playwright result/report folders.
+- Stage only intentional files. If unrelated user/agent changes are present, leave them alone unless explicitly asked.
+- Do not amend, force-push, or rewrite history unless explicitly requested.
+- Use concise commit messages. The initial repo commit is `Initial commit: Hyeboard monorepo` on `master`.
 
 ## Required env
 
