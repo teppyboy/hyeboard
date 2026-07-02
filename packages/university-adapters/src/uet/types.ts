@@ -1,5 +1,16 @@
 export type StudentHubEnvelope<T> = { code?: number | string; msgCode?: string; data: T };
 
+export type StudentHubGoogleLogin = {
+  accountCode?: string;
+  username?: string;
+  name?: string;
+  email?: string;
+  accessToken: string;
+  refreshToken?: string;
+  role?: string;
+  dependAccountCode?: string;
+};
+
 export type StudentHubStudent = {
   id?: string | number;
   personCode?: string;

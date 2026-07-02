@@ -1,5 +1,5 @@
 import { HyeboardError, unwrapStudentHubEnvelope, type EncryptedSessionPayload } from "@hyeboard/core";
-import type { StudentHubBill, StudentHubClassSession, StudentHubCourseCount, StudentHubExam, StudentHubGpa, StudentHubGrade, StudentHubNews, StudentHubNotificationPage, StudentHubRequestType, StudentHubScheduleAlertSession, StudentHubServiceRequest, StudentHubStudent, StudentHubTerm, StudentHubTrainingPointAssessment, StudentHubTrainingPointLockAssessment } from "./types";
+import type { StudentHubBill, StudentHubClassSession, StudentHubCourseCount, StudentHubExam, StudentHubGoogleLogin, StudentHubGpa, StudentHubGrade, StudentHubNews, StudentHubNotificationPage, StudentHubRequestType, StudentHubScheduleAlertSession, StudentHubServiceRequest, StudentHubStudent, StudentHubTerm, StudentHubTrainingPointAssessment, StudentHubTrainingPointLockAssessment } from "./types";
 
 const STUDENTHUB_BASE = "https://studenthub.uet.edu.vn";
 
@@ -22,6 +22,10 @@ export class StudentHubClient {
     if (!response.ok) throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", `StudentHub request failed: ${response.status}`, response.status);
     const json = (await response.json()) as T;
     return unwrapStudentHubEnvelope(json);
+  }
+
+  async exchangeGoogleCredential(credential: string) {
+    return this.request<StudentHubGoogleLogin>(`/api/auth/google/callback?code=${encodeURIComponent(credential)}`);
   }
 
   getProfile() { return this.request<StudentHubStudent>("/api/student/detail"); }

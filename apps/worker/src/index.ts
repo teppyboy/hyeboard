@@ -43,6 +43,7 @@ function routeError(error: unknown, requestId?: string) {
 // ─── Schemas ──────────────────────────────────────────────────
 
 const importSessionBody = t.Object({
+  studenthubGoogleCredential: t.Optional(t.String()),
   studenthubToken: t.Optional(t.String()),
   studenthubCookie: t.Optional(t.String()),
   canvasToken: t.Optional(t.String()),

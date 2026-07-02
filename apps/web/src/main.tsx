@@ -124,7 +124,7 @@ function useHyeboardState() {
 
   const ensureSession = async () => {
     if (getSessionToken()) return;
-    throw new Error("Login needed. Sign in before opening Hyeboard.");
+    throw new Error("Sign in to continue.");
   };
 
   const dashboard = useQuery({
@@ -189,7 +189,7 @@ function ProfileCard({ collapsed = false }: { collapsed?: boolean } = {}) {
   return (
     <div className="mx-3 mt-4 rounded-xl border border-border bg-card p-4">
       <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Active profile</p>
-      <p className="mt-2 text-sm font-medium">{data?.student?.fullName ?? (state.universityId === "uet" ? "UET login needed" : "Demo Student")}</p>
+      <p className="mt-2 text-sm font-medium">{data?.student?.fullName ?? (state.universityId === "uet" ? "Sign in required" : "Demo Student")}</p>
       <p className="text-xs text-muted-foreground">{data?.student?.studentCode ?? state.universityId.toUpperCase()}</p>
     </div>
   );
@@ -197,7 +197,7 @@ function ProfileCard({ collapsed = false }: { collapsed?: boolean } = {}) {
 
 function SidebarFooter({ collapsed = false }: { collapsed?: boolean } = {}) {
   if (collapsed) return <div className="mt-auto" />;
-  return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">Powered by Hyeboard ({__HYEB_GIT_COMMIT__})</p>;
+  return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">Hyeboard build {__HYEB_GIT_COMMIT__}</p>;
 }
 
 function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
@@ -314,7 +314,7 @@ function NavSearch() {
           onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           onKeyDown={(event) => { if (event.key === "Enter" && matches[0]) go(matches[0].to); if (event.key === "Escape") setOpen(false); }}
-          placeholder="Jump to timetable, grades, exams..."
+          placeholder="Search pages..."
           className="min-w-0 flex-1 truncate bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
         />
       </div>
@@ -324,7 +324,7 @@ function NavSearch() {
             <button key={item.to} type="button" onClick={() => go(item.to)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
               <item.icon size={15} className="text-muted-foreground" /> {item.label}
             </button>
-          )) : <p className="px-3 py-2 text-sm text-muted-foreground">No matching page.</p>}
+          )) : <p className="px-3 py-2 text-sm text-muted-foreground">No page matches that search.</p>}
         </div>
       ) : null}
     </div>
@@ -351,7 +351,7 @@ function NotificationsMenu() {
             <span className="text-sm font-medium leading-tight">{item.title}</span>
             <span className="text-xs text-muted-foreground">{formatDateTime(item.createdAt)}</span>
           </DropdownMenuItem>
-        )) : <p className="px-2 py-3 text-sm text-muted-foreground">No notifications yet.</p>}
+        )) : <p className="px-2 py-3 text-sm text-muted-foreground">No notifications right now.</p>}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -414,40 +414,40 @@ function DashboardPage() {
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2"><Badge className="bg-primary/10 text-primary">{data?.currentTerm?.name ?? "Current term"}</Badge><Badge className="border border-border bg-background text-foreground">{data?.student?.studentCode ?? "Demo"}</Badge></div>
           <h1 className="text-3xl font-semibold tracking-[-0.03em] md:text-4xl">Welcome back, {data?.student?.fullName ?? "student"}</h1>
-          <p className="max-w-2xl text-sm text-muted-foreground">A shadcn-style workspace for timetable, Canvas work, grades, tuition, and university updates.</p>
+          <p className="max-w-2xl text-sm text-muted-foreground">Your timetable, coursework, grades, tuition, and university updates in one place.</p>
         </div>
         <Card className="animate-card min-w-64">
-          <CardHeader className="pb-2"><CardDescription>Next class</CardDescription><CardTitle className="text-2xl">{data?.nextClass?.courseCode ?? "Clear"}</CardTitle></CardHeader>
-          <CardContent><p className="text-sm text-muted-foreground">{data?.nextClass ? (data.nextClass.timeLabel ?? formatDateTime(data.nextClass.startTime)) : "No upcoming class"}</p></CardContent>
+          <CardHeader className="pb-2"><CardDescription>Next class</CardDescription><CardTitle className="text-2xl">{data?.nextClass?.courseCode ?? "All clear"}</CardTitle></CardHeader>
+          <CardContent><p className="text-sm text-muted-foreground">{data?.nextClass ? (data.nextClass.timeLabel ?? formatDateTime(data.nextClass.startTime)) : "No upcoming class today."}</p></CardContent>
         </Card>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric title="GPA" value={data?.gpa?.gpa?.toFixed(2) ?? "-"} detail={`CPA ${data?.gpa?.cpa?.toFixed(2) ?? "-"}`} icon={GraduationCap} tone="accent" />
-        <Metric title="Credits" value={String(data?.gpa?.totalAccumulatedCredits ?? "-")} detail={data?.courseCount ? `${data.courseCount.completed} completed · ${data.courseCount.inTerm} this term` : `${data?.gpa?.totalCredits ?? 0} this term`} icon={BookOpen} />
-        <Metric title="Assignments" value={String(data?.assignments?.length ?? 0)} detail={`${data?.assignments?.filter((item) => item.status === "missing").length ?? 0} missing`} icon={ClipboardList} />
-        <Metric title="Tuition" value={formatCurrency(data?.tuition?.remainingAmount)} detail="remaining balance" icon={WalletCards} />
+        <Metric title="Credits" value={String(data?.gpa?.totalAccumulatedCredits ?? "-")} detail={data?.courseCount ? `${data.courseCount.completed} completed · ${data.courseCount.inTerm} enrolled` : `${data?.gpa?.totalCredits ?? 0} this term`} icon={BookOpen} />
+        <Metric title="Assignments" value={String(data?.assignments?.length ?? 0)} detail={`${data?.assignments?.filter((item) => item.status === "missing").length ?? 0} require attention`} icon={ClipboardList} />
+        <Metric title="Tuition" value={formatCurrency(data?.tuition?.remainingAmount)} detail="outstanding balance" icon={WalletCards} />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <Card className="animate-card">
-          <CardHeader><CardTitle>Today Schedule</CardTitle><CardDescription>StudentHub timetable normalized for Hyeboard.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Today's Schedule</CardTitle><CardDescription>Classes from the university portal, mapped to official period blocks.</CardDescription></CardHeader>
           <CardContent className="divide-y divide-border pt-0">{data?.todaySchedule?.length ? data.todaySchedule.map((item) => <ScheduleItem key={item.id} item={item} />) : <Empty text="No classes scheduled today." />}</CardContent>
         </Card>
         <Card className="animate-card">
-          <CardHeader><CardTitle>Assignment Timeline</CardTitle><CardDescription>Canvas planner + missing submissions.</CardDescription></CardHeader>
-          <CardContent className="divide-y divide-border pt-0">{data?.assignments?.length ? data.assignments.slice(0, 5).map((item) => <AssignmentItem key={item.id} item={item} />) : <Empty text="Nothing due." />}</CardContent>
+          <CardHeader><CardTitle>Assignment Timeline</CardTitle><CardDescription>Upcoming and missing work from the learning platform.</CardDescription></CardHeader>
+          <CardContent className="divide-y divide-border pt-0">{data?.assignments?.length ? data.assignments.slice(0, 5).map((item) => <AssignmentItem key={item.id} item={item} />) : <Empty text="No assignments need attention." />}</CardContent>
         </Card>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
         <Card className="animate-card xl:col-span-2">
-          <CardHeader><CardTitle>Active Courses</CardTitle><CardDescription>Canvas course cards joined with academic context where available.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Active Courses</CardTitle><CardDescription>Course spaces available for this session.</CardDescription></CardHeader>
           <CardContent className="grid gap-3 pt-0 md:grid-cols-2">{data?.courses?.length ? data.courses.map((course) => <CourseCard key={course.id} course={course} />) : <Empty text="No courses yet." />}</CardContent>
         </Card>
         <Card className="animate-card">
-          <CardHeader><CardTitle>Recent Notifications</CardTitle><CardDescription>StudentHub and Canvas signal feed.</CardDescription></CardHeader>
-          <CardContent className="divide-y divide-border pt-0">{data?.notifications?.length ? data.notifications.map((item) => <FeedItem key={item.id} title={item.title} detail={item.source ?? "university"} />) : <Empty text="No notifications." />}</CardContent>
+          <CardHeader><CardTitle>Recent Notifications</CardTitle><CardDescription>Latest messages from connected university services.</CardDescription></CardHeader>
+          <CardContent className="divide-y divide-border pt-0">{data?.notifications?.length ? data.notifications.map((item) => <FeedItem key={item.id} title={item.title} detail={item.source ?? "University"} />) : <Empty text="No recent notifications." />}</CardContent>
         </Card>
       </section>
     </div>
@@ -459,13 +459,13 @@ function TimetablePage() {
   const [view, setView] = useState<"calendar" | "list">("calendar");
   const query = useFeatureQuery("timetable", () => api.timetable(state.universityId, state.termCode));
   return (
-    <FeatureFrame title="Timetable" description="Weekly StudentHub timetable laid out by verified VNU-UET periods." query={query}>
+    <FeatureFrame title="Timetable" description="Weekly classes from the university portal, shown by official period blocks." query={query}>
       {(items) => items.length ? (
         <div className="space-y-4">
           <ViewToggle value={view} onChange={setView} />
           <div key={view} className="view-panel">{view === "calendar" ? <TimetableCalendar items={items} /> : <TimetableList items={items} />}</div>
         </div>
-      ) : <Empty text="No sessions found for this term." />}
+      ) : <Empty text="No classes are listed for this term." />}
     </FeatureFrame>
   );
 }
@@ -521,10 +521,10 @@ function CalendarSessionCard({ item }: { item: ClassSession }) {
   return (
     <div className="motion-surface rounded-lg border border-border bg-background p-2 text-xs">
       <p className="line-clamp-2 font-medium text-foreground">{item.courseName}</p>
-      <p className="mt-1 text-muted-foreground">{item.courseCode} · {item.type ?? "Class"}</p>
-      <p className="text-muted-foreground">{item.room ?? "No room"}</p>
+      <p className="mt-1 text-muted-foreground">{item.courseCode} · {item.type ?? "Class session"}</p>
+      <p className="text-muted-foreground">{item.room ?? "Room not listed"}</p>
       {item.instructor ? <p className="truncate text-muted-foreground">{item.instructor}</p> : null}
-      {item.url ? <a className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline" href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={11} /> Canvas</a> : null}
+      {item.url ? <a className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline" href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={11} /> Open class page</a> : null}
     </div>
   );
 }
@@ -532,13 +532,13 @@ function CalendarSessionCard({ item }: { item: ClassSession }) {
 function CoursesPage() {
   const state = useHyeboard();
   const query = useFeatureQuery("courses", () => api.courses(state.universityId));
-  return <FeatureFrame title="Courses" description="Course cards from Canvas and university systems." query={query}>{(items) => <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{items.map((course) => <CourseCard key={course.id} course={course} />)}</div>}</FeatureFrame>;
+  return <FeatureFrame title="Courses" description="Course spaces connected to your university record." query={query}>{(items) => <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{items.map((course) => <CourseCard key={course.id} course={course} />)}</div>}</FeatureFrame>;
 }
 
 function AssignmentsPage() {
   const state = useHyeboard();
   const query = useFeatureQuery("assignments", () => api.assignments(state.universityId));
-  return <FeatureFrame title="Assignments" description="Canvas planner items and missing submissions." query={query}>{(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <AssignmentItem key={item.id} item={item} />)}</CardContent></Card> : <Empty text="Nothing due." />}</FeatureFrame>;
+  return <FeatureFrame title="Assignments" description="Upcoming work and missing submissions from the learning platform." query={query}>{(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <AssignmentItem key={item.id} item={item} />)}</CardContent></Card> : <Empty text="No assignments are due right now." />}</FeatureFrame>;
 }
 
 function gradeTermKey(grade: Grade, universityId: string) {
@@ -590,7 +590,7 @@ function GradesPage() {
   const query = useFeatureQuery("grades", () => api.grades(state.universityId));
   const gpa = state.dashboard.data?.gpa;
   return (
-    <FeatureFrame title="Grades" description="Transcript and GPA summary from StudentHub, grouped by term." query={query}>
+    <FeatureFrame title="Grades" description="Academic transcript grouped by term, with weighted summaries." query={query}>
       {(items) => {
         const byTerm = items.reduce<Record<string, Grade[]>>((acc, g) => {
           const key = gradeTermKey(g, state.universityId);
@@ -600,9 +600,9 @@ function GradesPage() {
         return (
           <div className="space-y-6">
             <div className="grid gap-3 md:grid-cols-3">
-              <Metric title="GPA" value={gpa?.gpa?.toFixed(2) ?? "-"} detail="current average" />
+              <Metric title="GPA" value={gpa?.gpa?.toFixed(2) ?? "-"} detail="current term average" />
               <Metric title="CPA" value={gpa?.cpa?.toFixed(2) ?? "-"} detail="cumulative average" />
-              <Metric title="Credits" value={String(gpa?.totalAccumulatedCredits ?? "-")} detail="accumulated" />
+              <Metric title="Credits" value={String(gpa?.totalAccumulatedCredits ?? "-")} detail="credits completed" />
             </div>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, grades]) => {
               const summary = summarizeGrades(grades);
@@ -615,9 +615,9 @@ function GradesPage() {
                   {includesSummer ? <Badge className="border border-border bg-background text-foreground">Includes summer term</Badge> : null}
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
-                  <Metric title="Term GPA" value={summary.point4?.toFixed(2) ?? "-"} detail="weighted on 4.0 scale" />
-                  <Metric title="Average 10" value={summary.point10?.toFixed(2) ?? "-"} detail="weighted on 10-point scale" />
-                  <Metric title="Credits" value={String(summary.credits || "-")} detail="counted in this term" />
+                  <Metric title="Term GPA" value={summary.point4?.toFixed(2) ?? "-"} detail="weighted 4.0 scale" />
+                  <Metric title="Average 10" value={summary.point10?.toFixed(2) ?? "-"} detail="weighted 10-point scale" />
+                  <Metric title="Credits" value={String(summary.credits || "-")} detail="included in this term" />
                 </div>
                 <GradeTable grades={sortedGrades} sort={sort} onSortChange={setSort} universityId={state.universityId} />
               </div>
@@ -640,7 +640,7 @@ function GradeTable({ grades, sort, onSortChange, universityId }: { grades: Grad
     const direction = sort.key === key && sort.direction === "asc" ? "desc" : "asc";
     onSortChange({ key, direction });
   };
-  if (!grades.length) return <Empty text="No rows available." />;
+  if (!grades.length) return <Empty text="No grades are available for this term." />;
   return (
     <div className="overflow-hidden rounded-xl border border-border">
       <table className="w-full border-collapse text-sm">
@@ -682,7 +682,7 @@ function ExamsPage() {
   const [view, setView] = useState<"list" | "calendar">("list");
   const query = useFeatureQuery("exams", () => api.exams(state.universityId, state.termCode));
   return (
-    <FeatureFrame title="Exams" description="Exam schedule from StudentHub, including method, session, room, and seat number." query={query}>
+    <FeatureFrame title="Exams" description="Exam schedule with method, room, session, and seat number." query={query}>
       {(items) => (
         <div className="space-y-4">
           <div className="flex flex-wrap justify-end gap-2">
@@ -725,13 +725,13 @@ function ExamCalendar({ items }: { items: ExamSession[] }) {
     <div className="grid gap-3 lg:grid-cols-2">
       {days.map(([day, exams]) => (
         <Card key={day}>
-          <CardHeader className="pb-3"><CardTitle className="text-base">{formatDateOnly(day)}</CardTitle><CardDescription>{exams.length} exam{exams.length > 1 ? "s" : ""}</CardDescription></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base">{formatDateOnly(day)}</CardTitle><CardDescription>{exams.length} scheduled exam{exams.length > 1 ? "s" : ""}</CardDescription></CardHeader>
           <CardContent className="divide-y divide-border pt-0">
             {exams.sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? "")).map((exam) => (
               <div key={exam.id} className="list-row">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{exam.courseName}</p>
-                  <p className="truncate text-xs text-muted-foreground">{exam.courseCode} · {exam.examMethod ?? exam.examType ?? "Exam"} · {exam.room ?? "No room"}</p>
+                  <p className="truncate text-xs text-muted-foreground">{exam.courseCode} · {exam.examMethod ?? exam.examType ?? "Exam"} · {exam.room ?? "Room not listed"}</p>
                 </div>
                 <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{examTime(exam)}</Badge>
               </div>
@@ -747,7 +747,7 @@ function TuitionPage() {
   const state = useHyeboard();
   const query = useFeatureQuery("tuition", () => api.tuition(state.universityId));
   return (
-    <FeatureFrame title="Tuition" description="Bills, payment progress, and remaining balance, grouped by term." query={query}>
+    <FeatureFrame title="Tuition" description="University billing, payments, adjustments, and remaining balance." query={query}>
       {(tuition) => {
         const byTerm = tuition.bills.reduce<Record<string, Bill[]>>((acc, b) => {
           const key = b.termCode ?? (b.status === "credit" ? "Credits / adjustments" : "Other");
@@ -757,9 +757,9 @@ function TuitionPage() {
         return (
           <div className="space-y-6">
             <div className="grid gap-3 md:grid-cols-3">
-              <Metric title="Total" value={formatCurrency(tuition.totalAmount)} detail="charged" />
-              <Metric title="Paid" value={formatCurrency(tuition.paidAmount)} detail="received" />
-              <Metric title="Remaining" value={formatCurrency(tuition.remainingAmount)} detail="balance" />
+              <Metric title="Total" value={formatCurrency(tuition.totalAmount)} detail="charges posted" />
+              <Metric title="Paid" value={formatCurrency(tuition.paidAmount)} detail="payments received" />
+              <Metric title="Remaining" value={formatCurrency(tuition.remainingAmount)} detail="amount due" />
             </div>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, bills]) => (
               <div key={term} className="space-y-2">
@@ -786,10 +786,10 @@ function DocumentsPage() {
 
   return (
     <div className="space-y-4">
-      <FeatureHeader title="Documents & Services" description="Files, university news, and student services." />
+      <FeatureHeader title="Documents & Services" description="University files, announcements, and service requests." />
       <div className="grid gap-4 xl:grid-cols-2">
         {showDocuments ? <MiniPanel title="Documents" query={docs}>{(items) => items.map((item) => <DocumentRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title="Documents" />}
-        <MiniPanel title="News" query={news}>{(items) => items.map((item) => <FeedItem key={item.id} title={item.title} detail={item.category ?? item.date ?? "news"} url={item.url} />)}</MiniPanel>
+        <MiniPanel title="News" query={news}>{(items) => items.map((item) => <FeedItem key={item.id} title={item.title} detail={item.category ?? item.date ?? "News"} url={item.url} />)}</MiniPanel>
         {showRequests ? <MiniPanel title="Requests" query={requests}>{(items) => items.map((item) => <RequestRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title="Requests" />}
       </div>
     </div>
@@ -800,8 +800,8 @@ function TrainingPointsPage() {
   const state = useHyeboard();
   const query = useFeatureQuery("training-points", () => api.trainingPoints(state.universityId));
   return (
-    <FeatureFrame title="Training Points" description="StudentHub conduct-score criteria and current totals." query={query}>
-      {(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <TrainingPointRow key={item.id} item={item} />)}</CardContent></Card> : <Empty text="No training-point data yet." />}
+    <FeatureFrame title="Training Points" description="Conduct-score criteria and recorded totals from the university portal." query={query}>
+      {(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <TrainingPointRow key={item.id} item={item} />)}</CardContent></Card> : <Empty text="No training-point records are available yet." />}
     </FeatureFrame>
   );
 }
@@ -810,7 +810,7 @@ function UnsupportedPanel({ title }: { title: string }) {
   return (
     <Card className="animate-card">
       <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
-      <CardContent><p className="text-sm text-muted-foreground">Not available for this university yet.</p></CardContent>
+      <CardContent><p className="text-sm text-muted-foreground">This section is not supported for the selected university.</p></CardContent>
     </Card>
   );
 }
@@ -838,15 +838,15 @@ function LoginPage() {
 
   const useDemo = async () => {
     setBusy(true);
-    setStatus("Starting demo workspace...");
+    setStatus("Preparing demo workspace...");
     try {
       await api.importSession("mock", {});
       state.selectUniversity("mock", { clearSession: false });
       state.refreshSession();
-      setStatus("Demo session ready.");
+      setStatus("Demo workspace ready.");
       await navigate({ to: "/" });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not start demo.");
+      setStatus(error instanceof Error ? error.message : "Demo workspace could not be prepared.");
     } finally {
       setBusy(false);
     }
@@ -860,7 +860,7 @@ function LoginPage() {
 
   const importUetSession = async () => {
     setBusy(true);
-    setStatus("Encrypting UET session...");
+    setStatus("Securing your university session...");
     try {
       await api.importSession("uet", {
         studenthubToken: studenthubToken || undefined,
@@ -871,10 +871,10 @@ function LoginPage() {
       });
       state.selectUniversity("uet", { clearSession: false });
       state.refreshSession();
-      setStatus("UET session imported. Opening dashboard...");
+      setStatus("University session ready. Opening dashboard...");
       await navigate({ to: "/" });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not import session.");
+      setStatus(error instanceof Error ? error.message : "University session could not be imported.");
     } finally {
       setBusy(false);
     }
@@ -886,15 +886,15 @@ function LoginPage() {
         <div className="mb-8 flex flex-col items-center text-center">
           <div className="mb-4 grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm"><School size={21} /></div>
           <h1 className="text-2xl font-semibold tracking-tight">Sign in to Hyeboard</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Dashboard opens after a real session exists.</p>
+          <p className="mt-2 text-sm text-muted-foreground">Connect a university session to open your dashboard.</p>
         </div>
 
         <Card className="login-card animate-card">
           <CardHeader className="space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle>{selectedUniversity === "uet" ? "Login with VNU-UET" : "Login with Mock"}</CardTitle>
-                <CardDescription>{selectedUniversity === "uet" ? "Use StudentHub first. Mock lives in the small school menu." : "Local demo data for UI testing."}</CardDescription>
+                <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : "Use Demo Data"}</CardTitle>
+                <CardDescription>{selectedUniversity === "uet" ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : "Open Hyeboard with safe sample data."}</CardDescription>
               </div>
               <Select value={selectedUniversity} onValueChange={(value) => chooseUniversity(value as "mock" | "uet")}>
                 <SelectTrigger className="h-9 w-[128px] shrink-0" aria-label="School"><SelectValue placeholder="School" /></SelectTrigger>
@@ -908,50 +908,47 @@ function LoginPage() {
           <CardContent className="space-y-3">
             {selectedUniversity === "uet" ? (
               <>
-                <Button className="w-full" type="button" onClick={() => window.open("https://studenthub.uet.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Continue on StudentHub</Button>
                 <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                  <p className="font-medium text-foreground">1. Get your StudentHub access token</p>
+                  <p className="font-medium text-foreground">Connect your university portal</p>
+                  <p className="mt-1">Direct Google sign-in is not available yet because this university has not authorized Hyeboard's web origin (`origin_mismatch`). Import the portal token from your signed-in browser session instead.</p>
                   <ol className="mt-2 list-decimal space-y-1 pl-4">
-                    <li>Click <strong className="text-foreground">Continue on StudentHub</strong> and sign in with your Google account.</li>
-                    <li>Once the dashboard loads, open the browser <strong className="text-foreground">Console</strong> (F12 → Console tab).</li>
-                    <li>Paste and run this command — the token copies to your clipboard automatically:
-                      <div className="mt-1 flex items-center gap-2 rounded bg-background px-2 py-1">
-                        <code className="flex-1 select-all text-foreground">copy(localStorage.getItem(&apos;accessToken&apos;))</code>
-                      </div>
-                    </li>
-                    <li>Paste the copied token into the field below.</li>
+                    <li>Open the university portal and sign in with your university account.</li>
+                    <li>Open the browser console on the portal.</li>
+                    <li>Run <code className="select-all rounded bg-background px-1 text-foreground">copy(localStorage.getItem(&apos;accessToken&apos;))</code>.</li>
+                    <li>Paste the copied token below.</li>
                   </ol>
-                  <p className="mt-2 text-foreground">Note: this token expires in about 30 minutes. Come back and copy a fresh one if the dashboard starts failing to load.</p>
+                  <p className="mt-2 text-foreground">Portal tokens usually expire quickly. Hyeboard will return you here when a fresh token is needed.</p>
                 </div>
-                <Textarea placeholder="StudentHub access token" value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} />
-                <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://portal.uet.vnu.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Continue on Canvas</Button>
+                <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://studenthub.uet.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open university portal</Button>
+                <Textarea placeholder="University portal access token" value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} />
+                <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://portal.uet.vnu.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open learning platform</Button>
                 <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                  <p className="font-medium text-foreground">2. Get a Canvas access token (assignments &amp; grades)</p>
-                  <p className="mt-1">Canvas signs in instantly with the same Google account — no separate password needed.</p>
+                  <p className="font-medium text-foreground">Optional: connect the learning platform</p>
+                  <p className="mt-1">The learning platform powers course and assignment features. It usually opens with the same university account.</p>
                   <ol className="mt-2 list-decimal space-y-1 pl-4">
-                    <li>Click <strong className="text-foreground">Continue on Canvas</strong> above — it logs in automatically.</li>
+                    <li>Open the learning platform. It should sign in with your existing university account.</li>
                     <li>Open <strong className="text-foreground">Account</strong> (bottom-left) → <strong className="text-foreground">Settings</strong>.</li>
                     <li>Scroll to <strong className="text-foreground">Approved Integrations</strong> → click <strong className="text-foreground">+ New Access Token</strong> → Generate Token.</li>
-                    <li>Copy the token shown (it is only displayed once) and paste it below.</li>
+                    <li>Copy the token shown once and paste it below.</li>
                   </ol>
                 </div>
-                <Textarea placeholder="Canvas access token" value={canvasToken} onChange={(event) => setCanvasToken(event.target.value)} />
+                <Textarea placeholder="Learning platform access token" value={canvasToken} onChange={(event) => setCanvasToken(event.target.value)} />
                 <details className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-                  <summary className="cursor-pointer font-medium text-foreground">Advanced options (cookie fallback)</summary>
+                  <summary className="cursor-pointer font-medium text-foreground">Advanced cookie options</summary>
                   <div className="mt-3 space-y-3">
-                    <Textarea placeholder="StudentHub cookie, if token is unavailable" value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} />
-                    <Textarea placeholder="Canvas cookie, if access tokens are disabled" value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} />
-                    <Input placeholder="Canvas CSRF token, only if using Canvas cookie" value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} />
+                    <Textarea placeholder="University portal cookie, if token import is unavailable" value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} />
+                    <Textarea placeholder="Learning platform cookie, if access tokens are disabled" value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} />
+                    <Input placeholder="Learning platform CSRF token, only when using cookie mode" value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} />
                   </div>
                 </details>
-                <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">Import UET Session</Button>
+                <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
               </>
             ) : (
               <>
-                <Button onClick={useDemo} disabled={busy} className="w-full">Continue with Mock Data</Button>
+                <Button onClick={useDemo} disabled={busy} className="w-full">Open Demo Workspace</Button>
               </>
             )}
-            <p className="text-xs text-muted-foreground"><KeyRound className="mr-1 inline h-3.5 w-3.5" />Credentials are encrypted into the Hyeboard bearer token for this browser.</p>
+            <p className="text-xs text-muted-foreground"><KeyRound className="mr-1 inline h-3.5 w-3.5" />Credentials are encrypted in a Hyeboard session token stored in this browser.</p>
             {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
           </CardContent>
         </Card>
@@ -967,12 +964,12 @@ function SettingsPage() {
   const signOut = () => { state.logout(); void navigate({ to: "/login" }); };
   return (
     <div className="space-y-6">
-      <FeatureHeader title="Settings" description="Display preferences and account." />
+      <FeatureHeader title="Settings" description="Manage display preferences and your current session." />
       <div className="grid max-w-lg gap-4">
         <Card>
           <CardHeader>
             <CardTitle>Display</CardTitle>
-            <CardDescription>Control the look of Hyeboard.</CardDescription>
+            <CardDescription>Choose the interface style that works best for you.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
@@ -985,7 +982,7 @@ function SettingsPage() {
               <span className="text-sm">Theme style</span>
               <div className="flex rounded-lg border border-border p-1" role="group" aria-label="Theme style">
                 <Button type="button" variant={state.palette === "geist" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("geist")}>Neutral</Button>
-                <Button type="button" variant={state.palette === "uet" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("uet")}>University</Button>
+                <Button type="button" variant={state.palette === "uet" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("uet")}>VNU-UET</Button>
               </div>
             </div>
             {state.palette === "uet" ? (
@@ -1015,7 +1012,7 @@ function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Account</CardTitle>
-            <CardDescription>Signed in as {data?.student?.fullName ?? state.universityId.toUpperCase()}{data?.student?.studentCode ? ` (${data.student.studentCode})` : ""}.</CardDescription>
+            <CardDescription>{data?.student?.fullName ? `Signed in as ${data.student.fullName}${data.student.studentCode ? ` (${data.student.studentCode})` : ""}.` : "Session details are available after the dashboard loads."}</CardDescription>
           </CardHeader>
           <CardContent>
             <Button variant="destructive" className="w-full" onClick={signOut}><LogOut size={15} className="mr-2" />Sign out</Button>
@@ -1077,7 +1074,7 @@ function ScheduleItem({ item }: { item: ClassSession }) {
       <div className="min-w-0">
         <p className="truncate font-medium">{item.courseName}</p>
         <p className="truncate text-xs text-muted-foreground">{item.courseCode} · {item.room ?? "No room"} · {item.instructor ?? "Instructor TBD"}</p>
-        {item.url ? <a className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={12} /> Open Canvas class</a> : null}
+        {item.url ? <a className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={12} /> Open class page</a> : null}
       </div>
       <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{label}</Badge>
     </div>
@@ -1089,7 +1086,7 @@ function AssignmentItem({ item }: { item: Assignment }) {
     <div className="list-row">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium">{item.title}</p>
-        <p className="truncate text-xs text-muted-foreground">{item.courseName ?? item.courseCode ?? "Canvas"} · {formatDateTime(item.dueAt)}</p>
+        <p className="truncate text-xs text-muted-foreground">{item.courseName ?? item.courseCode ?? "Learning platform"} · {formatDateTime(item.dueAt)}</p>
       </div>
       <Badge className={cn("shrink-0", item.status === "missing" ? "bg-destructive text-destructive-foreground" : "border border-border bg-background font-normal text-foreground")}>{item.status}</Badge>
     </div>
@@ -1105,7 +1102,7 @@ function CourseCard({ course }: { course: Course }) {
         <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{course.status ?? "active"}</Badge>
       </div>
       {course.nextDeadline ? <p className="mt-2 text-xs text-muted-foreground">Next: {formatDateTime(course.nextDeadline)}</p> : null}
-      {course.url ? <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary"><ExternalLink size={12} /> Open Canvas course</p> : null}
+      {course.url ? <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary"><ExternalLink size={12} /> Open course page</p> : null}
     </>
   );
   return course.url ? (
@@ -1152,10 +1149,10 @@ function LoginNeeded({ message }: { message: string }) {
 function CanvasRequired({ message }: { message: string }) {
   return (
     <Card>
-      <CardHeader><CardTitle>Canvas login needed</CardTitle><CardDescription>{message}</CardDescription></CardHeader>
+      <CardHeader><CardTitle>Learning-platform login required</CardTitle><CardDescription>{message}</CardDescription></CardHeader>
       <CardContent className="flex flex-wrap items-center gap-2">
-        <Link to="/login"><Button variant="outline">Add Canvas token</Button></Link>
-        <p className="text-xs text-muted-foreground">Your StudentHub session stays signed in — paste your StudentHub token again alongside the Canvas token to keep everything working.</p>
+        <Link to="/login"><Button variant="outline">Add learning-platform token</Button></Link>
+        <p className="text-xs text-muted-foreground">Your university portal session stays signed in. Add the learning-platform token to enable course and assignment data.</p>
       </CardContent>
     </Card>
   );

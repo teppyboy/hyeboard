@@ -26,6 +26,7 @@ export type AdapterRequest = {
 };
 
 export type LoginImportInput = {
+  studenthubGoogleCredential?: string;
   studenthubToken?: string;
   studenthubCookie?: string;
   canvasToken?: string;

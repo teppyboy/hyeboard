@@ -38,7 +38,7 @@ function canvas(request: AdapterRequest) { return new CanvasClient(request.sessi
 // like the whole Hyeboard session is broken.
 function requireCanvas(request: AdapterRequest): void {
   if (!request.session?.canvas) {
-    throw new HyeboardError("CANVAS_LOGIN_REQUIRED", "This feature needs a Canvas login. Add a Canvas access token from the login page.", 409);
+    throw new HyeboardError("CANVAS_LOGIN_REQUIRED", "This feature needs a learning-platform login. Add a learning-platform access token from the login page.", 409);
   }
 }
 
@@ -73,8 +73,19 @@ function futureSession(sessions: ClassSession[], now = new Date()): ClassSession
 }
 
 function canvasFeatureError(error: unknown): never {
-  const message = error instanceof HyeboardError ? error.message : "Canvas data could not be loaded.";
-  throw new HyeboardError("CANVAS_UPSTREAM_UNAVAILABLE", `${message} Add or refresh your Canvas access token from the login page.`, 409);
+  const message = error instanceof HyeboardError ? error.message : "Learning-platform data could not be loaded.";
+  throw new HyeboardError("CANVAS_UPSTREAM_UNAVAILABLE", `${message} Add or refresh your learning-platform access token from the login page.`, 409);
+}
+
+function jwtExpiry(token: string): string | undefined {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return undefined;
+    const decoded = JSON.parse(atob(payload.replaceAll("-", "+").replaceAll("_", "/"))) as { exp?: number };
+    return decoded.exp ? new Date(decoded.exp * 1000).toISOString() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function todayInVietnam(): string {
@@ -92,16 +103,21 @@ export function createUetAdapter(): UniversityAdapter {
   return {
     university,
     async importSession(input: LoginImportInput): Promise<ImportedSession> {
-      if (!input.studenthubToken && !input.studenthubCookie && !input.canvasToken && !input.canvasCookie) {
-        throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide at least one StudentHub or Canvas credential until live OAuth/SAML relay is implemented", 400);
+      if (!input.studenthubGoogleCredential && !input.studenthubToken && !input.studenthubCookie && !input.canvasToken && !input.canvasCookie) {
+        throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide a university portal token, portal cookie, learning-platform token, or learning-platform cookie.", 400);
       }
-      const expiresAt = addHours(8);
+      const googleLogin = input.studenthubGoogleCredential
+        ? await new StudentHubClient().exchangeGoogleCredential(input.studenthubGoogleCredential)
+        : undefined;
+      const studenthubToken = googleLogin?.accessToken ?? input.studenthubToken;
+      const studenthubExpiresAt = studenthubToken ? jwtExpiry(studenthubToken) : undefined;
+      const expiresAt = studenthubExpiresAt ?? addHours(8);
       const session: EncryptedSessionPayload = {
         version: 1,
         universityId: "uet",
-        studentCode: input.studentCode,
+        studentCode: googleLogin?.accountCode ?? input.studentCode,
         expiresAt,
-        studenthub: input.studenthubToken ? { kind: "bearer", value: input.studenthubToken, expiresAt } : input.studenthubCookie ? { kind: "cookie", value: input.studenthubCookie, expiresAt } : undefined,
+        studenthub: studenthubToken ? { kind: "bearer", value: studenthubToken, expiresAt: studenthubExpiresAt ?? expiresAt } : input.studenthubCookie ? { kind: "cookie", value: input.studenthubCookie, expiresAt } : undefined,
         canvas: input.canvasToken ? { kind: "bearer", value: input.canvasToken, expiresAt } : input.canvasCookie ? { kind: "cookie", value: input.canvasCookie, csrfToken: input.canvasCsrfToken, expiresAt } : undefined,
       };
       // Verify the credential actually works against the real upstream before
@@ -111,16 +127,16 @@ export function createUetAdapter(): UniversityAdapter {
         try {
           await new StudentHubClient(session).getProfile();
         } catch {
-          throw new HyeboardError("INVALID_STUDENTHUB_CREDENTIAL", "StudentHub rejected this token or cookie. Re-copy it and try again.", 401);
+          throw new HyeboardError("INVALID_STUDENTHUB_CREDENTIAL", "The university portal rejected this token or cookie. Copy a fresh token and try again.", 401);
         }
       } else if (session.canvas) {
         try {
           await new CanvasClient(session).getUnreadConversations();
         } catch {
-          throw new HyeboardError("INVALID_CANVAS_CREDENTIAL", "Canvas rejected this token or cookie. Re-copy it and try again.", 401);
+          throw new HyeboardError("INVALID_CANVAS_CREDENTIAL", "The learning platform rejected this token or cookie. Copy a fresh token and try again.", 401);
         }
       }
-      return { universityId: "uet", studentCode: input.studentCode, expiresAt, session };
+      return { universityId: "uet", studentCode: session.studentCode, expiresAt, session };
     },
     async getStudentProfile(request) { return mapStudent(await studenthub(request).getProfile()); },
     async getTerms(request) { return (await studenthub(request).getTerms()).map(mapTerm); },
@@ -147,7 +163,7 @@ export function createUetAdapter(): UniversityAdapter {
       // "sign in again" guidance every other feature page already shows.
       if (allResults.every((result) => result.status === "rejected")) {
         const firstReason = studentR.status === "rejected" ? studentR.reason : undefined;
-        throw firstReason instanceof HyeboardError ? firstReason : new HyeboardError("UET_UPSTREAM_UNAVAILABLE", "Could not reach StudentHub or Canvas with the saved session. Sign in again.", 401);
+        throw firstReason instanceof HyeboardError ? firstReason : new HyeboardError("UET_UPSTREAM_UNAVAILABLE", "Could not reach the connected university services with the saved session. Sign in again.", 401);
       }
       const student = settle(studentR, undefined);
       const terms = settle(termsR, []);
@@ -166,15 +182,25 @@ export function createUetAdapter(): UniversityAdapter {
       const timetableToday = timetable
         .filter((session) => session.weekday === todayWeekday)
         .sort((a, b) => (a.periodStart ?? 0) - (b.periodStart ?? 0));
-      const todaySchedule = scheduleAlert.length ? scheduleAlert.sort((a, b) => (a.periodStart ?? 0) - (b.periodStart ?? 0)) : timetableToday;
-      const nextClass = futureSession(todaySchedule) ?? nextUpcomingSession(timetable) ?? null;
+      const courseCountSummary = courseCount ? { inTerm: courseCount.inTerm ?? 0, completed: courseCount.completed ?? 0 } : undefined;
+      const hasActiveTermCourses = courseCountSummary ? courseCountSummary.inTerm > 0 : true;
+      const todaySchedule = scheduleAlert.length
+        ? scheduleAlert.sort((a, b) => (a.periodStart ?? 0) - (b.periodStart ?? 0))
+        : hasActiveTermCourses
+          ? timetableToday
+          : [];
+      const nextClass = scheduleAlert.length
+        ? futureSession(todaySchedule) ?? null
+        : hasActiveTermCourses
+          ? futureSession(todaySchedule) ?? nextUpcomingSession(timetable) ?? null
+          : null;
 
       return {
         student,
         currentTerm: terms[0],
-        courseCount: courseCount ? { inTerm: courseCount.inTerm ?? 0, completed: courseCount.completed ?? 0 } : undefined,
+        courseCount: courseCountSummary,
         nextClass,
-        todaySchedule: todaySchedule.length ? todaySchedule : timetable.slice(0, 4),
+        todaySchedule,
         courses: canvasCourses,
         assignments,
         grades,
@@ -219,7 +245,7 @@ export function createUetAdapter(): UniversityAdapter {
       const studentCode = profile?.studentCode ?? request.session?.studentCode;
       return [
         ...mapStudentHubNotifications(page),
-        { id: "canvas-unread", title: `${unread.unread_count} unread Canvas messages`, createdAt: new Date().toISOString(), unread: Number(unread.unread_count) > 0, source: "canvas" as const, body: studentCode ? `Canvas inbox for ${studentCode}` : undefined },
+        { id: "canvas-unread", title: `${unread.unread_count} unread learning-platform messages`, createdAt: new Date().toISOString(), unread: Number(unread.unread_count) > 0, source: "canvas" as const, body: studentCode ? `Learning-platform inbox for ${studentCode}` : undefined },
       ];
     },
     async getNews(request) { return (await studenthub(request).getNews()).map(mapStudentHubNews); },
@@ -228,7 +254,7 @@ export function createUetAdapter(): UniversityAdapter {
     async getTrainingPoints(request) {
       const profile = await this.getStudentProfile(request);
       const studentCode = profile.studentCode ?? request.session?.studentCode;
-      if (!studentCode) throw new HyeboardError("MISSING_STUDENT_CODE", "StudentHub did not return a student code", 500);
+      if (!studentCode) throw new HyeboardError("MISSING_STUDENT_CODE", "The university portal did not return a student code", 500);
       const assessment = await studenthub(request).getTrainingPointAssessment(studentCode);
       const termCode = assessment.termCode ?? request.termCode ?? (await this.getTerms(request))[0]?.code;
       const locked = termCode ? await fallback(studenthub(request).getTrainingPointLockAssessment(studentCode, termCode), undefined) : undefined;

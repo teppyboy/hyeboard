@@ -4,7 +4,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const SESSION_KEY = "hyeboard.sessionToken";
 
 // Only these codes mean the Hyeboard session itself is dead - everything else
-// (e.g. a feature that needs a Canvas credential the user never provided) is
+// (e.g. a feature that needs a learning-platform credential the user never provided) is
 // a feature-specific problem that should NOT log the user out of a session
 // that is otherwise perfectly valid.
 const SESSION_INVALID_CODES = new Set(["MISSING_SESSION", "SESSION_EXPIRED", "INVALID_SESSION"]);
@@ -74,7 +74,7 @@ export const api = {
   news: (universityId: string) => request<NewsItem[]>(`/api/${universityId}/news`),
   trainingPoints: (universityId: string) => request<TrainingPoint[]>(`/api/${universityId}/training-points`),
   requests: (universityId: string) => request<ServiceRequest[]>(`/api/${universityId}/requests`),
-  importSession: async (universityId: string, body: { studentCode?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string }) => {
+  importSession: async (universityId: string, body: { studentCode?: string; studenthubGoogleCredential?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string }) => {
     const data = await request<{ token: string }>(`/api/${universityId}/auth/import-session`, { method: "POST", body: JSON.stringify(body) });
     setSessionToken(data.token);
     return data;
