@@ -306,3 +306,11 @@ textarea.control {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* iOS Safari auto-zooms the page on focus for any text input under 16px.
+   Force 16px on small viewports so focusing a field never triggers that zoom. */
+@media (max-width: 767px) {
+  input, textarea, select, .control {
+    font-size: 16px;
+  }
+}

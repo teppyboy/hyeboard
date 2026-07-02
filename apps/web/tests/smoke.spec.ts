@@ -113,7 +113,8 @@ test("settings can switch between neutral and university theme styles", async ({
   await expect(page.getByRole("group", { name: "Theme color" })).toHaveCount(0);
 });
 
-test("sidebar collapses and expands via toggle button", async ({ page }) => {
+test("sidebar collapses and expands via toggle button", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop-only sidebar, hidden below the lg breakpoint on mobile");
   await loginDemo(page);
   await expect(page.getByText("Demo", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/Powered by Hyeboard \(/)).toBeVisible();
