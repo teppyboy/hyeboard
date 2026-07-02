@@ -15,7 +15,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { api, ApiError, clearSessionToken, getSessionToken, SESSION_CLEARED_EVENT } from "@/lib/api";
 import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
 
@@ -202,6 +201,16 @@ function universityLogoUrl(universityId: string): string | undefined {
   if (universityId === "uet") return VNU_UET_LOGO_URL;
   if (universityId === "vnu") return VNU_LOGO_URL;
   return undefined;
+}
+
+function safeExternalUrl(value?: string): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
@@ -538,7 +547,7 @@ function CalendarSessionCard({ item }: { item: ClassSession }) {
       <p className="mt-1 text-muted-foreground">{item.courseCode} · {item.type ?? "Class session"}</p>
       <p className="text-muted-foreground">{item.room ?? "Room not listed"}</p>
       {item.instructor ? <p className="truncate text-muted-foreground">{item.instructor}</p> : null}
-      {item.url ? <a className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline" href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={11} /> Open class page</a> : null}
+      {safeExternalUrl(item.url) ? <a className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline" href={safeExternalUrl(item.url)} target="_blank" rel="noreferrer"><ExternalLink size={11} /> Open class page</a> : null}
     </div>
   );
 }
@@ -941,6 +950,12 @@ function LoginPage() {
     }
   };
 
+  const submitOnEnter = (event: React.KeyboardEvent<HTMLInputElement>, submit: () => Promise<void>) => {
+    if (event.key !== "Enter" || busy) return;
+    event.preventDefault();
+    void submit();
+  };
+
   return (
     <main className="login-screen min-h-screen bg-background px-4 py-10 text-foreground">
       <div className="animate-page mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-md flex-col justify-center">
@@ -986,7 +1001,7 @@ function LoginPage() {
                   <p className="mt-2 text-foreground">Portal tokens usually expire quickly. Hyeboard will return you here when a fresh token is needed.</p>
                 </div>
                 <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://studenthub.uet.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open university portal</Button>
-                <Textarea placeholder="University portal access token" value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} />
+                <Input type="password" autoComplete="off" placeholder="University portal access token" value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
                 <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://portal.uet.vnu.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open learning platform</Button>
                 <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
                   <p className="font-medium text-foreground">Optional: connect the learning platform</p>
@@ -998,21 +1013,21 @@ function LoginPage() {
                     <li>Copy the token shown once and paste it below.</li>
                   </ol>
                 </div>
-                <Textarea placeholder="Learning platform access token" value={canvasToken} onChange={(event) => setCanvasToken(event.target.value)} />
+                <Input type="password" autoComplete="off" placeholder="Learning platform access token" value={canvasToken} onChange={(event) => setCanvasToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
                 <details className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
                   <summary className="cursor-pointer font-medium text-foreground">Advanced cookie options</summary>
                   <div className="mt-3 space-y-3">
-                    <Textarea placeholder="University portal cookie, if token import is unavailable" value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} />
-                    <Textarea placeholder="Learning platform cookie, if access tokens are disabled" value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} />
-                    <Input placeholder="Learning platform CSRF token, only when using cookie mode" value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} />
+                    <Input type="password" autoComplete="off" placeholder="University portal cookie, if token import is unavailable" value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    <Input type="password" autoComplete="off" placeholder="Learning platform cookie, if access tokens are disabled" value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    <Input type="password" autoComplete="off" placeholder="Learning platform CSRF token, only when using cookie mode" value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
                   </div>
                 </details>
                 <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
               </>
             ) : selectedUniversity === "vnu" ? (
               <>
-                <Input placeholder="Student code / username" value={vnuUsername} onChange={(event) => setVnuUsername(event.target.value)} />
-                <Input type="password" placeholder="Password" value={vnuPassword} onChange={(event) => setVnuPassword(event.target.value)} />
+                <Input placeholder="Student code / username" autoComplete="username" value={vnuUsername} onChange={(event) => setVnuUsername(event.target.value)} />
+                <Input type="password" autoComplete="current-password" placeholder="Password" value={vnuPassword} onChange={(event) => setVnuPassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importVnuSession)} />
                 <Button onClick={importVnuSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
               </>
             ) : (
@@ -1146,7 +1161,7 @@ function ScheduleItem({ item }: { item: ClassSession }) {
       <div className="min-w-0">
         <p className="truncate font-medium">{item.courseName}</p>
         <p className="truncate text-xs text-muted-foreground">{item.courseCode} · {item.room ?? "No room"} · {item.instructor ?? "Instructor TBD"}</p>
-        {item.url ? <a className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={12} /> Open class page</a> : null}
+        {safeExternalUrl(item.url) ? <a className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" href={safeExternalUrl(item.url)} target="_blank" rel="noreferrer"><ExternalLink size={12} /> Open class page</a> : null}
       </div>
       <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{label}</Badge>
     </div>
@@ -1167,6 +1182,7 @@ function AssignmentItem({ item }: { item: Assignment }) {
 
 function CourseCard({ course }: { course: Course }) {
   const className = "motion-surface block rounded-lg border border-border p-4 hover:bg-muted/40";
+  const url = safeExternalUrl(course.url);
   const content = (
     <>
       <div className="flex items-start justify-between gap-3">
@@ -1174,11 +1190,11 @@ function CourseCard({ course }: { course: Course }) {
         <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{course.status ?? "active"}</Badge>
       </div>
       {course.nextDeadline ? <p className="mt-2 text-xs text-muted-foreground">Next: {formatDateTime(course.nextDeadline)}</p> : null}
-      {course.url ? <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary"><ExternalLink size={12} /> Open course page</p> : null}
+      {url ? <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary"><ExternalLink size={12} /> Open course page</p> : null}
     </>
   );
-  return course.url ? (
-    <a className={className} href={course.url} target="_blank" rel="noreferrer">{content}</a>
+  return url ? (
+    <a className={className} href={url} target="_blank" rel="noreferrer">{content}</a>
   ) : (
     <div className={className}>{content}</div>
   );
@@ -1198,7 +1214,8 @@ function RequestRow({ item }: { item: ServiceRequest }) {
 }
 
 function FeedItem({ title, detail, url }: { title: string; detail: string; url?: string }) {
-  const titleNode = url ? <a href={url} target="_blank" rel="noreferrer" className="hover:underline">{title}</a> : title;
+  const safeUrl = safeExternalUrl(url);
+  const titleNode = safeUrl ? <a href={safeUrl} target="_blank" rel="noreferrer" className="hover:underline">{title}</a> : title;
   return (
     <div className="list-row">
       <div className="flex min-w-0 items-start gap-3">

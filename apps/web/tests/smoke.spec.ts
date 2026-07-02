@@ -31,14 +31,14 @@ test("login shows university-specific sections", async ({ page }) => {
   await expect(page.getByText("Connect your university portal")).toBeVisible();
   await expect(page.getByText(/origin_mismatch/)).toBeVisible();
   await expect(page.getByText(/copy\(localStorage\.getItem/)).toBeVisible();
-  await expect(page.getByPlaceholder("University portal access token")).toBeVisible();
+  await expect(page.getByPlaceholder("University portal access token")).toHaveAttribute("type", "password");
   await expect(page.getByRole("button", { name: "Open university portal" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open learning platform" })).toBeVisible();
   await expect(page.getByText("Optional: connect the learning platform")).toBeVisible();
-  await expect(page.getByPlaceholder("Learning platform access token")).toBeVisible();
+  await expect(page.getByPlaceholder("Learning platform access token")).toHaveAttribute("type", "password");
   await expect(page.getByText("Advanced cookie options")).toBeVisible();
   await page.getByText("Advanced cookie options").click();
-  await expect(page.getByPlaceholder("University portal cookie, if token import is unavailable")).toBeVisible();
+  await expect(page.getByPlaceholder("University portal cookie, if token import is unavailable")).toHaveAttribute("type", "password");
   await expect(page.getByPlaceholder("Student code, optional")).toHaveCount(0);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "uet");
 

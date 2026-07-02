@@ -15,13 +15,22 @@ export class StudentHubClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const response = await fetch(`${STUDENTHUB_BASE}${path}`, {
-      ...init,
-      headers: { ...this.headers(), "Content-Type": "application/json", ...init.headers },
-    });
-    if (!response.ok) throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", `StudentHub request failed: ${response.status}`, response.status);
-    const json = (await response.json()) as T;
-    return unwrapStudentHubEnvelope(json);
+    let response: Response;
+    try {
+      response = await fetch(`${STUDENTHUB_BASE}${path}`, {
+        ...init,
+        headers: { ...this.headers(), "Content-Type": "application/json", ...init.headers },
+      });
+    } catch {
+      throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "Could not reach the university portal. Try again later.", 502);
+    }
+    if (!response.ok) throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", `University portal request failed: ${response.status}`, response.status);
+    try {
+      const json = (await response.json()) as T;
+      return unwrapStudentHubEnvelope(json);
+    } catch {
+      throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "The university portal returned a non-JSON response.", 502);
+    }
   }
 
   async exchangeGoogleCredential(credential: string) {

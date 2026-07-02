@@ -33,9 +33,11 @@ function getSession(headers: Headers | Record<string, string | undefined>) {
 
 function routeError(error: unknown, requestId?: string) {
   const id = requestId ?? "-";
-  console.error(`[${id}]`, error);
-  if (error instanceof HyeboardError)
+  if (error instanceof HyeboardError) {
+    const log = error.status >= 500 ? console.error : console.warn;
+    log(`[${id}] ${error.code} (${error.status}): ${error.message}`);
     return new Response(JSON.stringify(fail(error.code, error.message, error.details)), { status: error.status, headers: { "Content-Type": "application/json" } });
+  }
   console.error(`[${id}] Unhandled error type:`, typeof error, error instanceof Error ? error.stack : "");
   return new Response(JSON.stringify(fail("INTERNAL_ERROR", "Unexpected API error")), { status: 500, headers: { "Content-Type": "application/json" } });
 }
@@ -77,7 +79,11 @@ async function cacheGet<T>(key: string): Promise<T | undefined> {
   const cache = await caches.open("hyeboard");
   const response = await cache.match(new Request(`https://hyeboard.internal/cache/${key}`));
   if (!response) return undefined;
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 async function cachePut(key: string, value: unknown, maxAgeSeconds: number): Promise<void> {
@@ -95,7 +101,7 @@ async function cachePut(key: string, value: unknown, maxAgeSeconds: number): Pro
 }
 
 async function vnuImportCacheKey(username: string, password: string): Promise<string> {
-  return `vnu/import/${await hmacHex(`${username.trim().toLowerCase()}\n${password}`)}`;
+  return `vnu/import/${await hmacHex(`${username.trim()}\n${password}`)}`;
 }
 
 async function vnuRawCacheKey(session: EncryptedSessionPayload, page: string, params: Record<string, string | undefined>): Promise<string> {

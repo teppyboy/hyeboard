@@ -19,14 +19,14 @@ export class CanvasClient {
     let response: Response;
     try {
       response = await fetch(`${CANVAS_BASE}${path}`, { headers: this.headers() });
-    } catch (error) {
-      throw new HyeboardError("CANVAS_REQUEST_FAILED", error instanceof Error ? error.message : "Canvas request failed", 502);
+    } catch {
+      throw new HyeboardError("CANVAS_REQUEST_FAILED", "Could not reach the learning platform. Try again later.", 502);
     }
-    if (!response.ok) throw new HyeboardError("CANVAS_REQUEST_FAILED", `Canvas request failed: ${response.status}`, response.status);
+    if (!response.ok) throw new HyeboardError("CANVAS_REQUEST_FAILED", `Learning platform request failed: ${response.status}`, response.status);
     try {
       return await response.json() as T;
     } catch {
-      throw new HyeboardError("CANVAS_REQUEST_FAILED", "Canvas returned a non-JSON response", 502);
+      throw new HyeboardError("CANVAS_REQUEST_FAILED", "The learning platform returned a non-JSON response.", 502);
     }
   }
 
