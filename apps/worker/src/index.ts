@@ -49,6 +49,8 @@ const importSessionBody = t.Object({
   canvasToken: t.Optional(t.String()),
   canvasCookie: t.Optional(t.String()),
   canvasCsrfToken: t.Optional(t.String()),
+  vnuUsername: t.Optional(t.String()),
+  vnuPassword: t.Optional(t.String()),
   studentCode: t.Optional(t.String()),
 });
 

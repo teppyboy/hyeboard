@@ -74,7 +74,7 @@ export const api = {
   news: (universityId: string) => request<NewsItem[]>(`/api/${universityId}/news`),
   trainingPoints: (universityId: string) => request<TrainingPoint[]>(`/api/${universityId}/training-points`),
   requests: (universityId: string) => request<ServiceRequest[]>(`/api/${universityId}/requests`),
-  importSession: async (universityId: string, body: { studentCode?: string; studenthubGoogleCredential?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string }) => {
+  importSession: async (universityId: string, body: { studentCode?: string; studenthubGoogleCredential?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string; vnuUsername?: string; vnuPassword?: string }) => {
     const data = await request<{ token: string }>(`/api/${universityId}/auth/import-session`, { method: "POST", body: JSON.stringify(body) });
     setSessionToken(data.token);
     return data;

@@ -33,6 +33,15 @@
   --sidebar: 210 33% 99%;
 }
 
+:root[data-theme="vnu"] {
+  --primary: 353 61% 30%;
+  --primary-foreground: 0 0% 100%;
+  --accent: 353 51% 96%;
+  --accent-foreground: 353 61% 30%;
+  --ring: 353 51% 46%;
+  --sidebar: 353 40% 99%;
+}
+
 :root[data-mode="dark"] {
   --background: 0 0% 5%;
   --foreground: 0 0% 96%;
@@ -60,6 +69,15 @@
   --accent-foreground: 204 95% 78%;
   --ring: 204 95% 67%;
   --sidebar: 210 35% 7%;
+}
+
+:root[data-theme="vnu"][data-mode="dark"] {
+  --primary: 353 70% 68%;
+  --primary-foreground: 353 45% 10%;
+  --accent: 353 40% 16%;
+  --accent-foreground: 353 70% 80%;
+  --ring: 353 70% 68%;
+  --sidebar: 353 35% 8%;
 }
 
 @layer base {

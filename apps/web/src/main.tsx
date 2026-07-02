@@ -3,7 +3,7 @@ import "./styles.css";
 import type { Assignment, Bill, ClassSession, Course, DashboardSummary, DocumentItem, ExamSession, Grade, NewsItem, Notification, ServiceRequest, TrainingPoint } from "@hyeboard/schemas";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, redirect, RouterProvider, useNavigate } from "@tanstack/react-router";
-import { Bell, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ClipboardList, ExternalLink, FileText, GraduationCap, KeyRound, LayoutDashboard, LibraryBig, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Receipt, School, Search, Settings, Sun, UserRound, WalletCards } from "lucide-react";
+import { Bell, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ClipboardList, ExternalLink, FileText, GraduationCap, KeyRound, LayoutDashboard, LibraryBig, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Receipt, Search, Settings, Sun, UserRound, WalletCards } from "lucide-react";
 import { createContext, StrictMode, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +25,7 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },
 });
 
-type Palette = "geist" | "uet";
+type Palette = "geist" | "uet" | "vnu";
 type Mode = "light" | "dark";
 
 const THEME_HUE_PRESETS = [
@@ -37,16 +37,19 @@ const THEME_HUE_PRESETS = [
   { hue: 199, label: "Teal" },
 ] as const;
 
+const VNU_UET_LOGO_URL = "https://2489013871.e.cdneverest.net/uet.edu.vn/2017/02/cropped-logo2_new-1-180x180.png";
+const VNU_LOGO_URL = "https://cdnportal.vnu.edu.vn/data/0/images/2025/03/06/upload_1/logo-vnu.svg";
+
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/timetable", label: "Timetable", icon: CalendarDays },
-  { to: "/courses", label: "Courses", icon: BookOpen },
-  { to: "/assignments", label: "Assignments", icon: ClipboardList },
-  { to: "/grades", label: "Grades", icon: GraduationCap },
-  { to: "/exams", label: "Exams", icon: LibraryBig },
-  { to: "/tuition", label: "Tuition", icon: Receipt },
-  { to: "/documents", label: "Documents", icon: FileText },
-  { to: "/training-points", label: "Training Points", icon: CheckCircle2 },
+  { to: "/timetable", label: "Timetable", icon: CalendarDays, capability: "timetable" },
+  { to: "/courses", label: "Courses", icon: BookOpen, capability: "courses" },
+  { to: "/assignments", label: "Assignments", icon: ClipboardList, capability: "assignments" },
+  { to: "/grades", label: "Grades", icon: GraduationCap, capability: "grades" },
+  { to: "/exams", label: "Exams", icon: LibraryBig, capability: "exams" },
+  { to: "/tuition", label: "Tuition", icon: Receipt, capability: "tuition" },
+  { to: "/documents", label: "Documents", icon: FileText, capability: "documentsHub" },
+  { to: "/training-points", label: "Training Points", icon: CheckCircle2, capability: "trainingPoints" },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -116,7 +119,7 @@ function useHyeboardState() {
     localStorage.setItem("hyeboard.mode", mode);
     localStorage.setItem("hyeboard.universityId", universityId);
     localStorage.setItem("hyeboard.themeHue", String(themeHue));
-    if (palette === "uet") applyAccentHue(themeHue, mode === "dark");
+    if (palette === "uet" || palette === "vnu") applyAccentHue(themeHue, mode === "dark");
     else clearAccentOverride();
   }, [mode, palette, universityId, themeHue]);
 
@@ -145,7 +148,7 @@ function useHyeboardState() {
     if (options.clearSession ?? true) clearSessionToken();
     setSessionNonce((value) => value + 1);
     setUniversityId(nextUniversityId);
-    setPalette(nextUniversityId === "uet" ? "uet" : "geist");
+    setPalette(nextUniversityId === "uet" || nextUniversityId === "vnu" ? (nextUniversityId as Palette) : "geist");
   };
 
   const refreshSession = () => {
@@ -175,9 +178,17 @@ function useFeatureQuery<T>(name: string, queryFn: () => Promise<T>, options: { 
 }
 
 function SidebarNav({ collapsed = false }: { collapsed?: boolean } = {}) {
+  const state = useHyeboard();
+  const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
+  const visibleNav = nav.filter((item) => {
+    if (!("capability" in item)) return true;
+    if (!capabilities) return true;
+    if (item.capability === "documentsHub") return capabilities.documents || capabilities.requests || capabilities.news;
+    return capabilities[item.capability as keyof typeof capabilities] !== false;
+  });
   return (
     <nav className="space-y-1 px-3 py-4">
-      {nav.map((item) => <NavLink key={item.to} {...item} collapsed={collapsed} />)}
+      {visibleNav.map((item) => <NavLink key={item.to} {...item} collapsed={collapsed} />)}
     </nav>
   );
 }
@@ -189,7 +200,7 @@ function ProfileCard({ collapsed = false }: { collapsed?: boolean } = {}) {
   return (
     <div className="mx-3 mt-4 rounded-xl border border-border bg-card p-4">
       <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Active profile</p>
-      <p className="mt-2 text-sm font-medium">{data?.student?.fullName ?? (state.universityId === "uet" ? "Sign in required" : "Demo Student")}</p>
+      <p className="mt-2 text-sm font-medium">{data?.student?.fullName ?? (state.universityId === "uet" || state.universityId === "vnu" ? "Sign in required" : "Demo Student")}</p>
       <p className="text-xs text-muted-foreground">{data?.student?.studentCode ?? state.universityId.toUpperCase()}</p>
     </div>
   );
@@ -197,15 +208,33 @@ function ProfileCard({ collapsed = false }: { collapsed?: boolean } = {}) {
 
 function SidebarFooter({ collapsed = false }: { collapsed?: boolean } = {}) {
   if (collapsed) return <div className="mt-auto" />;
-  return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">Hyeboard build {__HYEB_GIT_COMMIT__}</p>;
+  return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">Powered by Hyeboard ({__HYEB_GIT_COMMIT__})</p>;
+}
+
+function universityLogoUrl(universityId: string): string | undefined {
+  if (universityId === "uet") return VNU_UET_LOGO_URL;
+  if (universityId === "vnu") return VNU_LOGO_URL;
+  return undefined;
 }
 
 function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
   const state = useHyeboard();
   const university = state.universities.data?.find((item) => item.id === state.universityId);
+  const logoUrl = universityLogoUrl(state.universityId);
   return (
     <div className={cn("flex h-16 items-center gap-3", collapsed ? "px-[18px]" : "px-5")}>
-      <div data-testid="brand-icon" className="brand-icon grid shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground"><School size={19} /></div>
+      <div
+        data-testid="brand-icon"
+        data-university={state.universityId}
+        className={cn(
+          "brand-icon grid shrink-0 place-items-center rounded-lg",
+          logoUrl ? "border border-border bg-background p-1" : "bg-primary text-primary-foreground",
+        )}
+      >
+        {logoUrl
+          ? <img className="h-full w-full object-contain" src={logoUrl} alt="" draggable={false} />
+          : <GraduationCap size={19} aria-hidden="true" />}
+      </div>
       <div
         className={cn(
           "min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-300 ease-[var(--ease-out-quint)]",
@@ -600,8 +629,8 @@ function GradesPage() {
         return (
           <div className="space-y-6">
             <div className="grid gap-3 md:grid-cols-3">
-              <Metric title="GPA" value={gpa?.gpa?.toFixed(2) ?? "-"} detail="current term average" />
-              <Metric title="CPA" value={gpa?.cpa?.toFixed(2) ?? "-"} detail="cumulative average" />
+              <Metric title="GPA" value={gpa?.gpa?.toFixed(2) ?? "-"} detail="most recent term average" />
+              <Metric title="CPA" value={gpa?.cpa?.toFixed(2) ?? "-"} detail={state.universityId === "vnu" ? "cumulative, as reported by the portal" : "cumulative average"} />
               <Metric title="Credits" value={String(gpa?.totalAccumulatedCredits ?? "-")} detail="credits completed" />
             </div>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, grades]) => {
@@ -680,16 +709,35 @@ function GradeTable({ grades, sort, onSortChange, universityId }: { grades: Grad
 function ExamsPage() {
   const state = useHyeboard();
   const [view, setView] = useState<"list" | "calendar">("list");
-  const query = useFeatureQuery("exams", () => api.exams(state.universityId, state.termCode));
+  const [selectedTerm, setSelectedTerm] = useState<string | undefined>(undefined);
+  const terms = useQuery({
+    queryKey: ["terms", state.universityId, state.sessionNonce],
+    queryFn: async () => { await state.ensureSession(); return api.terms(state.universityId); },
+  });
+  const effectiveTerm = selectedTerm ?? state.termCode;
+  const query = useQuery({
+    queryKey: ["exams", state.universityId, effectiveTerm, state.sessionNonce],
+    queryFn: async () => { await state.ensureSession(); return api.exams(state.universityId, effectiveTerm); },
+  });
   return (
     <FeatureFrame title="Exams" description="Exam schedule with method, room, session, and seat number." query={query}>
       {(items) => (
         <div className="space-y-4">
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button variant={view === "list" ? "default" : "outline"} size="sm" onClick={() => setView("list")}>List</Button>
-            <Button variant={view === "calendar" ? "default" : "outline"} size="sm" onClick={() => setView("calendar")}>Calendar</Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {terms.data?.length ? (
+              <Select value={effectiveTerm ?? ""} onValueChange={(value) => setSelectedTerm(value)}>
+                <SelectTrigger className="h-9 w-[220px]" aria-label="Term"><SelectValue placeholder="Term" /></SelectTrigger>
+                <SelectContent>
+                  {terms.data.map((term) => <SelectItem key={term.code} value={term.code}>{term.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : <span />}
+            <div className="flex gap-2">
+              <Button variant={view === "list" ? "default" : "outline"} size="sm" onClick={() => setView("list")}>List</Button>
+              <Button variant={view === "calendar" ? "default" : "outline"} size="sm" onClick={() => setView("calendar")}>Calendar</Button>
+            </div>
           </div>
-          <div key={view} className="view-panel">{view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />}</div>
+          <div key={view} className="view-panel">{items.length ? (view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />) : <Empty text="No exams scheduled for this term yet." />}</div>
         </div>
       )}
     </FeatureFrame>
@@ -778,18 +826,28 @@ function DocumentsPage() {
   const state = useHyeboard();
   const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
   const showDocuments = capabilities?.documents ?? true;
+  const showNews = capabilities?.news ?? true;
   const showRequests = capabilities?.requests ?? true;
+  const [docSearch, setDocSearch] = useState("");
 
   const docs = useFeatureQuery("documents", () => api.documents(state.universityId), { enabled: showDocuments });
-  const news = useFeatureQuery("news", () => api.news(state.universityId));
+  const news = useFeatureQuery("news", () => api.news(state.universityId), { enabled: showNews });
   const requests = useFeatureQuery("requests", () => api.requests(state.universityId), { enabled: showRequests });
+  const filteredDocs = docSearch.trim()
+    ? docs.data?.filter((item) => `${item.name} ${item.courseCode ?? ""}`.toLowerCase().includes(docSearch.trim().toLowerCase()))
+    : docs.data;
 
   return (
     <div className="space-y-4">
       <FeatureHeader title="Documents & Services" description="University files, announcements, and service requests." />
       <div className="grid gap-4 xl:grid-cols-2">
-        {showDocuments ? <MiniPanel title="Documents" query={docs}>{(items) => items.map((item) => <DocumentRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title="Documents" />}
-        <MiniPanel title="News" query={news}>{(items) => items.map((item) => <FeedItem key={item.id} title={item.title} detail={item.category ?? item.date ?? "News"} url={item.url} />)}</MiniPanel>
+        {showDocuments ? (
+          <div className="space-y-2">
+            <Input value={docSearch} onChange={(event) => setDocSearch(event.target.value)} placeholder="Search documents..." aria-label="Search documents" />
+            <MiniPanel title="Documents" query={{ ...docs, data: filteredDocs }}>{(items) => items.map((item) => <DocumentRow key={item.id} item={item} />)}</MiniPanel>
+          </div>
+        ) : <UnsupportedPanel title="Documents" />}
+        {showNews ? <MiniPanel title="News" query={news}>{(items) => items.map((item) => <FeedItem key={item.id} title={item.title} detail={item.category ?? item.date ?? "News"} url={item.url} />)}</MiniPanel> : <UnsupportedPanel title="News" />}
         {showRequests ? <MiniPanel title="Requests" query={requests}>{(items) => items.map((item) => <RequestRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title="Requests" />}
       </div>
     </div>
@@ -818,12 +876,14 @@ function UnsupportedPanel({ title }: { title: string }) {
 function LoginPage() {
   const state = useHyeboard();
   const navigate = useNavigate();
-  const [selectedUniversity, setSelectedUniversity] = useState<"mock" | "uet">(() => getSessionToken() && state.universityId === "mock" ? "mock" : "uet");
+  const [selectedUniversity, setSelectedUniversity] = useState<"mock" | "uet" | "vnu">(() => (getSessionToken() && (state.universityId === "mock" || state.universityId === "vnu") ? (state.universityId as "mock" | "vnu") : "uet"));
   const [studenthubToken, setStudenthubToken] = useState("");
   const [studenthubCookie, setStudenthubCookie] = useState("");
   const [canvasToken, setCanvasToken] = useState("");
   const [canvasCookie, setCanvasCookie] = useState("");
   const [canvasCsrfToken, setCanvasCsrfToken] = useState("");
+  const [vnuUsername, setVnuUsername] = useState("");
+  const [vnuPassword, setVnuPassword] = useState("");
   const [status, setStatus] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -832,7 +892,7 @@ function LoginPage() {
   // school is selected on this screen so the login page never renders with
   // the wrong accent color.
   useEffect(() => {
-    state.setPalette(selectedUniversity === "uet" ? "uet" : "geist");
+    state.setPalette(selectedUniversity === "uet" || selectedUniversity === "vnu" ? selectedUniversity : "geist");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -852,9 +912,9 @@ function LoginPage() {
     }
   };
 
-  const chooseUniversity = (universityId: "mock" | "uet") => {
+  const chooseUniversity = (universityId: "mock" | "uet" | "vnu") => {
     setSelectedUniversity(universityId);
-    state.setPalette(universityId === "uet" ? "uet" : "geist");
+    state.setPalette(universityId === "uet" || universityId === "vnu" ? universityId : "geist");
     setStatus(undefined);
   };
 
@@ -880,11 +940,31 @@ function LoginPage() {
     }
   };
 
+  const importVnuSession = async () => {
+    setBusy(true);
+    setStatus("Securing your university session...");
+    try {
+      await api.importSession("vnu", { vnuUsername: vnuUsername || undefined, vnuPassword: vnuPassword || undefined });
+      state.selectUniversity("vnu", { clearSession: false });
+      state.refreshSession();
+      setStatus("University session ready. Opening dashboard...");
+      await navigate({ to: "/" });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "University session could not be imported.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <main className="login-screen min-h-screen bg-background px-4 py-10 text-foreground">
       <div className="animate-page mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-md flex-col justify-center">
         <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm"><School size={21} /></div>
+          <div className={cn("mb-4 grid h-11 w-11 place-items-center rounded-xl shadow-sm", universityLogoUrl(selectedUniversity) ? "border border-border bg-background p-1.5" : "bg-primary text-primary-foreground")}>
+            {universityLogoUrl(selectedUniversity)
+              ? <img className="h-full w-full object-contain" src={universityLogoUrl(selectedUniversity)} alt="" draggable={false} />
+              : <GraduationCap size={21} aria-hidden="true" />}
+          </div>
           <h1 className="text-2xl font-semibold tracking-tight">Sign in to Hyeboard</h1>
           <p className="mt-2 text-sm text-muted-foreground">Connect a university session to open your dashboard.</p>
         </div>
@@ -893,13 +973,14 @@ function LoginPage() {
           <CardHeader className="space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : "Use Demo Data"}</CardTitle>
-                <CardDescription>{selectedUniversity === "uet" ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : "Open Hyeboard with safe sample data."}</CardDescription>
+                <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : selectedUniversity === "vnu" ? "Connect VNU account" : "Use Demo Data"}</CardTitle>
+                <CardDescription>{selectedUniversity === "uet" ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : selectedUniversity === "vnu" ? "Sign in with your VNU training-portal username and password." : "Open Hyeboard with safe sample data."}</CardDescription>
               </div>
-              <Select value={selectedUniversity} onValueChange={(value) => chooseUniversity(value as "mock" | "uet")}>
+              <Select value={selectedUniversity} onValueChange={(value) => chooseUniversity(value as "mock" | "uet" | "vnu")}>
                 <SelectTrigger className="h-9 w-[128px] shrink-0" aria-label="School"><SelectValue placeholder="School" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="uet">VNU-UET</SelectItem>
+                  <SelectItem value="vnu">VNU</SelectItem>
                   <SelectItem value="mock">Mock</SelectItem>
                 </SelectContent>
               </Select>
@@ -943,6 +1024,12 @@ function LoginPage() {
                 </details>
                 <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
               </>
+            ) : selectedUniversity === "vnu" ? (
+              <>
+                <Input placeholder="Student code / username" value={vnuUsername} onChange={(event) => setVnuUsername(event.target.value)} />
+                <Input type="password" placeholder="Password" value={vnuPassword} onChange={(event) => setVnuPassword(event.target.value)} />
+                <Button onClick={importVnuSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
+              </>
             ) : (
               <>
                 <Button onClick={useDemo} disabled={busy} className="w-full">Open Demo Workspace</Button>
@@ -982,10 +1069,10 @@ function SettingsPage() {
               <span className="text-sm">Theme style</span>
               <div className="flex rounded-lg border border-border p-1" role="group" aria-label="Theme style">
                 <Button type="button" variant={state.palette === "geist" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("geist")}>Neutral</Button>
-                <Button type="button" variant={state.palette === "uet" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("uet")}>VNU-UET</Button>
+                <Button type="button" variant={state.palette !== "geist" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette(state.universityId === "uet" || state.universityId === "vnu" ? state.universityId : "uet")}>Colored</Button>
               </div>
             </div>
-            {state.palette === "uet" ? (
+            {state.palette === "uet" || state.palette === "vnu" ? (
               <div className="flex items-center justify-between">
                 <span className="text-sm">Theme color</span>
                 <div className="flex items-center gap-1.5" role="group" aria-label="Theme color">
@@ -1113,7 +1200,7 @@ function CourseCard({ course }: { course: Course }) {
 }
 
 function DocumentRow({ item }: { item: DocumentItem }) {
-  return <FeedItem title={item.name} detail={`${item.courseCode ?? "Document"}${item.updatedAt ? ` · ${formatDateTime(item.updatedAt)}` : ""}`} />;
+  return <FeedItem title={item.name} detail={`${item.courseCode ?? "Document"}${item.updatedAt ? ` · ${formatDateTime(item.updatedAt)}` : ""}`} url={item.url} />;
 }
 
 function TrainingPointRow({ item }: { item: TrainingPoint }) {
@@ -1158,7 +1245,12 @@ function CanvasRequired({ message }: { message: string }) {
   );
 }
 
+function NotSupported({ message }: { message: string }) {
+  return <Card><CardHeader><CardTitle>Not available</CardTitle><CardDescription>{message}</CardDescription></CardHeader><CardContent className="flex flex-wrap gap-2"><Link to="/"><Button variant="outline">Return</Button></Link></CardContent></Card>;
+}
+
 function QueryErrorPanel({ error }: { error: Error }) {
+  if (error instanceof ApiError && error.code === "UNSUPPORTED_FEATURE") return <NotSupported message={error.message} />;
   return error instanceof ApiError && error.code?.startsWith("CANVAS_")
     ? <CanvasRequired message={error.message} />
     : <LoginNeeded message={error.message} />;

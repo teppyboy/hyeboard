@@ -1,11 +1,13 @@
 import { HyeboardError } from "@hyeboard/core";
 import { createMockAdapter } from "./mock/adapter";
 import { createUetAdapter } from "./uet/adapter";
+import { createVnuAdapter } from "./vnu/adapter";
 import type { UniversityAdapter } from "./types";
 
 const adapters: Record<string, UniversityAdapter> = {
   mock: createMockAdapter(),
   uet: createUetAdapter(),
+  vnu: createVnuAdapter(),
 };
 
 export function listUniversities() {

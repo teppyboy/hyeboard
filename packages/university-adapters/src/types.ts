@@ -32,6 +32,8 @@ export type LoginImportInput = {
   canvasToken?: string;
   canvasCookie?: string;
   canvasCsrfToken?: string;
+  vnuUsername?: string;
+  vnuPassword?: string;
   studentCode?: string;
 };
 

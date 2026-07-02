@@ -13,6 +13,7 @@ export type EncryptedSessionPayload = {
   studentCode?: string;
   studenthub?: UpstreamCredential;
   canvas?: UpstreamCredential;
+  vnu?: UpstreamCredential;
   expiresAt: string;
 };
 
