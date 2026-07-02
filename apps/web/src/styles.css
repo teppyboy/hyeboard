@@ -125,7 +125,11 @@ textarea.control {
   transition: grid-template-columns 280ms var(--ease-out-quint);
 }
 
-.brand-icon,
+.brand-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
 .sidebar-rail-button {
   width: 2.5rem;
   height: 2.5rem;

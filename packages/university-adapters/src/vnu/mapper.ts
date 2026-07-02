@@ -27,15 +27,18 @@ export function mapGradeRow(row: VnuGradesResult["rows"][number], index: number)
   };
 }
 
-// daotao doesn't expose a single "current term GPA" figure the way UET's
-// StudentHub does — the grades page (ListPoint_Brc1.asp) only has cumulative
-// totals, and per-term GPA lives on a separate page (TabStdStudy.asp), which
-// also lists future/not-yet-started terms with a defined-but-meaningless
-// termGpa of 0. To avoid picking one of those empty future terms, "current
-// term" is restricted to term codes that actually have real coursework in
-// the grades table, then the most recent one of those is used both for the
-// term GPA and for the "credits this term" figure (also scraped-page-derived
-// from the grades table, distinct from the cumulative total).
+// Verified against a live StudentHub /api/student/results capture: UET's own
+// "gpa" field is the portal's single headline average ("Điểm trung bình (hệ
+// 4)"), not a current-term-only figure — "cpa" is typically unpopulated
+// (null) there. To keep the two adapters consistent, `gpa` here mirrors that
+// same headline convention and is sourced from the grades page's own
+// cumulative summary line ("Điểm trung bình tích lũy hệ 4"), which is the
+// one real headline average daotao publishes. `cpa` is repurposed as a
+// secondary, most-recent-term reference figure from TabStdStudy.asp (daotao
+// doesn't have a distinct "current term GPA" endpoint the way UET does, and
+// that page also lists future/not-yet-started terms with a
+// defined-but-meaningless termGpa of 0 — restricted to term codes that
+// actually have real coursework in the grades table, most recent one wins).
 export function mapGpaSummary(grades: VnuGradesResult, progress: VnuTermProgressRow[]): GpaSummary {
   const termsWithCourses = new Set(grades.rows.map((row) => row.termCode).filter(Boolean));
   const currentTermCode = [...termsWithCourses].sort((a, b) => Number.parseInt(b, 10) - Number.parseInt(a, 10))[0];
@@ -44,8 +47,8 @@ export function mapGpaSummary(grades: VnuGradesResult, progress: VnuTermProgress
     .filter((row) => row.termCode === currentTermCode)
     .reduce((sum, row) => sum + (row.credits ?? 0), 0);
   return {
-    gpa: currentTermProgress?.termGpa ?? null,
-    cpa: grades.cumulativeGpa4 ?? null,
+    gpa: grades.cumulativeGpa4 ?? null,
+    cpa: currentTermProgress?.termGpa ?? null,
     totalCredits: currentTermCode ? currentTermCredits : grades.totalCredits,
     totalAccumulatedCredits: grades.totalAccumulatedCredits,
     totalCourses: grades.rows.length || undefined,

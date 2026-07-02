@@ -7,8 +7,8 @@ import type { AdapterRequest, ImportedSession, LoginImportInput, UniversityAdapt
 
 const university: University = {
   id: "vnu",
-  name: "Vietnam National University, Hanoi",
-  shortName: "VNU",
+  name: "Vietnam National University, Hanoi (daotao portal)",
+  shortName: "VNU (daotao)",
   theme: { primary: "#7A1E28", accent: "#B23A47", soft: "#FBEEEE" },
   capabilities: {
     profile: true,

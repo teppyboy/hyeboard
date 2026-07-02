@@ -38,7 +38,7 @@ const THEME_HUE_PRESETS = [
 ] as const;
 
 const VNU_UET_LOGO_URL = "https://2489013871.e.cdneverest.net/uet.edu.vn/2017/02/cropped-logo2_new-1-180x180.png";
-const VNU_LOGO_URL = "https://cdnportal.vnu.edu.vn/data/0/images/2025/03/06/upload_1/logo-vnu.svg";
+const VNU_LOGO_URL = "https://raw.githubusercontent.com/gawgua/vnu-dashboard/master/public/vnu_logo.png";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -193,19 +193,6 @@ function SidebarNav({ collapsed = false }: { collapsed?: boolean } = {}) {
   );
 }
 
-function ProfileCard({ collapsed = false }: { collapsed?: boolean } = {}) {
-  const state = useHyeboard();
-  const data = state.dashboard.data;
-  if (collapsed) return null;
-  return (
-    <div className="mx-3 mt-4 rounded-xl border border-border bg-card p-4">
-      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Active profile</p>
-      <p className="mt-2 text-sm font-medium">{data?.student?.fullName ?? (state.universityId === "uet" || state.universityId === "vnu" ? "Sign in required" : "Demo Student")}</p>
-      <p className="text-xs text-muted-foreground">{data?.student?.studentCode ?? state.universityId.toUpperCase()}</p>
-    </div>
-  );
-}
-
 function SidebarFooter({ collapsed = false }: { collapsed?: boolean } = {}) {
   if (collapsed) return <div className="mt-auto" />;
   return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">Powered by Hyeboard ({__HYEB_GIT_COMMIT__})</p>;
@@ -279,7 +266,6 @@ function RootLayout() {
             </Button>
           </div>
           <SidebarNav collapsed={sidebarCollapsed} />
-          <ProfileCard collapsed={sidebarCollapsed} />
           <SidebarFooter collapsed={sidebarCollapsed} />
         </aside>
 
@@ -288,7 +274,6 @@ function RootLayout() {
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <BrandMark />
             <div onClick={() => setMobileNavOpen(false)}><SidebarNav /></div>
-            <ProfileCard />
           </SheetContent>
         </Sheet>
 
@@ -629,8 +614,8 @@ function GradesPage() {
         return (
           <div className="space-y-6">
             <div className="grid gap-3 md:grid-cols-3">
-              <Metric title="GPA" value={gpa?.gpa?.toFixed(2) ?? "-"} detail="most recent term average" />
-              <Metric title="CPA" value={gpa?.cpa?.toFixed(2) ?? "-"} detail={state.universityId === "vnu" ? "cumulative, as reported by the portal" : "cumulative average"} />
+              <Metric title="GPA" value={gpa?.gpa?.toFixed(2) ?? "-"} detail="as reported by the university portal" />
+              <Metric title="CPA" value={gpa?.cpa?.toFixed(2) ?? "-"} detail={state.universityId === "vnu" ? "most recent term average" : "secondary figure, if reported"} />
               <Metric title="Credits" value={String(gpa?.totalAccumulatedCredits ?? "-")} detail="credits completed" />
             </div>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, grades]) => {
@@ -960,7 +945,7 @@ function LoginPage() {
     <main className="login-screen min-h-screen bg-background px-4 py-10 text-foreground">
       <div className="animate-page mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-md flex-col justify-center">
         <div className="mb-8 flex flex-col items-center text-center">
-          <div className={cn("mb-4 grid h-11 w-11 place-items-center rounded-xl shadow-sm", universityLogoUrl(selectedUniversity) ? "border border-border bg-background p-1.5" : "bg-primary text-primary-foreground")}>
+          <div className={cn("mb-4 grid h-16 w-16 place-items-center rounded-xl shadow-sm", universityLogoUrl(selectedUniversity) ? "border border-border bg-background p-2" : "bg-primary text-primary-foreground")}>
             {universityLogoUrl(selectedUniversity)
               ? <img className="h-full w-full object-contain" src={universityLogoUrl(selectedUniversity)} alt="" draggable={false} />
               : <GraduationCap size={21} aria-hidden="true" />}
@@ -973,14 +958,14 @@ function LoginPage() {
           <CardHeader className="space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : selectedUniversity === "vnu" ? "Connect VNU account" : "Use Demo Data"}</CardTitle>
-                <CardDescription>{selectedUniversity === "uet" ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : selectedUniversity === "vnu" ? "Sign in with your VNU training-portal username and password." : "Open Hyeboard with safe sample data."}</CardDescription>
+                <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : selectedUniversity === "vnu" ? "Connect VNU (daotao) account" : "Use Demo Data"}</CardTitle>
+                <CardDescription>{selectedUniversity === "uet" ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : selectedUniversity === "vnu" ? "Sign in with your daotao.vnu.edu.vn username and password." : "Open Hyeboard with safe sample data."}</CardDescription>
               </div>
               <Select value={selectedUniversity} onValueChange={(value) => chooseUniversity(value as "mock" | "uet" | "vnu")}>
                 <SelectTrigger className="h-9 w-[128px] shrink-0" aria-label="School"><SelectValue placeholder="School" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="uet">VNU-UET</SelectItem>
-                  <SelectItem value="vnu">VNU</SelectItem>
+                  <SelectItem value="vnu">VNU (daotao)</SelectItem>
                   <SelectItem value="mock">Mock</SelectItem>
                 </SelectContent>
               </Select>
