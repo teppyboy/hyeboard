@@ -228,7 +228,7 @@ function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
           collapsed ? "max-w-0 -translate-x-1 opacity-0" : "max-w-44 translate-x-0 opacity-100",
         )}
       >
-        <p className="truncate text-sm font-semibold tracking-tight">{university?.shortName ?? "Hyeboard"}</p>
+        <p className="truncate text-sm font-semibold tracking-tight text-foreground">{university?.shortName ?? "Hyeboard"}</p>
       </div>
     </div>
   );

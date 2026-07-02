@@ -138,9 +138,13 @@ test("sidebar collapses and expands via toggle button", async ({ page, isMobile 
 test("mobile nav drawer opens and closes on navigation", async ({ page }) => {
   await page.setViewportSize({ width: 500, height: 900 });
   await loginDemo(page);
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "Toggle light and dark mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
   await expect(page.getByRole("heading", { name: "Navigation" })).toBeHidden();
   await page.getByRole("button", { name: "Open navigation menu" }).click();
   await expect(page.getByRole("heading", { name: "Navigation" })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("Demo", { exact: true })).not.toHaveCSS("color", "rgb(0, 0, 0)");
   await page.getByRole("link", { name: "Timetable" }).click();
   await expect(page).toHaveURL(/\/timetable$/);
   await expect(page.getByRole("heading", { name: "Navigation" })).toBeHidden();

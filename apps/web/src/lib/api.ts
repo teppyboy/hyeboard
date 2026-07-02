@@ -1,4 +1,6 @@
 import type { ApiResponse, Assignment, ClassSession, Course, DashboardSummary, DocumentItem, ExamSession, Grade, NewsItem, ServiceRequest, Term, TrainingPoint, TuitionStatus, University } from "@hyeboard/schemas";
+import { mapExamRow, mapGpaSummary, mapGradeRow, mapProfile, mapSyllabusRow, mapTerms, mapTrainingPoints } from "@hyeboard/university-adapters/src/vnu/mapper";
+import { parseExamTermOptions, parseExamsHtml, parseGradesHtml, parseProfileHtml, parseStudyProgressHtml, parseSyllabusHtml } from "@hyeboard/university-adapters/src/vnu/parser";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const SESSION_KEY = "hyeboard.sessionToken";
@@ -60,19 +62,84 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload.data as T;
 }
 
+function queryString(params: Record<string, string | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) query.set(key, value);
+  }
+  const rendered = query.toString();
+  return rendered ? `?${rendered}` : "";
+}
+
+async function vnuRaw(page: string, params: Record<string, string | undefined> = {}) {
+  return request<{ html: string }>(`/api/vnu/raw/${page}${queryString(params)}`);
+}
+
+async function vnuDashboard(): Promise<DashboardSummary> {
+  const [profilePage, gradesPage, progressPage] = await Promise.all([
+    vnuRaw("profile"),
+    vnuRaw("grades"),
+    vnuRaw("progress"),
+  ]);
+  const profile = parseProfileHtml(profilePage.html);
+  const grades = parseGradesHtml(gradesPage.html);
+  const progress = parseStudyProgressHtml(progressPage.html);
+  const terms = mapTerms(grades);
+  return {
+    student: mapProfile(profile, "vnu"),
+    currentTerm: terms[0],
+    todaySchedule: [],
+    courses: [],
+    assignments: [],
+    grades: grades.rows.map(mapGradeRow),
+    gpa: mapGpaSummary(grades, progress),
+    exams: [],
+    notifications: [],
+  };
+}
+
+async function vnuTerms(): Promise<Term[]> {
+  return mapTerms(parseGradesHtml((await vnuRaw("grades")).html));
+}
+
+async function vnuGrades(): Promise<Grade[]> {
+  return parseGradesHtml((await vnuRaw("grades")).html).rows.map(mapGradeRow);
+}
+
+async function vnuExams(termCode?: string): Promise<ExamSession[]> {
+  const [profilePage, basePage] = await Promise.all([vnuRaw("profile"), vnuRaw("exam-base")]);
+  const profile = parseProfileHtml(profilePage.html);
+  if (!profile.internalStudentId || !profile.internalUnivId) throw new ApiError("daotao.vnu.edu.vn did not return enough profile data to look up exams.", "VNU_PROFILE_INCOMPLETE", 500);
+  const options = parseExamTermOptions(basePage.html);
+  const option = termCode
+    ? options.find((item) => item.label.startsWith(`${termCode}.`))
+    : (options.find((item) => item.selected) ?? options[0]);
+  if (!option) return [];
+  const page = await vnuRaw("exams", { selUniv: profile.internalUnivId, selStd: profile.internalStudentId, vTermID: option.value });
+  return parseExamsHtml(page.html).map(mapExamRow);
+}
+
+async function vnuDocuments(): Promise<DocumentItem[]> {
+  return parseSyllabusHtml((await vnuRaw("syllabus")).html).map(mapSyllabusRow);
+}
+
+async function vnuTrainingPoints(): Promise<TrainingPoint[]> {
+  return mapTrainingPoints(parseStudyProgressHtml((await vnuRaw("progress")).html));
+}
+
 export const api = {
   universities: () => request<University[]>("/api/universities"),
-  dashboard: (universityId: string, termCode?: string) => request<DashboardSummary>(`/api/${universityId}/dashboard${termCode ? `?termCode=${encodeURIComponent(termCode)}` : ""}`),
-  terms: (universityId: string) => request<Term[]>(`/api/${universityId}/terms`),
+  dashboard: (universityId: string, termCode?: string) => universityId === "vnu" ? vnuDashboard() : request<DashboardSummary>(`/api/${universityId}/dashboard${termCode ? `?termCode=${encodeURIComponent(termCode)}` : ""}`),
+  terms: (universityId: string) => universityId === "vnu" ? vnuTerms() : request<Term[]>(`/api/${universityId}/terms`),
   timetable: (universityId: string, termCode?: string) => request<ClassSession[]>(`/api/${universityId}/timetable${termCode ? `?termCode=${encodeURIComponent(termCode)}` : ""}`),
   courses: (universityId: string) => request<Course[]>(`/api/${universityId}/courses`),
   assignments: (universityId: string) => request<Assignment[]>(`/api/${universityId}/assignments`),
-  grades: (universityId: string) => request<Grade[]>(`/api/${universityId}/grades`),
-  exams: (universityId: string, termCode?: string) => request<ExamSession[]>(`/api/${universityId}/exams${termCode ? `?termCode=${encodeURIComponent(termCode)}` : ""}`),
-  documents: (universityId: string) => request<DocumentItem[]>(`/api/${universityId}/documents`),
+  grades: (universityId: string) => universityId === "vnu" ? vnuGrades() : request<Grade[]>(`/api/${universityId}/grades`),
+  exams: (universityId: string, termCode?: string) => universityId === "vnu" ? vnuExams(termCode) : request<ExamSession[]>(`/api/${universityId}/exams${termCode ? `?termCode=${encodeURIComponent(termCode)}` : ""}`),
+  documents: (universityId: string) => universityId === "vnu" ? vnuDocuments() : request<DocumentItem[]>(`/api/${universityId}/documents`),
   tuition: (universityId: string) => request<TuitionStatus>(`/api/${universityId}/tuition`),
   news: (universityId: string) => request<NewsItem[]>(`/api/${universityId}/news`),
-  trainingPoints: (universityId: string) => request<TrainingPoint[]>(`/api/${universityId}/training-points`),
+  trainingPoints: (universityId: string) => universityId === "vnu" ? vnuTrainingPoints() : request<TrainingPoint[]>(`/api/${universityId}/training-points`),
   requests: (universityId: string) => request<ServiceRequest[]>(`/api/${universityId}/requests`),
   importSession: async (universityId: string, body: { studentCode?: string; studenthubGoogleCredential?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string; vnuUsername?: string; vnuPassword?: string }) => {
     const data = await request<{ token: string }>(`/api/${universityId}/auth/import-session`, { method: "POST", body: JSON.stringify(body) });

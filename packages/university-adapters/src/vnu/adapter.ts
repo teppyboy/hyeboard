@@ -64,11 +64,12 @@ export function createVnuAdapter(): UniversityAdapter {
       let profile;
       try {
         profile = parseProfileHtml(await new DaotaoClient(session).getProfileHtml());
-      } catch {
-        throw new HyeboardError("INVALID_VNU_CREDENTIAL", "The university portal rejected this username or password.", 401);
+      } catch (error) {
+        if (error instanceof HyeboardError && ["VNU_RATE_LIMITED", "VNU_UPSTREAM_UNAVAILABLE", "VNU_REQUEST_FAILED"].includes(error.code)) throw error;
+        throw new HyeboardError("INVALID_VNU_CREDENTIAL", "daotao.vnu.edu.vn rejected this username or password, or the returned session expired immediately.", 401);
       }
       if (!profile.studentCode) {
-        throw new HyeboardError("INVALID_VNU_CREDENTIAL", "The university portal rejected this username or password.", 401);
+        throw new HyeboardError("INVALID_VNU_CREDENTIAL", "daotao.vnu.edu.vn accepted the request but did not return a student profile. Check the credentials and try again.", 401);
       }
       return { universityId: "vnu", studentCode: profile.studentCode, expiresAt, session };
     },

@@ -1,6 +1,6 @@
 import { cors } from "@elysiajs/cors";
-import { decryptSession, encryptSession, fail, HyeboardError, ok, parseBearerToken } from "@hyeboard/core";
-import { getAdapter, listUniversities } from "@hyeboard/university-adapters";
+import { decryptSession, encryptSession, fail, HyeboardError, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
+import { DaotaoClient, getAdapter, listUniversities } from "@hyeboard/university-adapters";
 import { env } from "cloudflare:workers";
 import { Elysia, t } from "elysia";
 import { CloudflareAdapter } from "elysia/adapter/cloudflare-worker";
@@ -56,6 +56,76 @@ const importSessionBody = t.Object({
 
 const termCodeQuery = t.Object({ termCode: t.Optional(t.String()) });
 
+const vnuRawQuery = t.Object({
+  selUniv: t.Optional(t.String()),
+  selStd: t.Optional(t.String()),
+  vTermID: t.Optional(t.String()),
+});
+
+// ─── Worker Cache API ─────────────────────────────────────────
+
+function hex(bytes: ArrayBuffer): string {
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacHex(value: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(getSessionSecret()), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)));
+}
+
+async function cacheGet<T>(key: string): Promise<T | undefined> {
+  const cache = await caches.open("hyeboard");
+  const response = await cache.match(new Request(`https://hyeboard.internal/cache/${key}`));
+  if (!response) return undefined;
+  return (await response.json()) as T;
+}
+
+async function cachePut(key: string, value: unknown, maxAgeSeconds: number): Promise<void> {
+  if (maxAgeSeconds <= 0) return;
+  const cache = await caches.open("hyeboard");
+  await cache.put(
+    new Request(`https://hyeboard.internal/cache/${key}`),
+    new Response(JSON.stringify(value), {
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": `public, max-age=${Math.floor(maxAgeSeconds)}`,
+      },
+    }),
+  );
+}
+
+async function vnuImportCacheKey(username: string, password: string): Promise<string> {
+  return `vnu/import/${await hmacHex(`${username.trim().toLowerCase()}\n${password}`)}`;
+}
+
+async function vnuRawCacheKey(session: EncryptedSessionPayload, page: string, params: Record<string, string | undefined>): Promise<string> {
+  return `vnu/raw/${await hmacHex(JSON.stringify({ cookie: session.vnu?.value ?? "", page, params }))}`;
+}
+
+async function vnuRawHtml(session: EncryptedSessionPayload, page: string, params: { selUniv?: string; selStd?: string; vTermID?: string }): Promise<string> {
+  if (!session.vnu?.value) throw new HyeboardError("VNU_LOGIN_REQUIRED", "VNU (daotao) data needs a saved daotao.vnu.edu.vn session. Sign in again.", 401);
+  const cacheKey = await vnuRawCacheKey(session, page, params);
+  const cached = await cacheGet<{ html: string }>(cacheKey);
+  if (cached) return cached.html;
+
+  const client = new DaotaoClient(session);
+  let html: string;
+  if (page === "profile") html = await client.getProfileHtml();
+  else if (page === "grades") html = await client.getGradesHtml();
+  else if (page === "progress") html = await client.getStudyProgressHtml();
+  else if (page === "exam-base") html = await client.getExamBaseHtml();
+  else if (page === "syllabus") html = await client.getSyllabusHtml();
+  else if (page === "exams") {
+    if (!params.selUniv || !params.selStd || !params.vTermID) throw new HyeboardError("VNU_EXAM_QUERY_INCOMPLETE", "Exam lookup needs university id, student id, and term id from the VNU (daotao) profile page.", 400);
+    html = await client.getExamsHtml({ selUniv: params.selUniv, selStd: params.selStd, vTermID: params.vTermID });
+  } else {
+    throw new HyeboardError("VNU_RAW_PAGE_UNKNOWN", `Unknown VNU raw page: ${page}`, 404);
+  }
+
+  await cachePut(cacheKey, { html }, page === "exams" ? 60 : 300);
+  return html;
+}
+
 // ─── CORS ─────────────────────────────────────────────────────
 // Enabled in dev only when HYEB_ALLOWED_ORIGINS is set in .dev.vars.
 // Skipped in production — same-origin, no CORS needed.
@@ -93,11 +163,27 @@ app
   .get("/api/universities", () => ok(listUniversities()))
   .post("/api/:universityId/auth/import-session", async ({ params, body }) => {
     const adapter = getAdapter(params.universityId);
+    if (params.universityId === "vnu" && body.vnuUsername && body.vnuPassword) {
+      const cacheKey = await vnuImportCacheKey(body.vnuUsername, body.vnuPassword);
+      const cached = await cacheGet<{ token: string; session: { universityId: string; studentCode?: string; expiresAt: string; authenticated: true } }>(cacheKey);
+      if (cached && Date.parse(cached.session.expiresAt) > Date.now()) return ok(cached);
+
+      const imported = await adapter.importSession(body);
+      const token = await encryptSession(imported.session, getSessionSecret());
+      const payload = { token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true as const } };
+      await cachePut(cacheKey, payload, Math.floor((Date.parse(imported.expiresAt) - Date.now()) / 1000));
+      return ok(payload);
+    }
     const imported = await adapter.importSession(body);
     const token = await encryptSession(imported.session, getSessionSecret());
     return ok({ token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
   }, { body: importSessionBody })
   .post("/api/:universityId/auth/logout", () => ok({ authenticated: false }))
+  .get("/api/vnu/raw/:page", async ({ headers, params, query }) => {
+    const session = await getSession(headers);
+    if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
+    return ok({ html: await vnuRawHtml(session, params.page, query) });
+  }, { query: vnuRawQuery })
 
   // ── Authenticated — session+adapter injected via resolve() ──
   .group("/api/:universityId", (g) =>
