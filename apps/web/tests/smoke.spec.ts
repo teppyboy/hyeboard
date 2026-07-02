@@ -51,6 +51,26 @@ test("login shows university-specific sections", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("data-theme", "geist");
 });
 
+test("login keeps relogin fields after session expiry", async ({ page }) => {
+  await page.goto("/login");
+
+  await page.getByPlaceholder("Learning platform access token").fill("canvas-relogin-token");
+  await page.reload();
+  await expect(page.getByPlaceholder("Learning platform access token")).toHaveValue("canvas-relogin-token");
+
+  await page.getByRole("combobox", { name: "School" }).click();
+  await page.getByRole("option", { name: "VNU (daotao)" }).click();
+  await page.getByPlaceholder("Student code / username").fill("24000000");
+  await page.getByPlaceholder("Password").fill("vnu-relogin-password");
+  await page.evaluate(() => sessionStorage.removeItem("hyeboard.sessionToken"));
+  await page.reload();
+
+  await page.getByRole("combobox", { name: "School" }).click();
+  await page.getByRole("option", { name: "VNU (daotao)" }).click();
+  await expect(page.getByPlaceholder("Student code / username")).toHaveValue("24000000");
+  await expect(page.getByPlaceholder("Password")).toHaveValue("vnu-relogin-password");
+});
+
 test("login always shows the correct accent color for the selected school, never a stale one", async ({ page }) => {
   // Simulate a browser that previously had a mock (geist) session persisted,
   // then landed back on /login for VNU-UET - the accent must not stay stale.

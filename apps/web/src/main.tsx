@@ -86,6 +86,25 @@ function stored<T extends string>(key: string, fallback: T): T {
   return (localStorage.getItem(key) as T | null) ?? fallback;
 }
 
+const RELOGIN_KEYS = {
+  uetCanvasToken: "hyeboard.relogin.uet.canvasToken",
+  vnuUsername: "hyeboard.relogin.vnu.username",
+  vnuPassword: "hyeboard.relogin.vnu.password",
+} as const;
+
+function sessionStored(key: string): string {
+  return sessionStorage.getItem(key) ?? "";
+}
+
+function setSessionStored(key: string, value: string): void {
+  if (value) sessionStorage.setItem(key, value);
+  else sessionStorage.removeItem(key);
+}
+
+function clearReloginSecrets(): void {
+  for (const key of Object.values(RELOGIN_KEYS)) sessionStorage.removeItem(key);
+}
+
 const THEME_OVERRIDE_PROPS = ["--primary", "--primary-foreground", "--accent", "--accent-foreground", "--ring", "--sidebar"] as const;
 
 function applyAccentHue(hue: number, dark: boolean): void {
@@ -156,6 +175,7 @@ function useHyeboardState() {
   };
 
   const logout = () => {
+    clearReloginSecrets();
     clearSessionToken();
     setSessionNonce((value) => value + 1);
     void queryClient.invalidateQueries();
@@ -873,11 +893,11 @@ function LoginPage() {
   const [selectedUniversity, setSelectedUniversity] = useState<"mock" | "uet" | "vnu">(() => (getSessionToken() && (state.universityId === "mock" || state.universityId === "vnu") ? (state.universityId as "mock" | "vnu") : "uet"));
   const [studenthubToken, setStudenthubToken] = useState("");
   const [studenthubCookie, setStudenthubCookie] = useState("");
-  const [canvasToken, setCanvasToken] = useState("");
+  const [canvasToken, setCanvasToken] = useState(() => sessionStored(RELOGIN_KEYS.uetCanvasToken));
   const [canvasCookie, setCanvasCookie] = useState("");
   const [canvasCsrfToken, setCanvasCsrfToken] = useState("");
-  const [vnuUsername, setVnuUsername] = useState("");
-  const [vnuPassword, setVnuPassword] = useState("");
+  const [vnuUsername, setVnuUsername] = useState(() => sessionStored(RELOGIN_KEYS.vnuUsername));
+  const [vnuPassword, setVnuPassword] = useState(() => sessionStored(RELOGIN_KEYS.vnuPassword));
   const [status, setStatus] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -1013,7 +1033,7 @@ function LoginPage() {
                     <li>Copy the token shown once and paste it below.</li>
                   </ol>
                 </div>
-                <Input type="password" autoComplete="off" placeholder="Learning platform access token" value={canvasToken} onChange={(event) => setCanvasToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                <Input type="password" autoComplete="off" placeholder="Learning platform access token" value={canvasToken} onChange={(event) => { setCanvasToken(event.target.value); setSessionStored(RELOGIN_KEYS.uetCanvasToken, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
                 <details className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
                   <summary className="cursor-pointer font-medium text-foreground">Advanced cookie options</summary>
                   <div className="mt-3 space-y-3">
@@ -1026,8 +1046,8 @@ function LoginPage() {
               </>
             ) : selectedUniversity === "vnu" ? (
               <>
-                <Input placeholder="Student code / username" autoComplete="username" value={vnuUsername} onChange={(event) => setVnuUsername(event.target.value)} />
-                <Input type="password" autoComplete="current-password" placeholder="Password" value={vnuPassword} onChange={(event) => setVnuPassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importVnuSession)} />
+                <Input placeholder="Student code / username" autoComplete="username" value={vnuUsername} onChange={(event) => { setVnuUsername(event.target.value); setSessionStored(RELOGIN_KEYS.vnuUsername, event.target.value); }} />
+                <Input type="password" autoComplete="current-password" placeholder="Password" value={vnuPassword} onChange={(event) => { setVnuPassword(event.target.value); setSessionStored(RELOGIN_KEYS.vnuPassword, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importVnuSession)} />
                 <Button onClick={importVnuSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
               </>
             ) : (
