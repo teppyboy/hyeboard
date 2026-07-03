@@ -175,6 +175,10 @@ function useHyeboardState() {
   };
 
   const logout = () => {
+    // Best-effort server-side revocation while the Authorization header still carries a
+    // valid token - this is what actually invalidates any persisted uetGoogleCredential.
+    // api.logout() never throws, so this fire-and-forget call never blocks local sign-out.
+    void api.logout(universityId);
     clearReloginSecrets();
     clearSessionToken();
     setSessionNonce((value) => value + 1);
@@ -887,6 +891,8 @@ function UnsupportedPanel({ title }: { title: string }) {
   );
 }
 
+const AUTOMATION_FAILURE_CODES = new Set(["GOOGLE_CHALLENGE_REQUIRED", "GOOGLE_2FA_REQUIRED", "GOOGLE_AUTOMATION_BLOCKED", "GOOGLE_LOGIN_RATE_LIMITED", "GOOGLE_AUTOMATION_TIMEOUT"]);
+
 function LoginPage() {
   const state = useHyeboard();
   const navigate = useNavigate();
@@ -900,6 +906,9 @@ function LoginPage() {
   const [vnuPassword, setVnuPassword] = useState(() => sessionStored(RELOGIN_KEYS.vnuPassword));
   const [status, setStatus] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [uetGoogleEmail, setUetGoogleEmail] = useState("");
+  const [uetGooglePassword, setUetGooglePassword] = useState("");
+  const [showManualFallback, setShowManualFallback] = useState(false);
 
   // The global palette can be left over from a previous session (e.g. still
   // "geist" after signing out of a mock session). Force it to match whichever
@@ -954,6 +963,32 @@ function LoginPage() {
     }
   };
 
+  const importUetGoogleSession = async () => {
+    setBusy(true);
+    setStatus("Signing in with your VNU Google account...");
+    try {
+      const studentCodeInput = uetGoogleEmail.trim();
+      // The login box only ever needs to reach VNU's own mail domain, so
+      // users just type their student code (MSV) — append @vnu.edu.vn
+      // ourselves unless they already typed a full address.
+      const fullEmail = studentCodeInput && !studentCodeInput.includes("@") ? `${studentCodeInput}@vnu.edu.vn` : studentCodeInput;
+      await api.importSession("uet", {
+        uetGoogleEmail: fullEmail || undefined,
+        uetGooglePassword: uetGooglePassword || undefined,
+      });
+      state.selectUniversity("uet", { clearSession: false });
+      state.refreshSession();
+      setStatus("University session ready. Opening dashboard...");
+      await navigate({ to: "/" });
+    } catch (error) {
+      const code = error instanceof ApiError ? error.code : undefined;
+      if (code && AUTOMATION_FAILURE_CODES.has(code)) setShowManualFallback(true);
+      setStatus(error instanceof Error ? error.message : "Google sign-in did not complete. Try the manual option below.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const importVnuSession = async () => {
     setBusy(true);
     setStatus("Securing your university session...");
@@ -994,7 +1029,7 @@ function LoginPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : selectedUniversity === "vnu" ? "Connect VNU (daotao) account" : "Use Demo Data"}</CardTitle>
-                <CardDescription>{selectedUniversity === "uet" ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : selectedUniversity === "vnu" ? "Sign in with your daotao.vnu.edu.vn username and password." : "Open Hyeboard with safe sample data."}</CardDescription>
+                <CardDescription>{selectedUniversity === "uet" ? (showManualFallback ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : "Sign in with your VNU Google account to connect your university portal and learning platform.") : selectedUniversity === "vnu" ? "Sign in with your daotao.vnu.edu.vn username and password." : "Open Hyeboard with safe sample data."}</CardDescription>
               </div>
               <Select value={selectedUniversity} onValueChange={(value) => chooseUniversity(value as "mock" | "uet" | "vnu")}>
                 <SelectTrigger className="h-9 w-[128px] shrink-0" aria-label="School"><SelectValue placeholder="School" /></SelectTrigger>
@@ -1010,39 +1045,55 @@ function LoginPage() {
             {selectedUniversity === "uet" ? (
               <>
                 <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                  <p className="font-medium text-foreground">Connect your university portal</p>
-                  <p className="mt-1">Direct Google sign-in is not available yet because this university has not authorized Hyeboard's web origin (`origin_mismatch`). Import the portal token from your signed-in browser session instead.</p>
-                  <ol className="mt-2 list-decimal space-y-1 pl-4">
-                    <li>Open the university portal and sign in with your university account.</li>
-                    <li>Open the browser console on the portal.</li>
-                    <li>Run <code className="select-all rounded bg-background px-1 text-foreground">copy(localStorage.getItem(&apos;accessToken&apos;))</code>.</li>
-                    <li>Paste the copied token below.</li>
-                  </ol>
-                  <p className="mt-2 text-foreground">Portal tokens usually expire quickly. Hyeboard will return you here when a fresh token is needed.</p>
+                  <p className="font-medium text-foreground">Sign in with your VNU Google account</p>
+                  <p className="mt-1">Enter your student code and Google password. Hyeboard connects StudentHub and Canvas, then stores the password encrypted so it can refresh your session. Sign out to remove it.</p>
                 </div>
-                <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://studenthub.uet.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open university portal</Button>
-                <Input type="password" autoComplete="off" placeholder="University portal access token" value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://portal.uet.vnu.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open learning platform</Button>
-                <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                  <p className="font-medium text-foreground">Optional: connect the learning platform</p>
-                  <p className="mt-1">The learning platform powers course and assignment features. It usually opens with the same university account.</p>
-                  <ol className="mt-2 list-decimal space-y-1 pl-4">
-                    <li>Open the learning platform. It should sign in with your existing university account.</li>
-                    <li>Open <strong className="text-foreground">Account</strong> (bottom-left) → <strong className="text-foreground">Settings</strong>.</li>
-                    <li>Scroll to <strong className="text-foreground">Approved Integrations</strong> → click <strong className="text-foreground">+ New Access Token</strong> → Generate Token.</li>
-                    <li>Copy the token shown once and paste it below.</li>
-                  </ol>
-                </div>
-                <Input type="password" autoComplete="off" placeholder="Learning platform access token" value={canvasToken} onChange={(event) => { setCanvasToken(event.target.value); setSessionStored(RELOGIN_KEYS.uetCanvasToken, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                <details className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-                  <summary className="cursor-pointer font-medium text-foreground">Advanced cookie options</summary>
-                  <div className="mt-3 space-y-3">
-                    <Input type="password" autoComplete="off" placeholder="University portal cookie, if token import is unavailable" value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                    <Input type="password" autoComplete="off" placeholder="Learning platform cookie, if access tokens are disabled" value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                    <Input type="password" autoComplete="off" placeholder="Learning platform CSRF token, only when using cookie mode" value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                  </div>
-                </details>
-                <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
+                <Input type="text" autoComplete="username" placeholder="Student code" value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                <Input type="password" autoComplete="current-password" placeholder="Google account password" value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">Sign in with Google</Button>
+
+                {!showManualFallback ? (
+                  <button type="button" className="w-full text-center text-xs text-muted-foreground underline underline-offset-2" onClick={() => setShowManualFallback(true)}>
+                    Having trouble? Use a manual token instead
+                  </button>
+                ) : (
+                  <>
+                    <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+                      <p className="font-medium text-foreground">Connect your university portal</p>
+                      <p className="mt-1">Direct Google sign-in is not available yet because this university has not authorized Hyeboard's web origin (`origin_mismatch`). Import the portal token from your signed-in browser session instead.</p>
+                      <ol className="mt-2 list-decimal space-y-1 pl-4">
+                        <li>Open the university portal and sign in with your university account.</li>
+                        <li>Open the browser console on the portal.</li>
+                        <li>Run <code className="select-all rounded bg-background px-1 text-foreground">copy(localStorage.getItem(&apos;accessToken&apos;))</code>.</li>
+                        <li>Paste the copied token below.</li>
+                      </ol>
+                      <p className="mt-2 text-foreground">Portal tokens usually expire quickly. Hyeboard will return you here when a fresh token is needed.</p>
+                    </div>
+                    <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://studenthub.uet.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open university portal</Button>
+                    <Input type="password" autoComplete="off" placeholder="University portal access token" value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://portal.uet.vnu.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open learning platform</Button>
+                    <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+                      <p className="font-medium text-foreground">Optional: connect the learning platform</p>
+                      <p className="mt-1">The learning platform powers course and assignment features. It usually opens with the same university account.</p>
+                      <ol className="mt-2 list-decimal space-y-1 pl-4">
+                        <li>Open the learning platform. It should sign in with your existing university account.</li>
+                        <li>Open <strong className="text-foreground">Account</strong> (bottom-left) → <strong className="text-foreground">Settings</strong>.</li>
+                        <li>Scroll to <strong className="text-foreground">Approved Integrations</strong> → click <strong className="text-foreground">+ New Access Token</strong> → Generate Token.</li>
+                        <li>Copy the token shown once and paste it below.</li>
+                      </ol>
+                    </div>
+                    <Input type="password" autoComplete="off" placeholder="Learning platform access token" value={canvasToken} onChange={(event) => { setCanvasToken(event.target.value); setSessionStored(RELOGIN_KEYS.uetCanvasToken, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    <details className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+                      <summary className="cursor-pointer font-medium text-foreground">Advanced cookie options</summary>
+                      <div className="mt-3 space-y-3">
+                        <Input type="password" autoComplete="off" placeholder="University portal cookie, if token import is unavailable" value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        <Input type="password" autoComplete="off" placeholder="Learning platform cookie, if access tokens are disabled" value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        <Input type="password" autoComplete="off" placeholder="Learning platform CSRF token, only when using cookie mode" value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                      </div>
+                    </details>
+                    <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
+                  </>
+                )}
               </>
             ) : selectedUniversity === "vnu" ? (
               <>

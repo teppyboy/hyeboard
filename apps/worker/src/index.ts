@@ -1,5 +1,5 @@
 import { cors } from "@elysiajs/cors";
-import { decryptSession, encryptSession, fail, HyeboardError, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
+import { decryptSession, encryptSession, fail, HyeboardError, isExpired, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
 import { DaotaoClient, getAdapter, listUniversities } from "@hyeboard/university-adapters";
 import { env } from "cloudflare:workers";
 import { Elysia, t } from "elysia";
@@ -22,11 +22,44 @@ function getSessionSecret(): string {
 
 // ─── Auth ─────────────────────────────────────────────────────
 
-function getSession(headers: Headers | Record<string, string | undefined>) {
+async function getSession(headers: Headers | Record<string, string | undefined>) {
   const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
   const token = parseBearerToken(h.get("Authorization"));
   if (!token) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
+  if (await isTokenRevoked(token)) throw new HyeboardError("SESSION_EXPIRED", "Session expired", 401);
   return decryptSession(token, getSessionSecret());
+}
+
+type ResolvedSession = { session: EncryptedSessionPayload; refreshedToken?: string };
+
+// Lazy, per-request refresh (no background jobs/Durable Object alarms — see
+// spec's "lazy on next API call" decision). Only uet sessions created via
+// automated Google login carry uetGoogleCredential; every other session
+// (manual paste, vnu, mock) passes straight through the plain decrypt path
+// with the shortcut check below being a cheap no-op.
+async function resolveSession(headers: Headers | Record<string, string | undefined>): Promise<ResolvedSession> {
+  const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
+  const token = parseBearerToken(h.get("Authorization"));
+  if (!token) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
+  if (await isTokenRevoked(token)) throw new HyeboardError("SESSION_EXPIRED", "Session expired", 401);
+  const session = await decryptSession(token, getSessionSecret());
+
+  if (session.universityId !== "uet" || !session.uetGoogleCredential) return { session };
+  const studenthubExpiresAt = session.studenthub?.expiresAt;
+  if (studenthubExpiresAt && !isExpired(studenthubExpiresAt)) return { session };
+
+  try {
+    const adapter = getAdapter("uet");
+    const refreshed = await adapter.importSession(
+      { uetGoogleEmail: session.uetGoogleCredential.email, uetGooglePassword: session.uetGoogleCredential.password },
+      { browserBinding: appEnv().BROWSER },
+    );
+    const refreshedToken = await encryptSession(refreshed.session, getSessionSecret());
+    return { session: refreshed.session, refreshedToken };
+  } catch (error) {
+    const message = error instanceof HyeboardError ? error.message : "Automatic sign-in refresh failed.";
+    throw new HyeboardError("GOOGLE_REFRESH_FAILED", `${message} Sign in again.`, 401);
+  }
 }
 
 // ─── Error handling ───────────────────────────────────────────
@@ -66,6 +99,8 @@ const importSessionBody = t.Object({
   vnuUsername: t.Optional(t.String()),
   vnuPassword: t.Optional(t.String()),
   studentCode: t.Optional(t.String()),
+  uetGoogleEmail: t.Optional(t.String()),
+  uetGooglePassword: t.Optional(t.String()),
 });
 
 const termCodeQuery = t.Object({ termCode: t.Optional(t.String()) });
@@ -128,6 +163,42 @@ async function appCache(): Promise<Cache | undefined> {
 
 async function vnuImportCacheKey(username: string, password: string): Promise<string> {
   return `vnu/import/${await hmacHex(`${username.trim()}\n${password}`)}`;
+}
+
+// ── Google-login rate limiting + token revocation ───────────────────────
+
+const GOOGLE_LOGIN_RATE_LIMIT = 5;
+const GOOGLE_LOGIN_RATE_WINDOW_SECONDS = 15 * 60;
+
+async function googleLoginRateLimitKey(email: string): Promise<string> {
+  return `uet/google-login-attempts/${await hmacHex(email.trim().toLowerCase())}`;
+}
+
+// Best-effort fixed-window counter via the Cache API (same storage already
+// used for vnu's import dedupe). Not perfectly race-free across concurrent
+// requests in the same window, which is acceptable for an abuse-reduction
+// guardrail, not a hard security boundary.
+async function checkAndIncrementGoogleLoginAttempts(email: string): Promise<void> {
+  const key = await googleLoginRateLimitKey(email);
+  const existing = await cacheGet<{ count: number }>(key);
+  const count = (existing?.count ?? 0) + 1;
+  if (count > GOOGLE_LOGIN_RATE_LIMIT) {
+    throw new HyeboardError("GOOGLE_LOGIN_RATE_LIMITED", "Too many sign-in attempts for this email. Wait 15 minutes and try again, or use the manual token option below.", 429);
+  }
+  await cachePut(key, { count }, GOOGLE_LOGIN_RATE_WINDOW_SECONDS);
+}
+
+async function revokedTokenKey(token: string): Promise<string> {
+  return `revoked-token/${await hmacHex(token)}`;
+}
+
+async function revokeToken(token: string, expiresAt: string): Promise<void> {
+  const ttlSeconds = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
+  await cachePut(await revokedTokenKey(token), { revoked: true }, ttlSeconds);
+}
+
+async function isTokenRevoked(token: string): Promise<boolean> {
+  return Boolean(await cacheGet<{ revoked: true }>(await revokedTokenKey(token)));
 }
 
 async function vnuRawCacheKey(session: EncryptedSessionPayload, page: string, params: Record<string, string | undefined>): Promise<string> {
@@ -195,6 +266,12 @@ app
   .get("/api/universities", () => ok(listUniversities()))
   .post("/api/:universityId/auth/import-session", async ({ params, body }) => {
     const adapter = getAdapter(params.universityId);
+    if (params.universityId === "uet" && body.uetGoogleEmail) {
+      await checkAndIncrementGoogleLoginAttempts(body.uetGoogleEmail);
+      const imported = await adapter.importSession(body, { browserBinding: appEnv().BROWSER });
+      const token = await encryptSession(imported.session, getSessionSecret());
+      return ok({ token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
+    }
     if (params.universityId === "vnu" && body.vnuUsername && body.vnuPassword) {
       const cacheKey = await vnuImportCacheKey(body.vnuUsername, body.vnuPassword);
       const cached = await cacheGet<{ token: string; session: { universityId: string; studentCode?: string; expiresAt: string; authenticated: true } }>(cacheKey);
@@ -210,7 +287,19 @@ app
     const token = await encryptSession(imported.session, getSessionSecret());
     return ok({ token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
   }, { body: importSessionBody })
-  .post("/api/:universityId/auth/logout", () => ok({ authenticated: false }))
+  .post("/api/:universityId/auth/logout", async ({ headers }) => {
+    const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
+    const token = parseBearerToken(h.get("Authorization"));
+    if (token) {
+      try {
+        const session = await decryptSession(token, getSessionSecret());
+        await revokeToken(token, session.expiresAt);
+      } catch {
+        // Already invalid/expired token — nothing to revoke.
+      }
+    }
+    return ok({ authenticated: false });
+  })
   .get("/api/vnu/raw/:page", async ({ headers, params, query }) => {
     const session = await getSession(headers);
     if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
@@ -221,10 +310,16 @@ app
   .group("/api/:universityId", (g) =>
     g
       .resolve(async ({ headers, params }) => {
-        const session = await getSession(headers);
+        const { session, refreshedToken } = await resolveSession(headers);
         if (session.universityId !== params.universityId)
           throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
-        return { session, adapter: getAdapter(params.universityId) };
+        return { session, refreshedToken, adapter: getAdapter(params.universityId) };
+      })
+      .onAfterHandle(({ response, refreshedToken }) => {
+        if (!refreshedToken || !response || typeof response !== "object") return response;
+        const typed = response as { data?: unknown; error?: unknown; meta?: Record<string, unknown> };
+        if (!("data" in typed)) return response;
+        return { ...typed, meta: { ...(typed.meta ?? {}), refreshedToken } };
       })
       .get("/auth/session", ({ session }) => ok({ universityId: session.universityId, studentCode: session.studentCode, expiresAt: session.expiresAt, authenticated: true }))
       .get("/me", async ({ adapter, session }) => ok(await adapter.getStudentProfile({ session })))

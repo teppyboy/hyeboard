@@ -28,6 +28,8 @@ test("login shows university-specific sections", async ({ page }) => {
   await expect(page.getByRole("combobox", { name: "School" })).toContainText("VNU-UET");
   await expect(page.getByText("Connect university account")).toBeVisible();
   await expect(page.getByText("Use Demo Data")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+  await page.getByRole("button", { name: "Having trouble? Use a manual token instead" }).click();
   await expect(page.getByText("Connect your university portal")).toBeVisible();
   await expect(page.getByText(/origin_mismatch/)).toBeVisible();
   await expect(page.getByText(/copy\(localStorage\.getItem/)).toBeVisible();
@@ -51,11 +53,34 @@ test("login shows university-specific sections", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("data-theme", "geist");
 });
 
+test("UET login leads with Google sign-in and reveals manual fallback on demand", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByRole("combobox", { name: "School" }).click();
+  await page.getByRole("option", { name: "VNU-UET" }).click();
+
+  await expect(page.getByPlaceholder("Student code")).toBeVisible();
+  await expect(page.getByPlaceholder("Google account password")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+
+  await expect(page.getByPlaceholder("University portal access token")).toHaveCount(0);
+  await expect(page.getByPlaceholder("Learning platform access token")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open university portal" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Having trouble? Use a manual token instead" }).click();
+
+  await expect(page.getByPlaceholder("University portal access token")).toBeVisible();
+  await expect(page.getByPlaceholder("Learning platform access token")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open university portal" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open learning platform" })).toBeVisible();
+});
+
 test("login keeps relogin fields after session expiry", async ({ page }) => {
   await page.goto("/login");
 
+  await page.getByRole("button", { name: "Having trouble? Use a manual token instead" }).click();
   await page.getByPlaceholder("Learning platform access token").fill("canvas-relogin-token");
   await page.reload();
+  await page.getByRole("button", { name: "Having trouble? Use a manual token instead" }).click();
   await expect(page.getByPlaceholder("Learning platform access token")).toHaveValue("canvas-relogin-token");
 
   await page.getByRole("combobox", { name: "School" }).click();

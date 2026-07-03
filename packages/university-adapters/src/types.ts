@@ -35,6 +35,11 @@ export type LoginImportInput = {
   vnuUsername?: string;
   vnuPassword?: string;
   studentCode?: string;
+  // Automated VNU Google-account login for the uet adapter (StudentHub +
+  // Canvas). Deliberately NOT named vnuGoogle* — the unrelated vnu (daotao)
+  // adapter already owns vnuUsername/vnuPassword for its own login form.
+  uetGoogleEmail?: string;
+  uetGooglePassword?: string;
 };
 
 export type ImportedSession = {
@@ -44,9 +49,20 @@ export type ImportedSession = {
   session: EncryptedSessionPayload;
 };
 
+// Minimal structural type for the Cloudflare Browser Rendering binding
+// (env.BROWSER). Avoids depending on @cloudflare/workers-types from this
+// package — only apps/worker needs the full Cloudflare ambient types; this
+// package only needs to call .fetch() on whatever binding it's handed
+// (that's exactly what @cloudflare/puppeteer's puppeteer.launch() expects).
+export type BrowserBinding = { fetch: typeof fetch };
+
+export type ImportSessionContext = {
+  browserBinding?: BrowserBinding;
+};
+
 export interface UniversityAdapter {
   university: University;
-  importSession(input: LoginImportInput): Promise<ImportedSession>;
+  importSession(input: LoginImportInput, context?: ImportSessionContext): Promise<ImportedSession>;
   getStudentProfile(request: AdapterRequest): Promise<Student>;
   getTerms(request: AdapterRequest): Promise<Term[]>;
   getDashboard(request: AdapterRequest): Promise<DashboardSummary>;
