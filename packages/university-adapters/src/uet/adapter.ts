@@ -2,8 +2,9 @@ import { addHours, assertSupported, HyeboardError, type EncryptedSessionPayload 
 import type { ClassSession, DashboardSummary, University } from "@hyeboard/schemas";
 import { CanvasClient } from "./canvas-client";
 import { mapCanvasCourse, mapCanvasMissingSubmission, mapCanvasPlannerItem, mapStudent, mapStudentHubBill, mapStudentHubClass, mapStudentHubExam, mapStudentHubGpa, mapStudentHubGrade, mapStudentHubNews, mapStudentHubNotifications, mapStudentHubRequest, mapStudentHubScheduleAlert, mapTerm, mapTrainingPoints, mapTuition } from "./mapper";
+import { automateVnuGoogleLogin } from "./google-login-automation";
 import { StudentHubClient } from "./studenthub-client";
-import type { AdapterRequest, ImportedSession, LoginImportInput, UniversityAdapter } from "../types";
+import type { AdapterRequest, ImportedSession, ImportSessionContext, LoginImportInput, UniversityAdapter } from "../types";
 
 const university: University = {
   id: "uet",
@@ -77,6 +78,10 @@ function canvasFeatureError(error: unknown): never {
   throw new HyeboardError("CANVAS_UPSTREAM_UNAVAILABLE", `${message} Add or refresh your learning-platform access token from the login page.`, 409);
 }
 
+function addDays(days: number): string {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 function jwtExpiry(token: string): string | undefined {
   try {
     const [, payload] = token.split(".");
@@ -102,7 +107,33 @@ const flattenScheduleAlert = (items: Awaited<ReturnType<StudentHubClient["getSch
 export function createUetAdapter(): UniversityAdapter {
   return {
     university,
-    async importSession(input: LoginImportInput): Promise<ImportedSession> {
+    async importSession(input: LoginImportInput, context?: ImportSessionContext): Promise<ImportedSession> {
+      if (input.uetGoogleEmail || input.uetGooglePassword) {
+        if (!input.uetGoogleEmail || !input.uetGooglePassword) {
+          throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide both your VNU Google email and password.", 400);
+        }
+        if (!context?.browserBinding) {
+          throw new HyeboardError("SERVER_CONFIG_ERROR", "Automated sign-in is not configured on this server.", 500);
+        }
+        // No separate "validate against real upstream" check here: automation
+        // only reaches the credential-capture step after actually completing
+        // a real login against StudentHub/Canvas, so a captured token/cookie
+        // is proof-of-working by construction. Re-validating would spend an
+        // extra upstream round-trip for no new information.
+        const result = await automateVnuGoogleLogin(context.browserBinding, input.uetGoogleEmail, input.uetGooglePassword);
+        const expiresAt = addDays(30);
+        const session: EncryptedSessionPayload = {
+          version: 1,
+          universityId: "uet",
+          studentCode: result.studenthub?.accountCode,
+          expiresAt,
+          uetGoogleCredential: { email: input.uetGoogleEmail, password: input.uetGooglePassword },
+          studenthub: result.studenthub ? { kind: "bearer", value: result.studenthub.accessToken, expiresAt: jwtExpiry(result.studenthub.accessToken) ?? expiresAt } : undefined,
+          canvas: result.canvas ? { kind: "cookie", value: result.canvas.cookie, csrfToken: result.canvas.csrfToken, expiresAt } : undefined,
+        };
+        return { universityId: "uet", studentCode: session.studentCode, expiresAt, session };
+      }
+
       if (!input.studenthubGoogleCredential && !input.studenthubToken && !input.studenthubCookie && !input.canvasToken && !input.canvasCookie) {
         throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide a university portal token, portal cookie, learning-platform token, or learning-platform cookie.", 400);
       }
