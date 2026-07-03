@@ -40,9 +40,10 @@ export function serializeCookies(cookies: Array<{ name: string; value: string }>
 //    selectors below are NEEDS LIVE VERIFICATION, see plan Task 12) ──────
 
 export async function automateVnuGoogleLogin(browserBinding: BrowserBinding, email: string, password: string): Promise<GoogleLoginResult> {
-  const browser = await puppeteer.launch(browserBinding as never);
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
   const result: GoogleLoginResult = {};
   try {
+    browser = await puppeteer.launch(browserBinding as never);
     let timeoutId: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS);
@@ -52,8 +53,11 @@ export async function automateVnuGoogleLogin(browserBinding: BrowserBinding, ema
     } finally {
       clearTimeout(timeoutId!);
     }
+  } catch (error) {
+    if (error instanceof HyeboardError) throw error;
+    throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
   } finally {
-    await browser.close();
+    await browser?.close().catch(() => undefined);
   }
   if (!result.studenthub && !result.canvas) {
     throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
