@@ -59,6 +59,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (code ? SESSION_INVALID_CODES.has(code) : response.status === 401) clearSessionToken();
     throw new ApiError(payload.error?.message ?? `Request failed: ${response.status}`, code, response.status);
   }
+  const refreshedToken = payload.meta?.refreshedToken;
+  if (typeof refreshedToken === "string" && refreshedToken) setSessionToken(refreshedToken);
   return payload.data as T;
 }
 
@@ -141,7 +143,7 @@ export const api = {
   news: (universityId: string) => request<NewsItem[]>(`/api/${universityId}/news`),
   trainingPoints: (universityId: string) => universityId === "vnu" ? vnuTrainingPoints() : request<TrainingPoint[]>(`/api/${universityId}/training-points`),
   requests: (universityId: string) => request<ServiceRequest[]>(`/api/${universityId}/requests`),
-  importSession: async (universityId: string, body: { studentCode?: string; studenthubGoogleCredential?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string; vnuUsername?: string; vnuPassword?: string }) => {
+  importSession: async (universityId: string, body: { studentCode?: string; studenthubGoogleCredential?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string; vnuUsername?: string; vnuPassword?: string; uetGoogleEmail?: string; uetGooglePassword?: string }) => {
     const data = await request<{ token: string }>(`/api/${universityId}/auth/import-session`, { method: "POST", body: JSON.stringify(body) });
     setSessionToken(data.token);
     return data;
