@@ -14,6 +14,14 @@ export type EncryptedSessionPayload = {
   studenthub?: UpstreamCredential;
   canvas?: UpstreamCredential;
   vnu?: UpstreamCredential;
+  // Present only for uet sessions created via automated Google login (see
+  // packages/university-adapters/src/uet/google-login-automation.ts). Lets
+  // resolveSession() in apps/worker silently re-run the login when the
+  // short-lived studenthub/canvas credentials expire, without forcing the
+  // user to retype anything. Persisted per explicit user decision — a
+  // HYEB_SESSION_SECRET compromise exposes this real password, not just a
+  // scoped token. See spec's "Accepted risks" section.
+  uetGoogleCredential?: { email: string; password: string };
   expiresAt: string;
 };
 
