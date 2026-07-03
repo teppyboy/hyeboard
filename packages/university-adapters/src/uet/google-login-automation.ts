@@ -34,10 +34,15 @@ export async function automateVnuGoogleLogin(browserBinding: BrowserBinding, ema
   const browser = await puppeteer.launch(browserBinding as never);
   const result: GoogleLoginResult = {};
   try {
-    await Promise.race([
-      runFlow(browser, email, password, result),
-      new Promise((_, reject) => setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS)),
-    ]);
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([runFlow(browser, email, password, result), timeout]);
+    } finally {
+      clearTimeout(timeoutId!);
+    }
   } finally {
     await browser.close();
   }
