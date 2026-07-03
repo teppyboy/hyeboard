@@ -58,7 +58,7 @@ test("UET login leads with Google sign-in and reveals manual fallback on demand"
   await page.getByRole("combobox", { name: "School" }).click();
   await page.getByRole("option", { name: "VNU-UET" }).click();
 
-  await expect(page.getByPlaceholder("you@vnu.edu.vn")).toBeVisible();
+  await expect(page.getByPlaceholder("Student code")).toBeVisible();
   await expect(page.getByPlaceholder("Google account password")).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
 

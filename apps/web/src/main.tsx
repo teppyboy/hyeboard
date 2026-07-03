@@ -967,8 +967,13 @@ function LoginPage() {
     setBusy(true);
     setStatus("Signing in with your VNU Google account...");
     try {
+      const studentCodeInput = uetGoogleEmail.trim();
+      // The login box only ever needs to reach VNU's own mail domain, so
+      // users just type their student code (MSV) — append @vnu.edu.vn
+      // ourselves unless they already typed a full address.
+      const fullEmail = studentCodeInput && !studentCodeInput.includes("@") ? `${studentCodeInput}@vnu.edu.vn` : studentCodeInput;
       await api.importSession("uet", {
-        uetGoogleEmail: uetGoogleEmail || undefined,
+        uetGoogleEmail: fullEmail || undefined,
         uetGooglePassword: uetGooglePassword || undefined,
       });
       state.selectUniversity("uet", { clearSession: false });
@@ -1041,9 +1046,9 @@ function LoginPage() {
               <>
                 <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
                   <p className="font-medium text-foreground">Sign in with your VNU Google account</p>
-                  <p className="mt-1">Hyeboard signs in on a secure server-side browser session using your email and password, then connects both the university portal and the learning platform automatically. Your password is encrypted and stored only to keep you signed in — you can remove it anytime by signing out.</p>
+                  <p className="mt-1">Enter your student code and Google password. Hyeboard connects StudentHub and Canvas, then stores the password encrypted so it can refresh your session. Sign out to remove it.</p>
                 </div>
-                <Input type="email" autoComplete="username" placeholder="you@vnu.edu.vn" value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                <Input type="text" autoComplete="username" placeholder="Student code" value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
                 <Input type="password" autoComplete="current-password" placeholder="Google account password" value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
                 <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">Sign in with Google</Button>
 
