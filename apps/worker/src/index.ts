@@ -22,10 +22,11 @@ function getSessionSecret(): string {
 
 // ─── Auth ─────────────────────────────────────────────────────
 
-function getSession(headers: Headers | Record<string, string | undefined>) {
+async function getSession(headers: Headers | Record<string, string | undefined>) {
   const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
   const token = parseBearerToken(h.get("Authorization"));
   if (!token) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
+  if (await isTokenRevoked(token)) throw new HyeboardError("SESSION_EXPIRED", "Session expired", 401);
   return decryptSession(token, getSessionSecret());
 }
 
