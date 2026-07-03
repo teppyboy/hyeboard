@@ -175,6 +175,10 @@ function useHyeboardState() {
   };
 
   const logout = () => {
+    // Best-effort server-side revocation while the Authorization header still carries a
+    // valid token - this is what actually invalidates any persisted uetGoogleCredential.
+    // api.logout() never throws, so this fire-and-forget call never blocks local sign-out.
+    void api.logout(universityId);
     clearReloginSecrets();
     clearSessionToken();
     setSessionNonce((value) => value + 1);

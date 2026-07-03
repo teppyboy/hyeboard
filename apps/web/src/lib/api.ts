@@ -153,4 +153,14 @@ export const api = {
     setSessionToken(data.token);
     return data;
   },
+  // Best-effort server-side revocation (also invalidates any persisted uetGoogleCredential
+  // embedded in the token). Must never throw - logout has to succeed locally even if this
+  // network call fails, so callers should not need to wrap this in their own try/catch.
+  logout: async (universityId: string) => {
+    try {
+      await request<{ authenticated: false }>(`/api/${universityId}/auth/logout`, { method: "POST" });
+    } catch {
+      // Ignore - the local session is cleared regardless of server-side outcome.
+    }
+  },
 };
