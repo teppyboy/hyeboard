@@ -1020,7 +1020,7 @@ function LoginPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : selectedUniversity === "vnu" ? "Connect VNU (daotao) account" : "Use Demo Data"}</CardTitle>
-                <CardDescription>{selectedUniversity === "uet" ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : selectedUniversity === "vnu" ? "Sign in with your daotao.vnu.edu.vn username and password." : "Open Hyeboard with safe sample data."}</CardDescription>
+                <CardDescription>{selectedUniversity === "uet" ? (showManualFallback ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : "Sign in with your VNU Google account to connect your university portal and learning platform.") : selectedUniversity === "vnu" ? "Sign in with your daotao.vnu.edu.vn username and password." : "Open Hyeboard with safe sample data."}</CardDescription>
               </div>
               <Select value={selectedUniversity} onValueChange={(value) => chooseUniversity(value as "mock" | "uet" | "vnu")}>
                 <SelectTrigger className="h-9 w-[128px] shrink-0" aria-label="School"><SelectValue placeholder="School" /></SelectTrigger>
