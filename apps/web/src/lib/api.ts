@@ -59,6 +59,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (code ? SESSION_INVALID_CODES.has(code) : response.status === 401) clearSessionToken();
     throw new ApiError(payload.error?.message ?? `Request failed: ${response.status}`, code, response.status);
   }
+  // Silent session refresh: for UET sessions created via automated Google login, the
+  // worker's resolveSession() (apps/worker/src/index.ts) may re-run the login automation
+  // mid-request when the upstream credential has expired, then hand back a fresh encrypted
+  // token via meta.refreshedToken. Adopt it transparently so the user never sees a re-login
+  // prompt for routine expiry — only trusted, server-signed tokens ever populate this field.
   const refreshedToken = payload.meta?.refreshedToken;
   if (typeof refreshedToken === "string" && refreshedToken) setSessionToken(refreshedToken);
   return payload.data as T;
