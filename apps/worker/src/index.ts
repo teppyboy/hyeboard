@@ -1,5 +1,5 @@
 import { cors } from "@elysiajs/cors";
-import { decryptSession, encryptSession, fail, HyeboardError, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
+import { decryptSession, encryptSession, fail, HyeboardError, isExpired, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
 import { DaotaoClient, getAdapter, listUniversities } from "@hyeboard/university-adapters";
 import { env } from "cloudflare:workers";
 import { Elysia, t } from "elysia";
@@ -27,6 +27,38 @@ function getSession(headers: Headers | Record<string, string | undefined>) {
   const token = parseBearerToken(h.get("Authorization"));
   if (!token) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
   return decryptSession(token, getSessionSecret());
+}
+
+type ResolvedSession = { session: EncryptedSessionPayload; refreshedToken?: string };
+
+// Lazy, per-request refresh (no background jobs/Durable Object alarms — see
+// spec's "lazy on next API call" decision). Only uet sessions created via
+// automated Google login carry uetGoogleCredential; every other session
+// (manual paste, vnu, mock) passes straight through the plain decrypt path
+// with the shortcut check below being a cheap no-op.
+async function resolveSession(headers: Headers | Record<string, string | undefined>): Promise<ResolvedSession> {
+  const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
+  const token = parseBearerToken(h.get("Authorization"));
+  if (!token) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
+  if (await isTokenRevoked(token)) throw new HyeboardError("SESSION_EXPIRED", "Session expired", 401);
+  const session = await decryptSession(token, getSessionSecret());
+
+  if (session.universityId !== "uet" || !session.uetGoogleCredential) return { session };
+  const studenthubExpiresAt = session.studenthub?.expiresAt;
+  if (studenthubExpiresAt && !isExpired(studenthubExpiresAt)) return { session };
+
+  try {
+    const adapter = getAdapter("uet");
+    const refreshed = await adapter.importSession(
+      { uetGoogleEmail: session.uetGoogleCredential.email, uetGooglePassword: session.uetGoogleCredential.password },
+      { browserBinding: appEnv().BROWSER },
+    );
+    const refreshedToken = await encryptSession(refreshed.session, getSessionSecret());
+    return { session: refreshed.session, refreshedToken };
+  } catch (error) {
+    const message = error instanceof HyeboardError ? error.message : "Automatic sign-in refresh failed.";
+    throw new HyeboardError("GOOGLE_REFRESH_FAILED", `${message} Sign in again.`, 401);
+  }
 }
 
 // ─── Error handling ───────────────────────────────────────────
@@ -254,7 +286,19 @@ app
     const token = await encryptSession(imported.session, getSessionSecret());
     return ok({ token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
   }, { body: importSessionBody })
-  .post("/api/:universityId/auth/logout", () => ok({ authenticated: false }))
+  .post("/api/:universityId/auth/logout", async ({ headers }) => {
+    const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
+    const token = parseBearerToken(h.get("Authorization"));
+    if (token) {
+      try {
+        const session = await decryptSession(token, getSessionSecret());
+        await revokeToken(token, session.expiresAt);
+      } catch {
+        // Already invalid/expired token — nothing to revoke.
+      }
+    }
+    return ok({ authenticated: false });
+  })
   .get("/api/vnu/raw/:page", async ({ headers, params, query }) => {
     const session = await getSession(headers);
     if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
@@ -265,10 +309,16 @@ app
   .group("/api/:universityId", (g) =>
     g
       .resolve(async ({ headers, params }) => {
-        const session = await getSession(headers);
+        const { session, refreshedToken } = await resolveSession(headers);
         if (session.universityId !== params.universityId)
           throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
-        return { session, adapter: getAdapter(params.universityId) };
+        return { session, refreshedToken, adapter: getAdapter(params.universityId) };
+      })
+      .onAfterHandle(({ response, refreshedToken }) => {
+        if (!refreshedToken || !response || typeof response !== "object") return response;
+        const typed = response as { data?: unknown; error?: unknown; meta?: Record<string, unknown> };
+        if (!("data" in typed)) return response;
+        return { ...typed, meta: { ...(typed.meta ?? {}), refreshedToken } };
       })
       .get("/auth/session", ({ session }) => ok({ universityId: session.universityId, studentCode: session.studentCode, expiresAt: session.expiresAt, authenticated: true }))
       .get("/me", async ({ adapter, session }) => ok(await adapter.getStudentProfile({ session })))
