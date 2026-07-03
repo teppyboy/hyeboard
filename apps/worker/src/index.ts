@@ -38,6 +38,18 @@ function routeError(error: unknown, requestId?: string) {
     log(`[${id}] ${error.code} (${error.status}): ${error.message}`);
     return new Response(JSON.stringify(fail(error.code, error.message, error.details)), { status: error.status, headers: { "Content-Type": "application/json" } });
   }
+  // Elysia's own error classes (ValidationError, ParseError, NotFoundError,
+  // InternalServerError) are plain Errors with .code/.status, not
+  // HyeboardError. Surface them as clean 4xx responses instead of masking
+  // a client mistake (e.g. malformed request body) as a generic 500.
+  if (error instanceof Error && "status" in error && typeof (error as { status?: unknown }).status === "number") {
+    const status = (error as { status: number }).status;
+    const code = "code" in error && typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : "REQUEST_ERROR";
+    const log = status >= 500 ? console.error : console.warn;
+    log(`[${id}] ${code} (${status}): request rejected`);
+    const message = status < 500 ? "The request was invalid. Check the fields you submitted and try again." : "Unexpected API error";
+    return new Response(JSON.stringify(fail(code, message)), { status, headers: { "Content-Type": "application/json" } });
+  }
   console.error(`[${id}] Unhandled error type:`, typeof error, error instanceof Error ? error.stack : "");
   return new Response(JSON.stringify(fail("INTERNAL_ERROR", "Unexpected API error")), { status: 500, headers: { "Content-Type": "application/json" } });
 }
@@ -76,10 +88,11 @@ async function hmacHex(value: string): Promise<string> {
 }
 
 async function cacheGet<T>(key: string): Promise<T | undefined> {
-  const cache = await caches.open("hyeboard");
-  const response = await cache.match(new Request(`https://hyeboard.internal/cache/${key}`));
-  if (!response) return undefined;
   try {
+    const cache = await appCache();
+    if (!cache) return undefined;
+    const response = await cache.match(new Request(`https://hyeboard.internal/cache/${key}`));
+    if (!response) return undefined;
     return (await response.json()) as T;
   } catch {
     return undefined;
@@ -88,16 +101,29 @@ async function cacheGet<T>(key: string): Promise<T | undefined> {
 
 async function cachePut(key: string, value: unknown, maxAgeSeconds: number): Promise<void> {
   if (maxAgeSeconds <= 0) return;
-  const cache = await caches.open("hyeboard");
-  await cache.put(
-    new Request(`https://hyeboard.internal/cache/${key}`),
-    new Response(JSON.stringify(value), {
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": `public, max-age=${Math.floor(maxAgeSeconds)}`,
-      },
-    }),
-  );
+  try {
+    const cache = await appCache();
+    if (!cache) return;
+    await cache.put(
+      new Request(`https://hyeboard.internal/cache/${key}`),
+      new Response(JSON.stringify(value), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": `public, max-age=${Math.floor(maxAgeSeconds)}`,
+        },
+      }),
+    );
+  } catch {
+    // Cache API is best-effort. Auth must keep working even when a colo/runtime
+    // rejects cache access for synthetic requests.
+  }
+}
+
+async function appCache(): Promise<Cache | undefined> {
+  const storage = globalThis.caches as (CacheStorage & { default?: Cache }) | undefined;
+  if (!storage) return undefined;
+  if (storage.default) return storage.default;
+  return typeof storage.open === "function" ? storage.open("hyeboard") : undefined;
 }
 
 async function vnuImportCacheKey(username: string, password: string): Promise<string> {
