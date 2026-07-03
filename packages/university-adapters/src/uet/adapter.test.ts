@@ -17,7 +17,16 @@ describe("uet adapter importSession — Google automation path", () => {
 
   it("requires a browserBinding when uetGoogleEmail/Password are provided", async () => {
     const adapter = createUetAdapter();
-    await expect(adapter.importSession({ uetGoogleEmail: "a@vnu.edu.vn", uetGooglePassword: "x" })).rejects.toThrow(HyeboardError);
+    await expect(adapter.importSession({ uetGoogleEmail: "a@vnu.edu.vn", uetGooglePassword: "x" })).rejects.toMatchObject({
+      code: "SERVER_CONFIG_ERROR",
+    });
+  });
+
+  it("requires both uetGoogleEmail and uetGooglePassword together", async () => {
+    const adapter = createUetAdapter();
+    await expect(adapter.importSession({ uetGoogleEmail: "a@vnu.edu.vn" })).rejects.toMatchObject({
+      code: "MISSING_UPSTREAM_CREDENTIAL",
+    });
   });
 
   it("builds a session from a successful automation result and persists uetGoogleCredential with a long expiry", async () => {
