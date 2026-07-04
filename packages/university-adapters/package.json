@@ -14,7 +14,8 @@
   "dependencies": {
     "@cloudflare/puppeteer": "^1.0.2",
     "@hyeboard/core": "workspace:*",
-    "@hyeboard/schemas": "workspace:*"
+    "@hyeboard/schemas": "workspace:*",
+    "puppeteer-core": "^24.15.0"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

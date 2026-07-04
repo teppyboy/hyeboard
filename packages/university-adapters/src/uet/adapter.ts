@@ -112,7 +112,7 @@ export function createUetAdapter(): UniversityAdapter {
         if (!input.uetGoogleEmail || !input.uetGooglePassword) {
           throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide both your VNU Google email and password.", 400);
         }
-        if (!context?.browserBinding) {
+        if (!context?.browserConnection) {
           throw new HyeboardError("SERVER_CONFIG_ERROR", "Automated sign-in is not configured on this server.", 500);
         }
         // No separate "validate against real upstream" check here: automation
@@ -120,7 +120,7 @@ export function createUetAdapter(): UniversityAdapter {
         // a real login against StudentHub/Canvas, so a captured token/cookie
         // is proof-of-working by construction. Re-validating would spend an
         // extra upstream round-trip for no new information.
-        const result = await automateVnuGoogleLogin(context.browserBinding, input.uetGoogleEmail, input.uetGooglePassword);
+        const result = await automateVnuGoogleLogin(context.browserConnection, input.uetGoogleEmail, input.uetGooglePassword);
         const expiresAt = addDays(30);
         const session: EncryptedSessionPayload = {
           version: 1,

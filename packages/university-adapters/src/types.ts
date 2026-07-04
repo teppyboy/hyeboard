@@ -56,8 +56,17 @@ export type ImportedSession = {
 // (that's exactly what @cloudflare/puppeteer's puppeteer.launch() expects).
 export type BrowserBinding = { fetch: typeof fetch };
 
+// Two ways to drive the Google-login automation's headless browser:
+// - "cloudflare": Cloudflare's managed Browser Rendering binding (env.BROWSER),
+//   used when deployed to Cloudflare Workers. This is the live-verified,
+//   production path — do not change its behavior.
+// - "self-hosted": a plain CDP WebSocket endpoint (e.g. a `browserless/chrome`
+//   Docker container) for running Hyeboard under standalone `workerd` outside
+//   Cloudflare, where the Browser Rendering service does not exist.
+export type BrowserConnection = { kind: "cloudflare"; binding: BrowserBinding } | { kind: "self-hosted"; browserWSEndpoint: string };
+
 export type ImportSessionContext = {
-  browserBinding?: BrowserBinding;
+  browserConnection?: BrowserConnection;
 };
 
 export interface UniversityAdapter {

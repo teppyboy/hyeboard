@@ -1,6 +1,13 @@
 import puppeteer from "@cloudflare/puppeteer";
+import puppeteerCore from "puppeteer-core";
 import { HyeboardError } from "@hyeboard/core";
-import type { BrowserBinding } from "../types";
+import type { BrowserConnection } from "../types";
+
+// Structural type covering whichever of @cloudflare/puppeteer's or
+// puppeteer-core's Browser we got — both packages implement the same
+// Puppeteer API surface (newPage/close/on/off) that runFlow() relies on, so
+// the rest of this file doesn't need to know which one produced the browser.
+type AnyBrowser = Awaited<ReturnType<typeof puppeteer.launch>>;
 
 export const STUDENTHUB_LOGIN_URL = "https://studenthub.uet.edu.vn/login";
 export const CANVAS_SSO_URL = "https://portal.uet.vnu.edu.vn/login/saml";
@@ -39,11 +46,24 @@ export function serializeCookies(cookies: Array<{ name: string; value: string }>
 // ── Browser orchestration (NOT unit-tested — mocked by adapter.ts's tests;
 //    selectors below are NEEDS LIVE VERIFICATION, see plan Task 12) ──────
 
-export async function automateVnuGoogleLogin(browserBinding: BrowserBinding, email: string, password: string): Promise<GoogleLoginResult> {
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+export async function automateVnuGoogleLogin(connection: BrowserConnection, email: string, password: string): Promise<GoogleLoginResult> {
+  let browser: AnyBrowser | undefined;
   const result: GoogleLoginResult = {};
   try {
-    browser = await puppeteer.launch(browserBinding as never);
+    if (connection.kind === "cloudflare") {
+      browser = await puppeteer.launch(connection.binding as never);
+    } else {
+      // Self-hosted: connect to a plain CDP endpoint (e.g. a `browserless/chrome`
+      // Docker container) instead of Cloudflare's managed Browser Rendering
+      // service, which doesn't exist outside Cloudflare. puppeteer-core's
+      // Browser implements the same API surface runFlow() uses (newPage,
+      // close, on/off "targetcreated"), so the cast below is safe in
+      // practice even though the two packages have distinct nominal types.
+      // NEEDS VERIFICATION: unlike Cloudflare's managed binding, this path
+      // has not been exercised against a real self-hosted workerd + Docker
+      // Chrome setup yet.
+      browser = (await puppeteerCore.connect({ browserWSEndpoint: connection.browserWSEndpoint })) as unknown as AnyBrowser;
+    }
     let timeoutId: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS);
@@ -78,7 +98,7 @@ export async function automateVnuGoogleLogin(browserBinding: BrowserBinding, ema
 // click-and-wait sequence a second time.
 async function clickGoogleButtonAndWaitForPopup(
   page: import("@cloudflare/puppeteer").Page,
-  browser: Awaited<ReturnType<typeof puppeteer.launch>>,
+  browser: AnyBrowser,
 ): Promise<import("@cloudflare/puppeteer").Page> {
   const popupPromise = new Promise<import("@cloudflare/puppeteer").Page>((resolve, reject) => {
     const onTarget = async (target: import("@cloudflare/puppeteer").Target) => {
@@ -105,7 +125,7 @@ async function clickGoogleButtonAndWaitForPopup(
   return popup;
 }
 
-async function runFlow(browser: Awaited<ReturnType<typeof puppeteer.launch>>, email: string, password: string, result: GoogleLoginResult): Promise<void> {
+async function runFlow(browser: AnyBrowser, email: string, password: string, result: GoogleLoginResult): Promise<void> {
   const page = await browser.newPage();
 
   // 1. StudentHub → Google sign-in popup.

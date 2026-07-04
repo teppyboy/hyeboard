@@ -1,6 +1,6 @@
 import { cors } from "@elysiajs/cors";
 import { decryptSession, encryptSession, fail, HyeboardError, isExpired, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
-import { DaotaoClient, getAdapter, listUniversities } from "@hyeboard/university-adapters";
+import { DaotaoClient, getAdapter, listUniversities, type BrowserConnection } from "@hyeboard/university-adapters";
 import { env } from "cloudflare:workers";
 import { Elysia, t } from "elysia";
 import { CloudflareAdapter } from "elysia/adapter/cloudflare-worker";
@@ -18,6 +18,19 @@ function getSessionSecret(): string {
   if (!s) throw new HyeboardError("SERVER_CONFIG_ERROR", "HYEB_SESSION_SECRET not configured; run `wrangler secret put HYEB_SESSION_SECRET`", 500);
   if (s.length < 32) throw new HyeboardError("WEAK_SESSION_SECRET", "HYEB_SESSION_SECRET must be >= 32 characters", 500);
   return s;
+}
+
+// On Cloudflare, use the managed Browser Rendering binding (env.BROWSER).
+// Self-hosted deployments (workerd + a Docker headless-Chrome container)
+// have no such binding — instead they set HYEB_BROWSER_WS_ENDPOINT to a
+// plain CDP WebSocket URL (e.g. ws://chrome:3000) and google-login-automation
+// connects to it via puppeteer-core instead of @cloudflare/puppeteer. This
+// keeps the existing, live-verified Cloudflare-hosted path unchanged when
+// the env var is unset.
+function browserConnection(): BrowserConnection {
+  const wsEndpoint = appEnv().HYEB_BROWSER_WS_ENDPOINT;
+  if (wsEndpoint) return { kind: "self-hosted", browserWSEndpoint: wsEndpoint };
+  return { kind: "cloudflare", binding: appEnv().BROWSER };
 }
 
 // ─── Auth ─────────────────────────────────────────────────────
@@ -52,7 +65,7 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
     const adapter = getAdapter("uet");
     const refreshed = await adapter.importSession(
       { uetGoogleEmail: session.uetGoogleCredential.email, uetGooglePassword: session.uetGoogleCredential.password },
-      { browserBinding: appEnv().BROWSER },
+      { browserConnection: browserConnection() },
     );
     const refreshedToken = await encryptSession(refreshed.session, getSessionSecret());
     return { session: refreshed.session, refreshedToken };
@@ -268,7 +281,7 @@ app
     const adapter = getAdapter(params.universityId);
     if (params.universityId === "uet" && body.uetGoogleEmail) {
       await checkAndIncrementGoogleLoginAttempts(body.uetGoogleEmail);
-      const imported = await adapter.importSession(body, { browserBinding: appEnv().BROWSER });
+      const imported = await adapter.importSession(body, { browserConnection: browserConnection() });
       const token = await encryptSession(imported.session, getSessionSecret());
       return ok({ token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
     }

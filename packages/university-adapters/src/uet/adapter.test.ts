@@ -37,7 +37,7 @@ describe("uet adapter importSession — Google automation path", () => {
     const adapter = createUetAdapter();
     const imported = await adapter.importSession(
       { uetGoogleEmail: "a@vnu.edu.vn", uetGooglePassword: "hunter2" },
-      { browserBinding: { fetch: vi.fn() } },
+      { browserConnection: { kind: "cloudflare", binding: { fetch: vi.fn() } } },
     );
     expect(imported.session.uetGoogleCredential).toEqual({ email: "a@vnu.edu.vn", password: "hunter2" });
     expect(imported.session.studenthub).toEqual({ kind: "bearer", value: "sh-token", expiresAt: expect.any(String) });
@@ -52,7 +52,7 @@ describe("uet adapter importSession — Google automation path", () => {
     const adapter = createUetAdapter();
     const imported = await adapter.importSession(
       { uetGoogleEmail: "a@vnu.edu.vn", uetGooglePassword: "hunter2" },
-      { browserBinding: { fetch: vi.fn() } },
+      { browserConnection: { kind: "cloudflare", binding: { fetch: vi.fn() } } },
     );
     expect(imported.session.studenthub).toBeDefined();
     expect(imported.session.canvas).toBeUndefined();
@@ -62,7 +62,7 @@ describe("uet adapter importSession — Google automation path", () => {
     vi.mocked(automateVnuGoogleLogin).mockRejectedValue(new HyeboardError("GOOGLE_2FA_REQUIRED", "2FA required", 401));
     const adapter = createUetAdapter();
     await expect(
-      adapter.importSession({ uetGoogleEmail: "a@vnu.edu.vn", uetGooglePassword: "hunter2" }, { browserBinding: { fetch: vi.fn() } }),
+      adapter.importSession({ uetGoogleEmail: "a@vnu.edu.vn", uetGooglePassword: "hunter2" }, { browserConnection: { kind: "cloudflare", binding: { fetch: vi.fn() } } }),
     ).rejects.toMatchObject({ code: "GOOGLE_2FA_REQUIRED" });
   });
 });
