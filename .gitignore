@@ -8,11 +8,11 @@ coverage/
 apps/web/test-results/
 apps/web/playwright-report/
 apps/web/blob-report/
-apps/worker/dist-workerd/
 
 # Secrets and local env
 .env
 .env.*
+!.env.example
 .dev.vars
 
 # HAR captures contain cookies, tokens, session IDs, and PII.

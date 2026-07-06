@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/serve-node.ts", "src/serve-bun.ts", "src/serve-static.ts", "src/app.ts"]
+}

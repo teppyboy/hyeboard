@@ -1,0 +1,16 @@
+# Optional headless Chrome for self-hosting the UET Google-login automation
+# feature outside Cloudflare (Node/Bun deployments only — Cloudflare
+# deployments use the managed Browser Rendering binding instead and don't
+# need this).
+#
+# Usage:
+#   docker compose up -d
+#   HYEB_BROWSER_WS_ENDPOINT=ws://localhost:3000 pnpm --filter @hyeboard/worker serve:node
+#
+# Every other Hyeboard feature works without this container.
+services:
+  chrome:
+    image: ghcr.io/browserless/chromium:latest
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
