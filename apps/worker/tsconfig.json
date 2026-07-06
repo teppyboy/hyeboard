@@ -4,5 +4,5 @@
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["src", "worker-configuration.d.ts"],
-  "exclude": ["src/serve-node.ts", "src/serve-bun.ts", "src/serve-static.ts"]
+  "exclude": ["src/serve-static.ts", "src/cloudflare-workers-ambient.d.ts"]
 }

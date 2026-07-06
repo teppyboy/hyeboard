@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "wrangler dev --show-interactive-dev-session=false --log-level info",
     "deploy": "wrangler deploy",
-    "serve:node": "tsx src/serve-node.ts",
-    "serve:bun": "bun run src/serve-bun.ts",
+    "serve:node": "tsx src/index.ts",
+    "serve:bun": "bun run src/index.ts",
     "wrangler": "wrangler",
     "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
