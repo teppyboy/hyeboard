@@ -17,7 +17,7 @@ import type {
   TuitionStatus,
   University,
 } from "@hyeboard/schemas";
-import type { EncryptedSessionPayload } from "@hyeboard/core";
+import type { EncryptedSessionPayload, GoogleSessionCookie } from "@hyeboard/core";
 
 export type AdapterRequest = {
   session?: EncryptedSessionPayload;
@@ -40,6 +40,13 @@ export type LoginImportInput = {
   // adapter already owns vnuUsername/vnuPassword for its own login form.
   uetGoogleEmail?: string;
   uetGooglePassword?: string;
+  // Previously-captured Google session cookies (see
+  // EncryptedSessionPayload.uetGoogleCredential.googleCookies). Only ever
+  // supplied by resolveSession()'s lazy-refresh path in apps/worker, never
+  // by a real end-user request — lets automateVnuGoogleLogin attempt a
+  // silent, cookie-based re-login before falling back to the full
+  // interactive flow.
+  uetGoogleCookies?: GoogleSessionCookie[];
 };
 
 export type ImportedSession = {
@@ -63,7 +70,10 @@ export type BrowserBinding = { fetch: typeof fetch };
 // - "self-hosted": a plain CDP WebSocket endpoint (e.g. a `browserless/chrome`
 //   Docker container) for running Hyeboard under standalone `workerd` outside
 //   Cloudflare, where the Browser Rendering service does not exist.
-export type BrowserConnection = { kind: "cloudflare"; binding: BrowserBinding } | { kind: "self-hosted"; browserWSEndpoint: string };
+export type BrowserConnection =
+  | { kind: "cloudflare"; binding: BrowserBinding }
+  | { kind: "self-hosted"; browserWSEndpoint: string }
+  | { kind: "local"; headless?: boolean };
 
 export type ImportSessionContext = {
   browserConnection?: BrowserConnection;

@@ -1,6 +1,6 @@
 import puppeteer from "@cloudflare/puppeteer";
 import puppeteerCore from "puppeteer-core";
-import { HyeboardError } from "@hyeboard/core";
+import { getLogger, HyeboardError, type GoogleSessionCookie } from "@hyeboard/core";
 import type { BrowserConnection } from "../types";
 
 // Structural type covering whichever of @cloudflare/puppeteer's or
@@ -25,6 +25,10 @@ export const HARD_TIMEOUT_MS = 90_000;
 export type GoogleLoginResult = {
   studenthub?: { accessToken: string; accountCode?: string };
   canvas?: { cookie: string; csrfToken?: string };
+  // Google session cookies captured after login, for the caller to persist
+  // and pass back in on the next automateVnuGoogleLogin() call (see
+  // EncryptedSessionPayload.uetGoogleCredential.googleCookies).
+  googleCookies?: GoogleSessionCookie[];
 };
 
 export type GoogleChallengeCode = "GOOGLE_2FA_REQUIRED" | "GOOGLE_AUTOMATION_BLOCKED" | "GOOGLE_CHALLENGE_REQUIRED";
@@ -46,39 +50,48 @@ export function serializeCookies(cookies: Array<{ name: string; value: string }>
 // ── Browser orchestration (NOT unit-tested — mocked by adapter.ts's tests;
 //    selectors below are NEEDS LIVE VERIFICATION, see plan Task 12) ──────
 
-export async function automateVnuGoogleLogin(connection: BrowserConnection, email: string, password: string): Promise<GoogleLoginResult> {
+export async function automateVnuGoogleLogin(
+  connection: BrowserConnection,
+  email: string,
+  password: string,
+  existingCookies?: GoogleSessionCookie[],
+): Promise<GoogleLoginResult> {
   let browser: AnyBrowser | undefined;
   const result: GoogleLoginResult = {};
+  const log = getLogger();
+  // Set HYEB_LOG_LEVEL=debug to see every step of this flow (browser
+  // acquisition, navigation, token capture, Canvas SSO hop).
+  log.debug({ connectionKind: connection.kind, email }, "automateVnuGoogleLogin: starting");
   try {
     if (connection.kind === "cloudflare") {
       browser = await puppeteer.launch(connection.binding as never);
-    } else {
-      // Self-hosted: connect to a plain CDP endpoint (e.g. a `browserless/chrome`
-      // Docker container) instead of Cloudflare's managed Browser Rendering
-      // service, which doesn't exist outside Cloudflare. puppeteer-core's
-      // Browser implements the same API surface runFlow() uses (newPage,
-      // close, on/off "targetcreated"), so the cast below is safe in
-      // practice even though the two packages have distinct nominal types.
-      // NEEDS VERIFICATION: unlike Cloudflare's managed binding, this path
-      // has not been exercised against a real self-hosted workerd + Docker
-      // Chrome setup yet.
+    } else if (connection.kind === "self-hosted") {
       browser = (await puppeteerCore.connect({ browserWSEndpoint: connection.browserWSEndpoint })) as unknown as AnyBrowser;
+    } else {
+      browser = (await puppeteerCore.launch({
+        headless: connection.headless ?? true,
+        executablePath: process.env.HYEB_CHROME_PATH,
+        args: ["--no-sandbox"],
+      })) as unknown as AnyBrowser;
     }
+    log.debug("automateVnuGoogleLogin: browser acquired");
     let timeoutId: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS);
     });
     try {
-      await Promise.race([runFlow(browser, email, password, result), timeout]);
+      await Promise.race([runFlow(browser, email, password, result, existingCookies), timeout]);
     } finally {
       clearTimeout(timeoutId!);
     }
   } catch (error) {
     if (error instanceof HyeboardError) throw error;
+    log.error({ err: error }, "automateVnuGoogleLogin: unexpected error");
     throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
   } finally {
     await browser?.close().catch(() => undefined);
   }
+  log.debug({ hasStudenthub: Boolean(result.studenthub), hasCanvas: Boolean(result.canvas) }, "automateVnuGoogleLogin: finished");
   if (!result.studenthub && !result.canvas) {
     throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
   }
@@ -125,8 +138,27 @@ async function clickGoogleButtonAndWaitForPopup(
   return popup;
 }
 
-async function runFlow(browser: AnyBrowser, email: string, password: string, result: GoogleLoginResult): Promise<void> {
+async function runFlow(
+  browser: AnyBrowser,
+  email: string,
+  password: string,
+  result: GoogleLoginResult,
+  existingCookies?: GoogleSessionCookie[],
+): Promise<void> {
   const page = await browser.newPage();
+  let studenthubToken: string | null = null;
+
+  // 0. Rehydrate a previously-captured Google session cookie (if any)
+  // before StudentHub even redirects to Google — CDP's setCookie applies
+  // at the browser-context/cookie-jar level, not the currently-loaded
+  // page, so it also covers the popup opened in step 1 below (same
+  // context). Best-effort only: if Google no longer honors the cookie
+  // (expired/revoked), the flow below simply falls through to the normal
+  // interactive email/password/Keycloak steps, same as if no cookie were
+  // passed at all.
+  if (existingCookies?.length) {
+    await page.setCookie(...(existingCookies as never[])).catch(() => undefined);
+  }
 
   // 1. StudentHub → Google sign-in popup.
   await page.goto(STUDENTHUB_LOGIN_URL, { waitUntil: "networkidle0" });
@@ -137,119 +169,207 @@ async function runFlow(browser: AnyBrowser, email: string, password: string, res
     if (challenge) throw new HyeboardError(challenge, "Google requires additional verification that cannot be completed automatically.", 401);
   };
 
-  // 2. Google account chooser (if a prior session exists, or an org-wide
-  // login hint pre-populates a suggested account) — pick "use another
-  // account" when present, otherwise the popup goes straight to the
-  // email step. NEEDS LIVE VERIFICATION: this repo's own live check used
-  // a browser with existing Google sessions, so it saw the account
-  // chooser; a fresh Browser-Rendering session (no cookies) is expected
-  // to skip straight to the email input below, but this remains
-  // unconfirmed against a truly cookie-less session — this branch is a
-  // defensive best-effort, not verified.
-  const useAnotherAccount = await popup.waitForSelector("aria/Sử dụng tài khoản khác", { timeout: 3_000 }).catch(() => null);
-  if (useAnotherAccount) {
-    await useAnotherAccount.click().catch(() => undefined);
-    await popup.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
+  // 1b. If we restored a Google session cookie, give the popup a short
+  // window to recognize it and complete the OAuth handshake on its own
+  // (closing itself without any interactive step) before doing anything
+  // else. NEEDS LIVE VERIFICATION: never confirmed against a real Google
+  // account whether a rehydrated cookie actually produces this silent
+  // close — if it doesn't close in time, we assume the cookie is stale
+  // and fall through to the full interactive flow below exactly as if no
+  // cookie had been supplied.
+  let silentCookieLogin = false;
+  if (existingCookies?.length) {
+    getLogger().debug("runFlow: attempting silent cookie-based login");
+    // Short timeout — Google's OAuth popup doesn't auto-close without user
+    // interaction even with valid cookies (no silent completion observed),
+    // so waiting the full 4s was pure waste every run. 1.5s is enough to
+    // catch an edge case where the popup genuinely auto-closes, then falls
+    // through to step 2's interactive flow immediately otherwise.
+    silentCookieLogin = await new Promise<boolean>((resolve) => {
+      popup.once("close", () => resolve(true));
+      setTimeout(() => resolve(false), 1_500);
+    });
+    getLogger().debug({ silentCookieLogin }, "runFlow: silent cookie-based login attempt finished");
   }
 
-  // 3. Google email step.
-  const emailSelector = 'input[type="email"], input#identifierId';
-  await popup.waitForSelector(emailSelector, { timeout: 15_000 });
-  await popup.type(emailSelector, email, { delay: 20 });
-  await popup.waitForSelector("#identifierNext", { timeout: 10_000 });
-  await popup.click("#identifierNext");
-  await popup.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => undefined);
-  await checkPopupChallenge(popup);
-
-  // 4. VNU-domain accounts are federated to VNU's own Keycloak IDP
-  // (idp.vnu.edu.vn), not Google's own password page.
-  // VERIFIED LIVE (2026-07-03): after the email step, Google redirects the
-  // popup to idp.vnu.edu.vn/auth/realms/vnu/login-actions/authenticate — a
-  // Keycloak form with #username/#password inputs and a #kc-login submit
-  // button (client_id=https://www.google.com/a/vnu.edu.vn in the query
-  // string). Submitting it completes SSO federation, but the Keycloak
-  // theme's own client-side script then FORCIBLY navigates the popup to
-  // https://mail.google.com/a/vnu.edu.vn — a dead end for this OAuth flow.
-  // Recovery (confirmed live by manual testing): close this popup and click
-  // "Đăng nhập với VNU mail" again; the browser's Google account session
-  // cookie is now set from the completed federation, so the second popup
-  // goes straight to account selection instead of asking for credentials
-  // again.
-  if (/idp\.vnu\.edu\.vn/.test(popup.url())) {
-    // NEEDS LIVE VERIFICATION: whether Keycloak's #username field expects
-    // the bare local-part (before "@") or the full email address. Using the
-    // local-part as the more common LDAP/Keycloak convention (matches how
-    // VNU's other systems, e.g. the vnu/daotao adapter, use a bare student
-    // code rather than a full email) — unconfirmed against this specific
-    // IDP without a real submission.
-    const keycloakUsername = email.includes("@") ? email.slice(0, email.indexOf("@")) : email;
-    await popup.waitForSelector("#username", { timeout: 10_000 });
-    await popup.type("#username", keycloakUsername, { delay: 20 });
-    await popup.type("#password", password, { delay: 20 });
-    await popup.click("#kc-login");
-    await popup.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => undefined);
-
-    // VERIFIED LIVE (2026-07-03): after the Keycloak login, Google shows an
-    // interstitial "We'd like to verify if this account is yours" screen
-    // with a "Continue" button before it proceeds to the mail.google.com
-    // dead end described above. Click through it if present; if this screen
-    // doesn't appear (e.g. a different locale/account state), the selector
-    // simply won't be found and this is skipped.
-    const verifyContinue =
-      (await popup.waitForSelector("aria/Continue", { timeout: 5_000 }).catch(() => null)) ??
-      (await popup.waitForSelector("aria/Tiếp tục", { timeout: 3_000 }).catch(() => null));
-    if (verifyContinue) {
-      await verifyContinue.click().catch(() => undefined);
-      // This navigation lands on the mail.google.com dead end (a heavy SPA
-      // that keeps sockets/long-polls open) — "networkidle0" would likely
-      // never resolve and burn the full navigation timeout every run.
-      // "domcontentloaded" is enough since we only need the popup to have
-      // settled before closing it, not for Gmail to finish loading.
+  if (!silentCookieLogin) {
+    // 2. Google account chooser (if a prior session exists, or an org-wide
+    // login hint pre-populates a suggested account) — pick "use another
+    // account" when present, otherwise the popup goes straight to the
+    // email step. NEEDS LIVE VERIFICATION: this repo's own live check used
+    // a browser with existing Google sessions, so it saw the account
+    // chooser; a fresh Browser-Rendering session (no cookies) is expected
+    // to skip straight to the email input below, but this remains
+    // unconfirmed against a truly cookie-less session — this branch is a
+    // defensive best-effort, not verified.
+    const useAnotherAccount = await popup.waitForSelector("aria/Sử dụng tài khoản khác", { timeout: 3_000 }).catch(() => null);
+    if (useAnotherAccount) {
+      await useAnotherAccount.click().catch(() => undefined);
       await popup.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
     }
 
-    // This navigation is expected to land on mail.google.com (the dead end
-    // described above) — not treated as an error, just awaited so the popup
-    // settles before we close it.
-    await popup.close().catch(() => undefined);
+    // 2b. When cookie rehydration (step 0) placed the popup on Google's
+    // account chooser with the logged-in account already listed, click that
+    // tile instead of typing the email — clicking the tile silently
+    // completes the OAuth consent via form_post/postMessage back to the
+    // opener, and the popup closes itself. If no tile matches (cookie not
+    // present or the popup isn't on the account chooser), this is a no-op
+    // and the interactive flow below proceeds normally.
+    const loggedInTile =
+      (await popup.waitForSelector(`div[data-identifier="${email}"]`, { timeout: 3_000 }).catch(() => null)) ??
+      (await popup.waitForSelector(`::-p-text(${email})`, { timeout: 3_000 }).catch(() => null));
+    if (loggedInTile) {
+      await loggedInTile.click().catch(() => undefined);
+      await popup.waitForNavigation({ waitUntil: "networkidle0", timeout: 15_000 }).catch(() => undefined);
+      if (popup.isClosed()) {
+        silentCookieLogin = true;
+      } else {
+        // The initial navigation from the account tile click may only have
+        // reached a Google interstitial (post-account-selection page); the
+        // Google→Keycloak SAML federation redirect can arrive as a second
+        // navigation that hasn't started yet. Wait a short while for any
+        // pending redirect chain to settle so block B's alreadyOnKeycloak
+        // check below sees the final URL. Non-fatal timeout: if no second
+        // navigation happens the check simply falls through to the normal
+        // email/password flow.
+        await popup.waitForNavigation({ waitUntil: "networkidle0", timeout: 8_000 }).catch(() => undefined);
+        if (popup.isClosed()) silentCookieLogin = true;
+      }
+    }
+  }
 
-    // VERIFIED LIVE (2026-07-03): clicking the button again immediately
-    // after closing the Keycloak popup is too fast — the Google session
-    // cookie from the just-completed federation isn't reliably available to
-    // the next OAuth request yet. A short wait before retrying is required.
-    // Confirmed working end-to-end; trimmed from 5s to 2s to shave time off
-    // a successful run.
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  if (!silentCookieLogin) {
+    // 3. Google email step — but if the popup is already on Keycloak
+    // (step 2b's account tile click redirected to VNU IDP because the
+    // rehydrated Keycloak cookie was expired/revoked), skip email and
+    // go straight to the Keycloak credential handling at step 4 below.
+    const alreadyOnKeycloak = /idp\.vnu\.edu\.vn/.test(popup.url());
 
-    popup = await clickGoogleButtonAndWaitForPopup(page, browser);
-    await checkPopupChallenge(popup);
+    if (!alreadyOnKeycloak) {
+      const emailSelector = 'input[type="email"], input#identifierId';
+      await popup.waitForSelector(emailSelector, { timeout: 15_000 });
+      await popup.type(emailSelector, email, { delay: 20 });
+      await popup.waitForSelector("#identifierNext", { timeout: 10_000 });
+      await popup.click("#identifierNext");
+      await popup.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => undefined);
+      await checkPopupChallenge(popup);
+    }
 
-    // VERIFIED LIVE (2026-07-03): the second popup opens an account chooser.
-    // `data-identifier` matching the full email is Google's account tile; the
-    // text-content fallback keeps this tolerant if Google changes attributes.
-    const accountTile =
-      (await popup.waitForSelector(`div[data-identifier="${email}"]`, { timeout: 8_000 }).catch(() => null)) ??
-      (await popup.waitForSelector(`::-p-text(${email})`, { timeout: 5_000 }).catch(() => null));
-    if (accountTile) {
-      await accountTile.click().catch(() => undefined);
+    // 4. VNU-domain accounts are federated to VNU's own Keycloak IDP
+    // (idp.vnu.edu.vn), not Google's own password page.
+    // VERIFIED LIVE (2026-07-03): after the email step, Google redirects the
+    // popup to idp.vnu.edu.vn/auth/realms/vnu/login-actions/authenticate — a
+    // Keycloak form with #username/#password inputs and a #kc-login submit
+    // button (client_id=https://www.google.com/a/vnu.edu.vn in the query
+    // string). Submitting it completes SSO federation, but the Keycloak
+    // theme's own client-side script then FORCIBLY navigates the popup to
+    // https://mail.google.com/a/vnu.edu.vn — a dead end for this OAuth flow.
+    // Recovery (confirmed live by manual testing): close this popup and click
+    // "Đăng nhập với VNU mail" again; the browser's Google account session
+    // cookie is now set from the completed federation, so the second popup
+    // goes straight to account selection instead of asking for credentials
+    // again.
+    // NOTE: `alreadyOnKeycloak` catches the re-auth path where step 2b's
+    // account tile click landed on the VNU IDP directly (rehydrated
+    // Keycloak cookie expired) — the same credential-fill logic applies.
+    if (alreadyOnKeycloak || /idp\.vnu\.edu\.vn/.test(popup.url())) {
+      // NEEDS LIVE VERIFICATION: whether Keycloak's #username field expects
+      // the bare local-part (before "@") or the full email address. Using the
+      // local-part as the more common LDAP/Keycloak convention (matches how
+      // VNU's other systems, e.g. the vnu/daotao adapter, use a bare student
+      // code rather than a full email) — unconfirmed against this specific
+      // IDP without a real submission.
+      const keycloakUsername = email.includes("@") ? email.slice(0, email.indexOf("@")) : email;
+      await popup.waitForSelector("#username", { timeout: 5_000 });
+      await popup.type("#username", keycloakUsername, { delay: 20 });
+      await popup.type("#password", password, { delay: 20 });
+      // Tick the "Ghi nhớ đăng nhập" / "Remember me" checkbox before
+      // submitting — Keycloak otherwise sets only a session cookie (lost on
+      // browser close), making the saved VNU IDP cookie useless for re-auth.
+      // "NEEDS LIVE VERIFICATION": the exact selector may vary by Keycloak
+      // theme version — this is Keycloak's standard #rememberMe id.
+      const rememberMe = await popup.waitForSelector("#rememberMe", { timeout: 2_000 }).catch(() => null);
+      if (rememberMe) {
+        const isChecked = await popup.evaluate(() => (document.querySelector("#rememberMe") as HTMLInputElement | null)?.checked ?? false).catch(() => false);
+        if (!isChecked) await rememberMe.click();
+      }
+      await popup.click("#kc-login");
+      await popup.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
+
+      // VERIFIED LIVE (2026-07-03): after the Keycloak login, Google shows an
+      // interstitial "We'd like to verify if this account is yours" screen
+      // with a "Continue" button before it proceeds to the mail.google.com
+      // dead end. Click through it if present; if this screen doesn't appear
+      // (e.g. the VNU JS location.replace fires directly), simply not found.
+      const verifyContinue =
+        (await popup.waitForSelector("aria/Continue", { timeout: 5_000 }).catch(() => null)) ??
+        (await popup.waitForSelector("aria/Tiếp tục", { timeout: 3_000 }).catch(() => null));
+      if (verifyContinue) {
+        getLogger().debug("runFlow: clicking 'verify it's you' Continue interstitial");
+        await verifyContinue.click().catch(() => undefined);
+        await popup.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10_000 }).catch(() => undefined);
+      }
+
+      if (popup.isClosed()) {
+        // OAuth completed directly (popup closed itself during/near the
+        // interstitial step) — no close+reopen dance needed.
+        getLogger().debug("runFlow: popup closed itself after Keycloak login (OAuth completed directly)");
+      } else {
+        // Popup is on mail.google.com (the VNU JS redirect dead end) or
+        // some other intermediate URL. Close and reopen via the opener's
+        // "Đăng nhập với VNU mail" button; the now-set Google session
+        // cookie makes the second popup skip straight to the account
+        // chooser with a logged-in tile — no second password needed.
+        await popup.close().catch(() => undefined);
+        // VERIFIED LIVE (2026-07-03): clicking the button again immediately
+        // after closing the Keycloak popup is too fast — the Google session
+        // cookie from the just-completed federation isn't reliably available
+        // to the next OAuth request yet. A short wait before retrying is
+        // required. Confirmed working end-to-end; trimmable.
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        popup = await clickGoogleButtonAndWaitForPopup(page, browser);
+        await checkPopupChallenge(popup);
+        // VERIFIED LIVE (2026-07-03): the second popup opens an account
+        // chooser. `data-identifier` matching the full email is Google's
+        // account tile; the text-content fallback keeps this tolerant if
+        // Google changes attributes.
+        const accountTile =
+          (await popup.waitForSelector(`div[data-identifier="${email}"]`, { timeout: 8_000 }).catch(() => null)) ??
+          (await popup.waitForSelector(`::-p-text(${email})`, { timeout: 5_000 }).catch(() => null));
+        if (accountTile) {
+          await accountTile.click().catch(() => undefined);
+          // MUST wait for the popup navigation (Google OAuth consent page)
+          // before polling the opener — the postMessage that delivers the
+          // credential to StudentHub only fires after this navigation.
+          await popup.waitForNavigation({ waitUntil: "networkidle0", timeout: 15_000 }).catch(() => undefined);
+          // Poll the opener for the StudentHub accessToken deposited by
+          // Google's postMessage handshake.
+          for (let attempt = 0; attempt < 20; attempt++) {
+            await new Promise((r) => setTimeout(r, 500));
+            if (studenthubToken || popup.isClosed()) break;
+            studenthubToken = await page.evaluate(() => window.localStorage.getItem("accessToken")).catch(() => null);
+          }
+        }
+      }
+    } else {
+      // No Keycloak redirect observed for this account — fall back to
+      // Google's own password step directly. Kept as a defensive fallback,
+      // not the primary observed flow for @vnu.edu.vn accounts.
+      await popup.waitForSelector('input[type="password"]', { timeout: 10_000, visible: true });
+      await popup.type('input[type="password"]', password, { delay: 20 });
+      await popup.waitForSelector("#passwordNext", { timeout: 10_000 });
+      await popup.click("#passwordNext");
       await popup.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => undefined);
     }
-  } else {
-    // No Keycloak redirect observed for this account — fall back to
-    // Google's own password step directly. Kept as a defensive fallback,
-    // not the primary observed flow for @vnu.edu.vn accounts.
-    await popup.waitForSelector('input[type="password"]', { timeout: 10_000, visible: true });
-    await popup.type('input[type="password"]', password, { delay: 20 });
-    await popup.waitForSelector("#passwordNext", { timeout: 10_000 });
-    await popup.click("#passwordNext");
-    await popup.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => undefined);
+    if (!popup.isClosed()) await checkPopupChallenge(popup);
   }
-  await checkPopupChallenge(popup);
 
   // 5. Popup completes the OAuth handshake (response_mode=form_post) and
   // is expected to close itself once GIS delivers the credential back to
-  // the opener via postMessage — standard GIS popup behavior. Wait for
-  // that close, then poll the opener page for the resulting session.
+  // the opener via postMessage — standard GIS popup behavior (or, on the
+  // silent-cookie-login path, it may already be closed from step 1b).
+  // Wait for that close, then poll the opener page for the resulting
+  // session.
   // VERIFIED LIVE (2026-07-03): StudentHub stores the resulting JWT in
   // localStorage.accessToken, matching the manual-paste instructions already
   // in apps/web/src/main.tsx.
@@ -257,16 +377,52 @@ async function runFlow(browser: AnyBrowser, email: string, password: string, res
   // to 6s since the popup closing (or the JWT already landing) is the
   // common case and the full ceiling was rarely, if ever, needed.
   await new Promise<void>((resolve) => {
+    if (popup.isClosed()) { resolve(); return; }
     popup.once("close", () => resolve());
     setTimeout(resolve, 6_000);
   });
 
-  let studenthubToken: string | null = null;
   for (let attempt = 0; attempt < 8 && !studenthubToken; attempt++) {
     studenthubToken = await page.evaluate(() => window.localStorage.getItem("accessToken")).catch(() => null);
     if (!studenthubToken) await new Promise((resolve) => setTimeout(resolve, 300));
   }
   if (studenthubToken) result.studenthub = { accessToken: studenthubToken };
+  getLogger().debug({ gotStudenthubToken: Boolean(studenthubToken) }, "runFlow: StudentHub token capture attempt finished");
+
+  // Capture both Google session cookies AND VNU IDP (Keycloak) session
+  // cookies from the just-completed login. page.cookies(url) reads cookies
+  // scoped to the given origins from the browser's cookie jar directly via
+  // CDP — it does not require the page to currently be showing that origin,
+  // so this works even though `page` itself is on StudentHub/Canvas by now.
+  // Persisted by the caller (see EncryptedSessionPayload.uetGoogleCredential
+  // .googleCookies) so the next automateVnuGoogleLogin() call can attempt
+  // the silent cookie-based path above instead of a full interactive login.
+  const googleCookies = await page.cookies("https://accounts.google.com", "https://www.google.com", "https://idp.vnu.edu.vn").catch(() => []);
+  if (googleCookies.length) {
+    result.googleCookies = googleCookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      expires: c.expires,
+      httpOnly: c.httpOnly,
+      secure: c.secure,
+      sameSite: c.sameSite as GoogleSessionCookie["sameSite"],
+    }));
+  }
+  getLogger().debug({ gotGoogleCookies: googleCookies.length > 0 }, "runFlow: Google session cookie capture finished");
+
+  // 5b. Let StudentHub's SPA finish transitioning into its authenticated
+  // main page before navigating away to Canvas. The token landing in
+  // localStorage triggers the SPA's own client-side redirect into the
+  // dashboard; jumping to Canvas immediately can interrupt that in-flight
+  // transition (observed live: Canvas opening then immediately closing,
+  // followed by the whole Google popup flow restarting from scratch).
+  // NEEDS LIVE VERIFICATION: no confirmed DOM selector exists yet for
+  // StudentHub's authenticated dashboard state, so this is a best-effort
+  // network-idle wait rather than a specific assertion — non-fatal if it
+  // times out, since we still proceed to Canvas either way.
+  await page.waitForNetworkIdle({ idleTime: 500, timeout: 8_000 }).catch(() => undefined);
 
   // 6. Same browser context/cookies → Canvas SSO (Keycloak brokers to the
   // already-authenticated Google session silently, no second password).
@@ -274,8 +430,10 @@ async function runFlow(browser: AnyBrowser, email: string, password: string, res
   // (har-notes.md only captured POST /login/saml post-authentication; the
   // pre-auth entry point that triggers the Keycloak redirect was never
   // captured in any HAR — this URL is a best guess and must be confirmed).
+  getLogger().debug({ url: CANVAS_SSO_URL }, "runFlow: navigating to Canvas SSO");
   await page.goto(CANVAS_SSO_URL, { waitUntil: "networkidle0" }).catch(() => undefined);
   const canvasChallenge = detectChallenge(page.url(), await page.evaluate(() => document.body.innerText).catch(() => ""));
+  if (canvasChallenge) getLogger().debug({ challenge: canvasChallenge, url: page.url() }, "runFlow: Canvas SSO hit a challenge");
   if (!canvasChallenge) {
     const cookies = await page.cookies();
     const csrfCookie = cookies.find((c) => /csrf/i.test(c.name));
@@ -285,5 +443,6 @@ async function runFlow(browser: AnyBrowser, email: string, password: string, res
         csrfToken: csrfCookie ? decodeURIComponent(csrfCookie.value) : undefined,
       };
     }
+    getLogger().debug({ gotCanvasCookies: cookies.length > 0 }, "runFlow: Canvas SSO finished");
   }
 }

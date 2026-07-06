@@ -12,7 +12,8 @@
     "test": "tsc -p tsconfig.json --noEmit && vitest run"
   },
   "dependencies": {
-    "@hyeboard/schemas": "workspace:*"
+    "@hyeboard/schemas": "workspace:*",
+    "pino": "^10.3.1"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

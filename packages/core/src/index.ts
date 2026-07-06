@@ -1,10 +1,27 @@
 import type { ApiError, ApiResponse } from "@hyeboard/schemas";
 
+export { configureLogger, getLogger, type Logger, type LoggerInit } from "./logger";
+
 export type UpstreamCredential = {
   kind: "bearer" | "cookie" | "manual";
   value: string;
   csrfToken?: string;
   expiresAt?: string;
+};
+
+// Minimal subset of a Puppeteer/CDP cookie needed to rehydrate a Google
+// session on a fresh browser (page.setCookie / page.cookies). Kept as a
+// plain structural type here (not importing Puppeteer's own type) so
+// packages/core stays free of a Puppeteer dependency.
+export type GoogleSessionCookie = {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: "Strict" | "Lax" | "None";
 };
 
 export type EncryptedSessionPayload = {
@@ -21,7 +38,18 @@ export type EncryptedSessionPayload = {
   // user to retype anything. Persisted per explicit user decision — a
   // HYEB_SESSION_SECRET compromise exposes this real password, not just a
   // scoped token. See spec's "Accepted risks" section.
-  uetGoogleCredential?: { email: string; password: string };
+  //
+  // googleCookies (added later): the actual Google session cookies
+  // captured after a successful automated login. Passed back into
+  // automateVnuGoogleLogin() on the next refresh so it can attempt to
+  // rehydrate the browser's Google session and skip the interactive
+  // email/password/Keycloak dance entirely — falling back to the full
+  // interactive flow (using email/password below) if the cookie turns out
+  // to be stale/expired/revoked. NEEDS LIVE VERIFICATION: whether Google
+  // actually honors a rehydrated session cookie on a brand-new, otherwise
+  // cookie-less browser profile the way it would on a real returning
+  // browser — untested against a real account in this environment.
+  uetGoogleCredential?: { email: string; password: string; googleCookies?: GoogleSessionCookie[] };
   expiresAt: string;
 };
 

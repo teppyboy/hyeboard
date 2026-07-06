@@ -967,13 +967,13 @@ function LoginPage() {
     setBusy(true);
     setStatus("Signing in with your VNU Google account...");
     try {
+      // The login box only ever needs the student code (MSV) — the server
+      // always derives the @vnu.edu.vn address itself and ignores any other
+      // domain a caller might supply, so no client-side email construction
+      // happens here (see MISSING_UPSTREAM_CREDENTIAL / adapter.ts normalization).
       const studentCodeInput = uetGoogleEmail.trim();
-      // The login box only ever needs to reach VNU's own mail domain, so
-      // users just type their student code (MSV) — append @vnu.edu.vn
-      // ourselves unless they already typed a full address.
-      const fullEmail = studentCodeInput && !studentCodeInput.includes("@") ? `${studentCodeInput}@vnu.edu.vn` : studentCodeInput;
       await api.importSession("uet", {
-        uetGoogleEmail: fullEmail || undefined,
+        uetGoogleEmail: studentCodeInput || undefined,
         uetGooglePassword: uetGooglePassword || undefined,
       });
       state.selectUniversity("uet", { clearSession: false });

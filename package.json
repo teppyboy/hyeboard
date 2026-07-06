@@ -5,10 +5,15 @@
   "packageManager": "pnpm@11.5.2",
   "scripts": {
     "dev": "pnpm --parallel --filter @hyeboard/web --filter @hyeboard/worker dev",
+    "serve": "pnpm --filter @hyeboard/worker serve:node",
+    "serve:bun": "pnpm --filter @hyeboard/worker serve:bun",
     "dev:web": "pnpm --filter @hyeboard/web dev",
     "dev:worker": "pnpm --filter @hyeboard/worker dev",
+    "dev:node": "concurrently -n web,worker -c blue,green \"pnpm --filter @hyeboard/web dev\" \"pnpm --filter @hyeboard/worker dev:node\"",
+    "dev:bun": "concurrently -n web,worker -c blue,green \"pnpm --filter @hyeboard/web dev\" \"pnpm --filter @hyeboard/worker dev:bun\"",
     "build:web": "pnpm --filter @hyeboard/web build",
     "build:worker": "pnpm --filter @hyeboard/worker build",
+    "build:node": "pnpm --filter @hyeboard/worker build:node",
     "build": "pnpm build:web && pnpm build:worker",
     "deploy": "pnpm --filter @hyeboard/worker deploy",
     "typecheck": "pnpm -r typecheck",
@@ -16,6 +21,7 @@
     "test": "pnpm -r test"
   },
   "devDependencies": {
+    "concurrently": "^10.0.3",
     "typescript": "^6.0.3"
   }
 }

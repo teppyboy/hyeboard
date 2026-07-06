@@ -1,5 +1,5 @@
 import { cors } from "@elysiajs/cors";
-import { decryptSession, encryptSession, fail, HyeboardError, isExpired, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
+import { decryptSession, encryptSession, fail, getLogger, HyeboardError, isExpired, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
 import { DaotaoClient, getAdapter, listUniversities, type BrowserBinding, type BrowserConnection } from "@hyeboard/university-adapters";
 import { Elysia, t } from "elysia";
 
@@ -14,6 +14,8 @@ interface RuntimeConfig {
   HYEB_SESSION_SECRET?: string;
   HYEB_ALLOWED_ORIGINS?: string;
   HYEB_BROWSER_WS_ENDPOINT?: string;
+  HYEB_BROWSER_LOCAL?: string;
+  HYEB_LOG_LEVEL?: string;
 }
 
 let runtimeConfig: RuntimeConfig = (typeof process !== "undefined" ? (process.env as RuntimeConfig) : {}) ?? {};
@@ -47,6 +49,7 @@ function getSessionSecret(): string {
 function browserConnection(): BrowserConnection {
   const wsEndpoint = runtimeConfig.HYEB_BROWSER_WS_ENDPOINT;
   if (wsEndpoint) return { kind: "self-hosted", browserWSEndpoint: wsEndpoint };
+  if (runtimeConfig.HYEB_BROWSER_LOCAL) return { kind: "local", headless: false };
   return { kind: "cloudflare", binding: cloudflareBrowserBinding as BrowserBinding };
 }
 
@@ -81,7 +84,11 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
   try {
     const adapter = getAdapter("uet");
     const refreshed = await adapter.importSession(
-      { uetGoogleEmail: session.uetGoogleCredential.email, uetGooglePassword: session.uetGoogleCredential.password },
+      {
+        uetGoogleEmail: session.uetGoogleCredential.email,
+        uetGooglePassword: session.uetGoogleCredential.password,
+        uetGoogleCookies: session.uetGoogleCredential.googleCookies,
+      },
       { browserConnection: browserConnection() },
     );
     const refreshedToken = await encryptSession(refreshed.session, getSessionSecret());
@@ -96,9 +103,10 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
 
 function routeError(error: unknown, requestId?: string) {
   const id = requestId ?? "-";
+  const log = getLogger();
   if (error instanceof HyeboardError) {
-    const log = error.status >= 500 ? console.error : console.warn;
-    log(`[${id}] ${error.code} (${error.status}): ${error.message}`);
+    const level = error.status >= 500 ? "error" : "warn";
+    log[level]({ reqId: id, code: error.code, status: error.status }, error.message);
     return new Response(JSON.stringify(fail(error.code, error.message, error.details)), { status: error.status, headers: { "Content-Type": "application/json" } });
   }
   // Elysia's own error classes (ValidationError, ParseError, NotFoundError,
@@ -108,12 +116,12 @@ function routeError(error: unknown, requestId?: string) {
   if (error instanceof Error && "status" in error && typeof (error as { status?: unknown }).status === "number") {
     const status = (error as { status: number }).status;
     const code = "code" in error && typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : "REQUEST_ERROR";
-    const log = status >= 500 ? console.error : console.warn;
-    log(`[${id}] ${code} (${status}): request rejected`);
+    const level = status >= 500 ? "error" : "warn";
+    log[level]({ reqId: id, code, status }, "request rejected");
     const message = status < 500 ? "The request was invalid. Check the fields you submitted and try again." : "Unexpected API error";
     return new Response(JSON.stringify(fail(code, message)), { status, headers: { "Content-Type": "application/json" } });
   }
-  console.error(`[${id}] Unhandled error type:`, typeof error, error instanceof Error ? error.stack : "");
+  log.error({ reqId: id, errorType: typeof error, stack: error instanceof Error ? error.stack : undefined }, "Unhandled error type");
   return new Response(JSON.stringify(fail("INTERNAL_ERROR", "Unexpected API error")), { status: 500, headers: { "Content-Type": "application/json" } });
 }
 
@@ -330,7 +338,16 @@ export function createApp(adapter: any) {
 
   return app
     .onRequest(({ request }) => {
-      (request as unknown as { _hyebReqId?: string })._hyebReqId = crypto.randomUUID().slice(0, 8);
+      const req = request as unknown as { _hyebReqId?: string; _hyebStart?: number };
+      req._hyebReqId = crypto.randomUUID().slice(0, 8);
+      req._hyebStart = Date.now();
+      // Set HYEB_LOG_LEVEL=debug (Node/Bun .env, or a Cloudflare secret/var)
+      // to see one line per incoming request here.
+      getLogger().debug({ reqId: req._hyebReqId, method: request.method, url: request.url }, "request received");
+    })
+    .onAfterResponse(({ request, set }) => {
+      const req = request as unknown as { _hyebReqId?: string; _hyebStart?: number };
+      getLogger().debug({ reqId: req._hyebReqId, status: set.status, durationMs: req._hyebStart ? Date.now() - req._hyebStart : undefined }, "request completed");
     })
     .onError(({ error, request }) => routeError(error, (request as unknown as { _hyebReqId?: string })._hyebReqId))
 

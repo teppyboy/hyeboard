@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --show-interactive-dev-session=false --log-level info",
+    "dev:node": "tsx src/index.ts",
+    "dev:bun": "bun --watch src/index.ts",
     "deploy": "wrangler deploy",
-    "serve:node": "tsx src/index.ts",
-    "serve:bun": "bun run src/index.ts",
+    "build:node": "node scripts/build-node.mjs",
+    "serve:node": "node dist/index.js",
+    "serve:bun": "bun run dist/index.js",
     "wrangler": "wrangler",
     "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
@@ -27,6 +30,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260629.1",
     "@types/node": "^24.0.0",
+    "esbuild": "^0.28.1",
+    "pino-pretty": "^13.1.3",
     "tsx": "^4.20.6",
     "typescript": "^6.0.3",
     "wrangler": "^4.105.0"

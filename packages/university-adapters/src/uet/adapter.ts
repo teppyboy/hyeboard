@@ -115,19 +115,31 @@ export function createUetAdapter(): UniversityAdapter {
         if (!context?.browserConnection) {
           throw new HyeboardError("SERVER_CONFIG_ERROR", "Automated sign-in is not configured on this server.", 500);
         }
+        // SECURITY: only the local-part (student code) of whatever the
+        // caller sends is ever trusted — any domain they supply (or omit)
+        // is discarded and @vnu.edu.vn is always forced server-side. This
+        // automation exists to sign in to VNU-owned accounts only; without
+        // this normalization a caller could pass an arbitrary external
+        // address (e.g. abc@gmail.com) and have this server's Puppeteer
+        // automation attempt a real Google sign-in against it.
+        const studentCode = input.uetGoogleEmail.trim().split("@")[0]?.trim();
+        if (!studentCode) {
+          throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide your VNU student code (MSV).", 400);
+        }
+        const uetGoogleEmail = `${studentCode}@vnu.edu.vn`;
         // No separate "validate against real upstream" check here: automation
         // only reaches the credential-capture step after actually completing
         // a real login against StudentHub/Canvas, so a captured token/cookie
         // is proof-of-working by construction. Re-validating would spend an
         // extra upstream round-trip for no new information.
-        const result = await automateVnuGoogleLogin(context.browserConnection, input.uetGoogleEmail, input.uetGooglePassword);
+        const result = await automateVnuGoogleLogin(context.browserConnection, uetGoogleEmail, input.uetGooglePassword, input.uetGoogleCookies);
         const expiresAt = addDays(30);
         const session: EncryptedSessionPayload = {
           version: 1,
           universityId: "uet",
           studentCode: result.studenthub?.accountCode,
           expiresAt,
-          uetGoogleCredential: { email: input.uetGoogleEmail, password: input.uetGooglePassword },
+          uetGoogleCredential: { email: uetGoogleEmail, password: input.uetGooglePassword, googleCookies: result.googleCookies },
           studenthub: result.studenthub ? { kind: "bearer", value: result.studenthub.accessToken, expiresAt: jwtExpiry(result.studenthub.accessToken) ?? expiresAt } : undefined,
           canvas: result.canvas ? { kind: "cookie", value: result.canvas.cookie, csrfToken: result.canvas.csrfToken, expiresAt } : undefined,
         };
