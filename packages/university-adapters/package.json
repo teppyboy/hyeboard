@@ -15,6 +15,7 @@
     "@cloudflare/puppeteer": "^1.0.2",
     "@hyeboard/core": "workspace:*",
     "@hyeboard/schemas": "workspace:*",
+    "patchright": "^1.61.1",
     "puppeteer-core": "^24.15.0"
   },
   "devDependencies": {

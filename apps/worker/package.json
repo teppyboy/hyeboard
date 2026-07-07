@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --show-interactive-dev-session=false --log-level info",
-    "dev:node": "tsx src/index.ts",
-    "dev:bun": "bun --watch src/index.ts",
+    "dev:node": "tsx src/index.node.ts",
+    "dev:bun": "bun --watch src/index.node.ts",
     "deploy": "wrangler deploy",
     "build:node": "node scripts/build-node.mjs",
     "serve:node": "node dist/index.js",

@@ -77,6 +77,11 @@ export type BrowserConnection =
 
 export type ImportSessionContext = {
   browserConnection?: BrowserConnection;
+  // Optional progress reporter for slow, multi-step logins (currently only
+  // the uet adapter's automated Google-login flow calls this). Callers that
+  // don't care about interim progress (e.g. resolveSession()'s silent
+  // background refresh) can simply omit it.
+  onProgress?: (message: string) => void;
 };
 
 export interface UniversityAdapter {

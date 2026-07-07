@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src/serve-static.ts", "src/app.ts", "src/index.ts", "src/cloudflare-workers-ambient.d.ts"]
+  "include": ["src/serve-static.ts", "src/app.ts", "src/index.ts", "src/index.node.ts", "src/start.ts", "src/cloudflare-workers-ambient.d.ts"]
 }

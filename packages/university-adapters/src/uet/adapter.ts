@@ -132,7 +132,7 @@ export function createUetAdapter(): UniversityAdapter {
         // a real login against StudentHub/Canvas, so a captured token/cookie
         // is proof-of-working by construction. Re-validating would spend an
         // extra upstream round-trip for no new information.
-        const result = await automateVnuGoogleLogin(context.browserConnection, uetGoogleEmail, input.uetGooglePassword, input.uetGoogleCookies);
+        const result = await automateVnuGoogleLogin(context.browserConnection, uetGoogleEmail, input.uetGooglePassword, input.uetGoogleCookies, context.onProgress);
         const expiresAt = addDays(30);
         const session: EncryptedSessionPayload = {
           version: 1,

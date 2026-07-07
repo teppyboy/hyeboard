@@ -39,16 +39,18 @@ export type EncryptedSessionPayload = {
   // HYEB_SESSION_SECRET compromise exposes this real password, not just a
   // scoped token. See spec's "Accepted risks" section.
   //
-  // googleCookies (added later): the actual Google session cookies
-  // captured after a successful automated login. Passed back into
-  // automateVnuGoogleLogin() on the next refresh so it can attempt to
-  // rehydrate the browser's Google session and skip the interactive
-  // email/password/Keycloak dance entirely — falling back to the full
-  // interactive flow (using email/password below) if the cookie turns out
-  // to be stale/expired/revoked. NEEDS LIVE VERIFICATION: whether Google
-  // actually honors a rehydrated session cookie on a brand-new, otherwise
-  // cookie-less browser profile the way it would on a real returning
-  // browser — untested against a real account in this environment.
+  // googleCookies: the actual Google (and VNU IDP) session cookies captured
+  // after a successful automated login. Passed back into
+  // automateVnuGoogleLogin() on the next refresh so it can rehydrate the
+  // browser's session before the interactive flow starts. Confirmed by live
+  // testing that Google still shows its account chooser rather than
+  // silently completing OAuth from the rehydrated cookie alone — the
+  // cookie's real value is that the account chooser then shows the
+  // logged-in account as a one-click tile (skipping the email step), and,
+  // when the VNU IDP cookie is also still valid, skips the Keycloak
+  // credential form entirely. Falls back to the full interactive
+  // email/password/Keycloak flow whenever any of these cookies turn out to
+  // be stale/expired/revoked.
   uetGoogleCredential?: { email: string; password: string; googleCookies?: GoogleSessionCookie[] };
   expiresAt: string;
 };

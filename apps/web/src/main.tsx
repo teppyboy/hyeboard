@@ -3,9 +3,11 @@ import "./styles.css";
 import type { Assignment, Bill, ClassSession, Course, DashboardSummary, DocumentItem, ExamSession, Grade, NewsItem, Notification, ServiceRequest, TrainingPoint } from "@hyeboard/schemas";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, redirect, RouterProvider, useNavigate } from "@tanstack/react-router";
-import { Bell, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ClipboardList, ExternalLink, FileText, GraduationCap, KeyRound, LayoutDashboard, LibraryBig, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Receipt, Search, Settings, Sun, UserRound, WalletCards } from "lucide-react";
+import { Bell, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardList, ExternalLink, FileText, GraduationCap, LayoutDashboard, LibraryBig, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Receipt, Search, Settings, Sun, UserRound, WalletCards, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { createContext, StrictMode, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, ApiError, clearSessionToken, getSessionToken, SESSION_CLEARED_EVENT } from "@/lib/api";
+import { Toaster } from "@/components/ui/sonner";
+import { ACCOUNT_SWITCHED_EVENT, api, ApiError, clearSessionToken, getActiveAccount, getActiveAccountId, getSessionToken, listAccounts, removeAccount, SESSION_CLEARED_EVENT, type StoredAccount, switchAccount } from "@/lib/api";
 import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
 
 declare const __HYEB_GIT_COMMIT__: string;
@@ -129,6 +132,27 @@ function useHyeboardState() {
   const [themeHue, setThemeHue] = useState<number>(() => Number(stored("hyeboard.themeHue", "209")) || 209);
   const [termCode, setTermCode] = useState<string | undefined>();
   const [sessionNonce, setSessionNonce] = useState(0);
+  const [accounts, setAccounts] = useState<StoredAccount[]>(() => listAccounts());
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(() => getActiveAccountId());
+
+  // Fires on every account switch/add/remove (see ACCOUNT_SWITCHED_EVENT in
+  // lib/api.ts) - re-syncs universityId/palette to whichever account is now
+  // active and refetches all feature data for it.
+  useEffect(() => {
+    const syncActiveAccount = () => {
+      setAccounts(listAccounts());
+      setActiveAccountId(getActiveAccountId());
+      const account = getActiveAccount();
+      if (account) {
+        setUniversityId(account.universityId);
+        setPalette(account.universityId === "uet" || account.universityId === "vnu" ? (account.universityId as Palette) : "geist");
+      }
+      setSessionNonce((value) => value + 1);
+      void queryClient.invalidateQueries();
+    };
+    window.addEventListener(ACCOUNT_SWITCHED_EVENT, syncActiveAccount);
+    return () => window.removeEventListener(ACCOUNT_SWITCHED_EVENT, syncActiveAccount);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = palette;
@@ -185,7 +209,7 @@ function useHyeboardState() {
     void queryClient.invalidateQueries();
   };
 
-  return { universityId, selectUniversity, palette, setPalette, mode, setMode, themeHue, setThemeHue, termCode, setTermCode, universities, dashboard, ensureSession, refreshSession, logout, sessionNonce };
+  return { universityId, selectUniversity, palette, setPalette, mode, setMode, themeHue, setThemeHue, termCode, setTermCode, universities, dashboard, ensureSession, refreshSession, logout, sessionNonce, accounts, activeAccountId, switchToAccount: switchAccount, removeStoredAccount: removeAccount };
 }
 
 function useFeatureQuery<T>(name: string, queryFn: () => Promise<T>, options: { enabled?: boolean } = {}) {
@@ -404,6 +428,12 @@ function NotificationsMenu() {
   );
 }
 
+function accountLabel(account: StoredAccount): string {
+  if (account.studentCode) return account.studentCode;
+  if (account.universityId === "mock") return "Demo";
+  return account.universityId.toUpperCase();
+}
+
 function AccountMenu() {
   const state = useHyeboard();
   const navigate = useNavigate();
@@ -414,19 +444,47 @@ function AccountMenu() {
     void navigate({ to: "/login" });
   };
 
+  const handleRemove = (event: React.MouseEvent, accountId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    state.removeStoredAccount(accountId);
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="pressable-icon-button" aria-label="Open account menu" data-testid="account-trigger"><UserRound size={17} /></Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel>
           <span className="block text-sm">{student?.fullName ?? "Account"}</span>
           <span className="block text-xs font-normal text-muted-foreground">{student?.studentCode ?? state.universityId.toUpperCase()}</span>
         </DropdownMenuLabel>
+        {state.accounts.length > 1 ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Accounts</DropdownMenuLabel>
+            {state.accounts.map((account) => (
+              <DropdownMenuItem
+                key={account.id}
+                onSelect={() => account.id !== state.activeAccountId && state.switchToAccount(account.id)}
+                className="justify-between gap-2"
+                data-testid="account-switch-item"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  {account.id === state.activeAccountId ? <Check size={14} className="shrink-0 text-primary" /> : <span className="w-3.5 shrink-0" />}
+                  <span className="truncate">{accountLabel(account)} <span className="text-muted-foreground">({account.universityId.toUpperCase()})</span></span>
+                </span>
+                <button type="button" onClick={(event) => handleRemove(event, account.id)} aria-label={`Remove ${accountLabel(account)}`} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive">
+                  <X size={13} />
+                </button>
+              </DropdownMenuItem>
+            ))}
+          </>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild><Link to="/settings"><Settings size={16} /> Settings</Link></DropdownMenuItem>
-        <DropdownMenuItem asChild><Link to="/login"><UserRound size={16} /> Switch account</Link></DropdownMenuItem>
+        <DropdownMenuItem asChild><Link to="/login"><UserRound size={16} /> Add account</Link></DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={signOut} className="text-destructive focus:text-destructive"><LogOut size={16} /> Sign out</DropdownMenuItem>
       </DropdownMenuContent>
@@ -929,7 +987,9 @@ function LoginPage() {
       setStatus("Demo workspace ready.");
       await navigate({ to: "/" });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Demo workspace could not be prepared.");
+      const message = error instanceof Error ? error.message : "Demo workspace could not be prepared.";
+      setStatus(undefined);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -957,7 +1017,9 @@ function LoginPage() {
       setStatus("University session ready. Opening dashboard...");
       await navigate({ to: "/" });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "University session could not be imported.");
+      const message = error instanceof Error ? error.message : "University session could not be imported.";
+      setStatus(undefined);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -972,18 +1034,28 @@ function LoginPage() {
       // domain a caller might supply, so no client-side email construction
       // happens here (see MISSING_UPSTREAM_CREDENTIAL / adapter.ts normalization).
       const studentCodeInput = uetGoogleEmail.trim();
-      await api.importSession("uet", {
-        uetGoogleEmail: studentCodeInput || undefined,
-        uetGooglePassword: uetGooglePassword || undefined,
-      });
+      // This login mode alone streams interim progress (Opening StudentHub...,
+      // Signing in with Google..., etc.) from the server over SSE, since it's
+      // the one slow (potentially 90s+), multi-step automated flow — every
+      // other login mode on this page resolves near-instantly and doesn't
+      // need this.
+      await api.importUetGoogleSession(
+        { uetGoogleEmail: studentCodeInput, uetGooglePassword },
+        (message) => setStatus(message),
+      );
       state.selectUniversity("uet", { clearSession: false });
       state.refreshSession();
       setStatus("University session ready. Opening dashboard...");
       await navigate({ to: "/" });
     } catch (error) {
       const code = error instanceof ApiError ? error.code : undefined;
-      if (code && AUTOMATION_FAILURE_CODES.has(code)) setShowManualFallback(true);
-      setStatus(error instanceof Error ? error.message : "Google sign-in did not complete. Try the manual option below.");
+      if (code === "STUDENTHUB_MAINTENANCE") {
+        toast.error("StudentHub is currently under maintenance. Please try again later.");
+      } else {
+        if (code && AUTOMATION_FAILURE_CODES.has(code)) setShowManualFallback(true);
+        toast.error(error instanceof Error ? error.message : "Google sign-in did not complete. Try the manual option below.");
+      }
+      setStatus(undefined);
     } finally {
       setBusy(false);
     }
@@ -999,7 +1071,9 @@ function LoginPage() {
       setStatus("University session ready. Opening dashboard...");
       await navigate({ to: "/" });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "University session could not be imported.");
+      const message = error instanceof Error ? error.message : "University session could not be imported.";
+      setStatus(undefined);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -1029,7 +1103,15 @@ function LoginPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : selectedUniversity === "vnu" ? "Connect VNU (daotao) account" : "Use Demo Data"}</CardTitle>
-                <CardDescription>{selectedUniversity === "uet" ? (showManualFallback ? "Import a university portal session. Learning-platform access can be added later for courses and assignments." : "Sign in with your VNU Google account to connect your university portal and learning platform.") : selectedUniversity === "vnu" ? "Sign in with your daotao.vnu.edu.vn username and password." : "Open Hyeboard with safe sample data."}</CardDescription>
+                {selectedUniversity === "uet" && showManualFallback ? (
+                  <CardDescription>Import a university portal session. Learning-platform access can be added later for courses and assignments.</CardDescription>
+                ) : selectedUniversity === "uet" ? (
+                  <CardDescription>Sign in with your VNU Google account and password.</CardDescription>
+                ) : selectedUniversity === "vnu" ? (
+                  <CardDescription>Sign in with your daotao.vnu.edu.vn username and password.</CardDescription>
+                ) : selectedUniversity === "mock" ? (
+                  <CardDescription>Open Hyeboard with safe sample data.</CardDescription>
+                ) : null}
               </div>
               <Select value={selectedUniversity} onValueChange={(value) => chooseUniversity(value as "mock" | "uet" | "vnu")}>
                 <SelectTrigger className="h-9 w-[128px] shrink-0" aria-label="School"><SelectValue placeholder="School" /></SelectTrigger>
@@ -1044,13 +1126,9 @@ function LoginPage() {
           <CardContent className="space-y-3">
             {selectedUniversity === "uet" ? (
               <>
-                <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                  <p className="font-medium text-foreground">Sign in with your VNU Google account</p>
-                  <p className="mt-1">Enter your student code and Google password. Hyeboard connects StudentHub and Canvas, then stores the password encrypted so it can refresh your session. Sign out to remove it.</p>
-                </div>
                 <Input type="text" autoComplete="username" placeholder="Student code" value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
                 <Input type="password" autoComplete="current-password" placeholder="Google account password" value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
-                <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">Sign in with Google</Button>
+                <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}Sign in with Google</Button>
 
                 {!showManualFallback ? (
                   <button type="button" className="w-full text-center text-xs text-muted-foreground underline underline-offset-2" onClick={() => setShowManualFallback(true)}>
@@ -1091,7 +1169,7 @@ function LoginPage() {
                         <Input type="password" autoComplete="off" placeholder="Learning platform CSRF token, only when using cookie mode" value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
                       </div>
                     </details>
-                    <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
+                    <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}Import university session</Button>
                   </>
                 )}
               </>
@@ -1099,14 +1177,13 @@ function LoginPage() {
               <>
                 <Input placeholder="Student code / username" autoComplete="username" value={vnuUsername} onChange={(event) => { setVnuUsername(event.target.value); setSessionStored(RELOGIN_KEYS.vnuUsername, event.target.value); }} />
                 <Input type="password" autoComplete="current-password" placeholder="Password" value={vnuPassword} onChange={(event) => { setVnuPassword(event.target.value); setSessionStored(RELOGIN_KEYS.vnuPassword, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importVnuSession)} />
-                <Button onClick={importVnuSession} disabled={busy} variant="outline" className="w-full">Import university session</Button>
+                <Button onClick={importVnuSession} disabled={busy} variant="outline" className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}Import university session</Button>
               </>
             ) : (
               <>
-                <Button onClick={useDemo} disabled={busy} className="w-full">Open Demo Workspace</Button>
+                <Button onClick={useDemo} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}Open Demo Workspace</Button>
               </>
             )}
-            <p className="text-xs text-muted-foreground"><KeyRound className="mr-1 inline h-3.5 w-3.5" />Credentials are encrypted in a Hyeboard session token stored in this browser.</p>
             {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
           </CardContent>
         </Card>
@@ -1369,6 +1446,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <HyeboardProvider>
         <RouterProvider router={router} />
+        <Toaster />
       </HyeboardProvider>
     </QueryClientProvider>
   </StrictMode>,

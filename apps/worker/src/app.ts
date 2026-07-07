@@ -101,6 +101,15 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
 
 // ─── Error handling ───────────────────────────────────────────
 
+// Shared with the SSE import-session branch below, which can't rely on
+// Elysia's onError hook (errors thrown inside a ReadableStream's start()
+// callback don't propagate to Elysia at all — the stream must catch and
+// report its own errors as an "error" SSE event instead).
+function errorPayload(error: unknown): { code: string; message: string; status: number } {
+  if (error instanceof HyeboardError) return { code: error.code, message: error.message, status: error.status };
+  return { code: "GOOGLE_AUTOMATION_BLOCKED", message: "Google did not complete the sign-in. Use the manual token option below.", status: 502 };
+}
+
 function routeError(error: unknown, requestId?: string) {
   const id = requestId ?? "-";
   const log = getLogger();
@@ -358,9 +367,50 @@ export function createApp(adapter: any) {
       const adapterInstance = getAdapter(params.universityId);
       if (params.universityId === "uet" && body.uetGoogleEmail) {
         await checkAndIncrementGoogleLoginAttempts(body.uetGoogleEmail);
-        const imported = await adapterInstance.importSession(body, { browserConnection: browserConnection() });
-        const token = await encryptSession(imported.session, getSessionSecret());
-        return ok({ token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
+        // The uet Google-login automation is the one slow (potentially 90s+),
+        // multi-step login path in the app — stream interim progress to the
+        // client as Server-Sent Events instead of one opaque blocking POST.
+        // Every other branch below (vnu, manual-token/cookie paste, mock)
+        // resolves almost instantly and keeps the plain JSON response.
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          async start(controller) {
+            const send = (event: string, data: unknown) => {
+              try {
+                controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+              } catch {
+                // Client disconnected and the controller is already closed —
+                // nothing further to report.
+              }
+            };
+            try {
+              const imported = await adapterInstance.importSession(body, {
+                browserConnection: browserConnection(),
+                onProgress: (message) => send("progress", { message }),
+              });
+              const token = await encryptSession(imported.session, getSessionSecret());
+              send("done", { token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
+            } catch (error) {
+              const { code, message, status } = errorPayload(error);
+              const level = status >= 500 ? "error" : "warn";
+              getLogger()[level]({ code, status }, message);
+              send("error", { code, message, status });
+            } finally {
+              controller.close();
+            }
+          },
+        });
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
+            Connection: "keep-alive",
+            // Disables response buffering on proxies that respect this
+            // (e.g. nginx) so progress events actually stream incrementally
+            // instead of arriving all at once when the connection closes.
+            "X-Accel-Buffering": "no",
+          },
+        });
       }
       if (params.universityId === "vnu" && body.vnuUsername && body.vnuPassword) {
         const cacheKey = await vnuImportCacheKey(body.vnuUsername, body.vnuPassword);
