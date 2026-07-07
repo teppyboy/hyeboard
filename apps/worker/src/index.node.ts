@@ -1,4 +1,4 @@
-import { setPatchrightLauncher } from "@hyeboard/university-adapters";
+import { setPatchrightCloseHandler, setPatchrightLauncher } from "@hyeboard/university-adapters";
 import { start } from "./start";
 
 // Node/Bun-only entry point. Identical to index.ts except it additionally
@@ -28,8 +28,9 @@ if (process.env.HYEB_BROWSER_PATCHRIGHT === "true") {
   // for any self-hosted deployment that doesn't opt into Patchright
   // (esbuild marks "patchright" external in build-node.mjs, so it must
   // stay resolvable from node_modules only when actually needed).
-  const { automateVnuGoogleLoginPatchright } = await import("@hyeboard/university-adapters/src/uet/google-login-automation-patchright");
-  setPatchrightLauncher(automateVnuGoogleLoginPatchright);
+  const patchrightModule = await import("@hyeboard/university-adapters/src/uet/google-login-automation-patchright");
+  setPatchrightLauncher(patchrightModule.automateVnuGoogleLoginPatchright);
+  setPatchrightCloseHandler(patchrightModule.closeCachedPatchrightSessions);
 }
 
 await start();

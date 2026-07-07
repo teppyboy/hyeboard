@@ -35,24 +35,69 @@ import {
 // Puppeteer — this Playwright port has NOT itself been exercised against a
 // real account; treat it as unverified until tested live.
 
-export async function automateVnuGoogleLoginPatchright(
-  headless: boolean,
-  email: string,
-  password: string,
-  existingCookies?: GoogleSessionCookie[],
-  onProgress?: (message: string) => void,
-): Promise<GoogleLoginResult> {
-  const log = getLogger();
-  const result: GoogleLoginResult = {};
-  log.debug({ connectionKind: "local-patchright", email }, "automateVnuGoogleLoginPatchright: starting");
+// Process-local cache of live Patchright persistent contexts, keyed by
+// Google account email, so a session refresh (see resolveSession() in
+// apps/worker/src/app.ts) can reuse an already-authenticated browser
+// context instead of always launching a brand-new Chrome process and
+// profile directory. Mirrors the Puppeteer path's browserSessionCache in
+// google-login-automation.ts, adapted for Playwright/Patchright's model
+// where the persistent context IS the browser instance (there's no
+// separate Browser handle to reconnect to later) — so the cached unit here
+// is the context plus its temp userDataDir, both torn down together.
+type CachedPatchrightSession = { context: BrowserContext; userDataDir: string; lastUsedAt: number; closed: boolean };
+const patchrightSessionCache = new Map<string, CachedPatchrightSession>();
+// Same value as google-login-automation.ts's IDLE_EVICTION_MS, duplicated
+// locally since these are separate modules with no shared export for it.
+const IDLE_EVICTION_MS = 30 * 60_000;
 
+function cacheKeyFor(email: string): string {
+  // Patchright is only ever invoked for the "local" BrowserConnection kind
+  // (see automateVnuGoogleLogin's dispatch check in
+  // google-login-automation.ts: connection.kind === "local" &&
+  // HYEB_BROWSER_PATCHRIGHT === "true" && patchrightLauncher), so unlike
+  // the Puppeteer cache there's no Cloudflare-kind exclusion needed here.
+  return email.trim().toLowerCase();
+}
+
+async function evictCachedSession(key: string): Promise<void> {
+  const cached = patchrightSessionCache.get(key);
+  if (!cached) return;
+  patchrightSessionCache.delete(key);
+  await cached.context.close().catch(() => undefined);
+  rmSync(cached.userDataDir, { recursive: true, force: true });
+}
+
+async function evictStaleIfIdle(key: string): Promise<void> {
+  const cached = patchrightSessionCache.get(key);
+  if (cached && Date.now() - cached.lastUsedAt > IDLE_EVICTION_MS) {
+    await evictCachedSession(key);
+  }
+}
+
+// Exported for apps/worker/src/start.ts's shutdown handler (via the
+// setPatchrightCloseHandler indirection registered in index.node.ts) to
+// close every cached Patchright context + delete its temp profile dir on
+// SIGINT/SIGTERM, so a restart/redeploy doesn't leak orphaned Chrome
+// processes or temp directories.
+export async function closeCachedPatchrightSessions(): Promise<void> {
+  const sessions = [...patchrightSessionCache.values()];
+  patchrightSessionCache.clear();
+  await Promise.all(
+    sessions.map(async (s) => {
+      await s.context.close().catch(() => undefined);
+      rmSync(s.userDataDir, { recursive: true, force: true });
+    }),
+  );
+}
+
+async function launchPatchrightContext(headless: boolean): Promise<{ context: BrowserContext; userDataDir: string }> {
   // Best-practice Patchright launch (see README "Best Practice" section):
   // a persistent context with the real "chrome" channel, no injected
   // viewport/userAgent overrides, avoids the fingerprint-injection path
   // that's easier to detect than just launching real Chrome.
   // launchPersistentContext requires a real userDataDir (an empty string
-  // is invalid) — use a fresh temp directory, cleaned up in the finally
-  // block below alongside context.close().
+  // is invalid) — use a fresh temp directory, cleaned up alongside
+  // context.close() whenever this context is evicted/closed.
   const userDataDir = mkdtempSync(join(tmpdir(), "hyeboard-patchright-"));
   // channel and executablePath are mutually exclusive in Playwright's
   // launch API — passing both (as an earlier version of this file did,
@@ -80,31 +125,98 @@ export async function automateVnuGoogleLoginPatchright(
     args: ["--no-sandbox"],
     timeout: 60_000,
   });
-  log.debug("automateVnuGoogleLoginPatchright: browser context acquired");
+  return { context, userDataDir };
+}
 
-  let timeoutId: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS);
-  });
-  try {
-    try {
-      await Promise.race([runFlow(context, email, password, result, existingCookies, onProgress), timeout]);
-    } finally {
-      clearTimeout(timeoutId!);
+export async function automateVnuGoogleLoginPatchright(
+  headless: boolean,
+  email: string,
+  password: string,
+  existingCookies?: GoogleSessionCookie[],
+  onProgress?: (message: string) => void,
+): Promise<GoogleLoginResult> {
+  const log = getLogger();
+  const key = cacheKeyFor(email);
+  await evictStaleIfIdle(key);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result: GoogleLoginResult = {};
+    const cached = patchrightSessionCache.get(key);
+    const reusingCache = Boolean(cached && !cached.closed);
+    log.debug({ connectionKind: "local-patchright", email, reusingCache, attempt }, "automateVnuGoogleLoginPatchright: starting");
+
+    let context: BrowserContext;
+    let userDataDir: string;
+    if (reusingCache && cached) {
+      context = cached.context;
+      userDataDir = cached.userDataDir;
+      log.debug("automateVnuGoogleLoginPatchright: reusing cached browser context");
+    } else {
+      const launched = await launchPatchrightContext(headless);
+      context = launched.context;
+      userDataDir = launched.userDataDir;
+      log.debug("automateVnuGoogleLoginPatchright: browser context acquired");
     }
-  } catch (error) {
-    if (error instanceof HyeboardError) throw error;
-    log.error({ err: error }, "automateVnuGoogleLoginPatchright: unexpected error");
-    throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
-  } finally {
-    await context.close().catch(() => undefined);
-    rmSync(userDataDir, { recursive: true, force: true });
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS);
+    });
+    try {
+      try {
+        await Promise.race([runFlow(context, email, password, result, existingCookies, onProgress), timeout]);
+      } finally {
+        clearTimeout(timeoutId!);
+      }
+    } catch (error) {
+      if (reusingCache) {
+        // The cached context is stale/broken — evict it and retry once
+        // with a freshly launched context, so a broken cached session
+        // never surfaces as a caller-visible error.
+        log.debug({ err: error }, "automateVnuGoogleLoginPatchright: cached context failed, evicting and retrying fresh");
+        await evictCachedSession(key);
+        continue;
+      }
+      await context.close().catch(() => undefined);
+      rmSync(userDataDir, { recursive: true, force: true });
+      if (error instanceof HyeboardError) throw error;
+      log.error({ err: error }, "automateVnuGoogleLoginPatchright: unexpected error");
+      throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
+    }
+
+    log.debug({ hasStudenthub: Boolean(result.studenthub), hasCanvas: Boolean(result.canvas) }, "automateVnuGoogleLoginPatchright: finished");
+    if (!result.studenthub && !result.canvas) {
+      if (reusingCache) {
+        log.debug("automateVnuGoogleLoginPatchright: cached context produced no session, evicting and retrying fresh");
+        await evictCachedSession(key);
+        continue;
+      }
+      await context.close().catch(() => undefined);
+      rmSync(userDataDir, { recursive: true, force: true });
+      throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
+    }
+
+    // Success — keep the context alive in the cache instead of closing it,
+    // so the next refresh call can reuse it. Register a "close" listener
+    // the first time a fresh context is cached, to track liveness across
+    // reuse attempts (Playwright's BrowserContext extends EventEmitter and
+    // emits "close"; there's no simple .connected-style getter the way
+    // Puppeteer's Browser has, hence the explicit flag + listener).
+    const entry: CachedPatchrightSession = cached ?? { context, userDataDir, lastUsedAt: Date.now(), closed: false };
+    entry.lastUsedAt = Date.now();
+    entry.closed = false;
+    if (!cached) {
+      context.once("close", () => {
+        entry.closed = true;
+      });
+    }
+    patchrightSessionCache.set(key, entry);
+    return result;
   }
-  log.debug({ hasStudenthub: Boolean(result.studenthub), hasCanvas: Boolean(result.canvas) }, "automateVnuGoogleLoginPatchright: finished");
-  if (!result.studenthub && !result.canvas) {
-    throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
-  }
-  return result;
+
+  // Unreachable in practice (the loop above always returns or throws), but
+  // keeps TypeScript's control-flow analysis happy.
+  throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
 }
 
 // Waits for a new popup Page to open as a result of the given action, then
@@ -123,6 +235,10 @@ async function clickGoogleButtonAndWaitForPopup(page: Page): Promise<Page> {
   return popup;
 }
 
+// Outer wrapper: owns the page (tab) lifecycle only. The context itself may
+// now be kept alive across multiple calls (see the cache in
+// automateVnuGoogleLoginPatchright above), so only the page/tab used for
+// this particular call is closed here, never the whole context.
 async function runFlow(
   context: BrowserContext,
   email: string,
@@ -131,15 +247,35 @@ async function runFlow(
   existingCookies?: GoogleSessionCookie[],
   onProgress?: (message: string) => void,
 ): Promise<void> {
-  const report = (message: string) => onProgress?.(message);
-  const log = getLogger();
   // launchPersistentContext opens with one blank tab already visible
   // (headless: false shows this immediately) — reuse it instead of opening
   // a second tab that context.newPage() would create, which is why the
   // visible browser window was previously stuck showing an untouched
   // about:blank tab while the real navigation happened in a background
-  // tab the user never saw.
+  // tab the user never saw. On a cache-reuse call, the previous call's
+  // page was already closed below, so context.pages()[0] will be
+  // undefined and context.newPage() runs instead — this line works
+  // unchanged for both the first (fresh-launch) and subsequent
+  // (cache-reuse) calls.
   const page = context.pages()[0] ?? (await context.newPage());
+  try {
+    await runFlowBody(context, page, email, password, result, existingCookies, onProgress);
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+async function runFlowBody(
+  context: BrowserContext,
+  page: Page,
+  email: string,
+  password: string,
+  result: GoogleLoginResult,
+  existingCookies: GoogleSessionCookie[] | undefined,
+  onProgress?: (message: string) => void,
+): Promise<void> {
+  const report = (message: string) => onProgress?.(message);
+  const log = getLogger();
   await page.bringToFront().catch(() => undefined);
   let studenthubToken: string | null = null;
 

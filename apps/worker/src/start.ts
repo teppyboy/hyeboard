@@ -1,5 +1,5 @@
 import { configureLogger, getLogger } from "@hyeboard/core";
-import { createApp, setCloudflareBrowserBinding, setRuntimeConfig } from "./app";
+import { createApp, loadConfigFile, setCloudflareBrowserBinding, setRuntimeConfig } from "./app";
 import { registerStaticAssets } from "./serve-static";
 
 // Shared startup logic for all three supported runtimes (Cloudflare
@@ -81,13 +81,27 @@ export async function start(): Promise<unknown> {
       }
     }
 
+    // Load non-secret config from config.json (if present), then let env vars
+    // override. HYEB_SESSION_SECRET is ALWAYS from env var only.
+    const fileConfig = await loadConfigFile();
     setRuntimeConfig({
       HYEB_SESSION_SECRET: process.env.HYEB_SESSION_SECRET,
-      HYEB_ALLOWED_ORIGINS: process.env.HYEB_ALLOWED_ORIGINS,
-      HYEB_BROWSER_WS_ENDPOINT: process.env.HYEB_BROWSER_WS_ENDPOINT,
-      HYEB_BROWSER_LOCAL: process.env.HYEB_BROWSER_LOCAL,
-      HYEB_LOG_LEVEL: process.env.HYEB_LOG_LEVEL,
+      HYEB_ALLOWED_ORIGINS: process.env.HYEB_ALLOWED_ORIGINS ?? fileConfig.HYEB_ALLOWED_ORIGINS,
+      HYEB_BROWSER_WS_ENDPOINT: process.env.HYEB_BROWSER_WS_ENDPOINT ?? fileConfig.HYEB_BROWSER_WS_ENDPOINT,
+      HYEB_BROWSER_LOCAL: process.env.HYEB_BROWSER_LOCAL ?? fileConfig.HYEB_BROWSER_LOCAL,
+      HYEB_BROWSER_HEADLESS: process.env.HYEB_BROWSER_HEADLESS ?? fileConfig.HYEB_BROWSER_HEADLESS,
+      HYEB_CHROME_PATH: process.env.HYEB_CHROME_PATH ?? fileConfig.HYEB_CHROME_PATH,
+      HYEB_LOG_LEVEL: process.env.HYEB_LOG_LEVEL ?? fileConfig.HYEB_LOG_LEVEL,
     });
+
+    // google-login-automation.ts (and its Patchright variant) live in
+    // @hyeboard/university-adapters and read HYEB_CHROME_PATH straight off
+    // process.env — they have no access to app.ts's runtimeConfig. If the
+    // value only came from config.json (not a real env var), mirror it onto
+    // process.env here so that package still sees it.
+    if (!process.env.HYEB_CHROME_PATH && fileConfig.HYEB_CHROME_PATH) {
+      process.env.HYEB_CHROME_PATH = fileConfig.HYEB_CHROME_PATH;
+    }
 
     const isDev = process.env.NODE_ENV !== "production";
     const level = process.env.HYEB_LOG_LEVEL;
@@ -113,13 +127,28 @@ export async function start(): Promise<unknown> {
     const app = createApp(adapter);
 
     const { fileURLToPath } = await import("node:url");
-    const distDir = fileURLToPath(new URL("../../web/dist", import.meta.url));
+    const distDir = process.env.HYEB_STATIC_DIR ?? fileConfig.HYEB_STATIC_DIR ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
     registerStaticAssets(app, distDir);
 
-    const port = Number(process.env.PORT ?? 8787);
-    app.listen(port);
+    const port = Number(process.env.PORT ?? fileConfig.PORT ?? 8787);
+    const host = process.env.HOST ?? fileConfig.HOST ?? "127.0.0.1";
+    app.listen({ port, hostname: host });
 
-    getLogger().info(`Hyeboard (${isBun ? "Bun" : "Node"}) listening on http://localhost:${port}`);
+    const displayHost = host === "0.0.0.0" || host === "127.0.0.1" ? "localhost" : host;
+    getLogger().info(`Hyeboard (${isBun ? "Bun" : "Node"}) listening on http://${displayHost}:${port}`);
+
+    // The UET adapter keeps a live browser process open per Google account
+    // (see browserSessionCache in google-login-automation.ts) so a session
+    // refresh can reuse it instead of a full re-login. Close all of them on
+    // shutdown so a restart/redeploy doesn't leak orphaned Chrome processes.
+    const nodeProcess = process as unknown as { exit: (code: number) => void; on: (event: string, handler: () => void) => void };
+    const shutdown = async () => {
+      const { closeCachedBrowserSessions } = await import("@hyeboard/university-adapters");
+      await closeCachedBrowserSessions().catch(() => undefined);
+      nodeProcess.exit(0);
+    };
+    nodeProcess.on("SIGINT", () => void shutdown());
+    nodeProcess.on("SIGTERM", () => void shutdown());
     return undefined;
   }
 }

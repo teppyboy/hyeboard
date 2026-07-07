@@ -66,6 +66,18 @@ export function setPatchrightLauncher(launcher: PatchrightLauncher | undefined):
   patchrightLauncher = launcher;
 }
 
+// Same indirection as patchrightLauncher above, for the Patchright file's own
+// cached-context cleanup (closeCachedPatchrightSessions in
+// google-login-automation-patchright.ts) — registered from the same
+// Node-only entry point (apps/worker/src/index.node.ts) right alongside
+// setPatchrightLauncher, so closeCachedBrowserSessions() below can close
+// Patchright's cached contexts too without this file ever importing the
+// patchright-dependent module directly.
+let patchrightCloseHandler: (() => Promise<void>) | undefined;
+export function setPatchrightCloseHandler(handler: (() => Promise<void>) | undefined): void {
+  patchrightCloseHandler = handler;
+}
+
 // Checked in this exact priority order: 2FA first, then automation-blocked
 // (Google's "this browser or app may not be secure" / suspicious-activity
 // messaging), then a generic challenge/rejected fallback.
@@ -78,6 +90,126 @@ export function detectChallenge(currentUrl: string, bodyText: string): GoogleCha
 
 export function serializeCookies(cookies: Array<{ name: string; value: string }>): string {
   return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+}
+
+// Auto-detect Chrome/Chromium on the system when HYEB_CHROME_PATH is unset.
+// Searches $PATH via `which` (POSIX) / `where` (Windows), then checks common
+// install locations. Only called in the "local" BrowserConnection kind (Node/Bun
+// only — never on Cloudflare Workers).
+async function findChromeExecutable(): Promise<string | undefined> {
+  // Common binary names in priority order.
+  const names = ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium", "chrome", "google-chrome-unstable"];
+  try {
+    const { execSync } = await import("node:child_process");
+    const isWin = process.platform === "win32";
+    for (const name of names) {
+      try {
+        const out = execSync(isWin ? `where ${name}` : `which ${name} 2>/dev/null`, { encoding: "utf-8", timeout: 2000 });
+        const p = out.trim().split(/\r?\n/)[0];
+        if (p) return p;
+      } catch { /* not in PATH */ }
+    }
+  } catch { /* child_process not available */ }
+  // Static fallback paths per platform.
+  const { accessSync, constants } = await import("node:fs");
+  const candidates = process.platform === "win32"
+    ? ["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+       "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+       `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`]
+    : process.platform === "darwin"
+    ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+       "/Applications/Chromium.app/Contents/MacOS/Chromium"]
+    : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+       "/usr/bin/chromium-browser", "/usr/bin/chromium",
+       "/snap/bin/chromium", "/snap/bin/google-chrome"];
+  for (const p of candidates) {
+    try { accessSync(p, constants.X_OK); return p; } catch { /* not found */ }
+  }
+  return undefined;
+}
+
+// ── Self-hosted browser-session reuse. Cloudflare Workers' Browser Rendering
+//    binding gives a fresh, non-addressable browser instance per launch()
+//    call — there is no way to keep one pinned across separate requests, so
+//    this cache is only ever populated/consulted for "local" (own Chrome)
+//    and "self-hosted" (remote CDP endpoint) BrowserConnection kinds, both
+//    of which run inside a single long-lived Node/Bun process.
+//
+//    Why this actually helps (unlike the serialized-cookie rehydration
+//    above, confirmed by live testing to NOT achieve a silent OAuth
+//    completion — see the "silentCookieLogin" comments in runFlow): a
+//    rehydrated cookie replayed into a brand-new browser process still
+//    looks, to Google, like a foreign/untrusted client presenting someone
+//    else's session cookie — it shows the account chooser rather than
+//    trusting it outright. Keeping the SAME live browser process (and thus
+//    its real, continuously-valid Google session, browser fingerprint, and
+//    any anti-bot trust Google has already extended to it) means a second
+//    pass through StudentHub's login button can complete via Google's own
+//    "already signed in" popup auto-close, without ever typing credentials
+//    again.
+type CachedBrowserSession = { browser: AnyBrowser; lastUsedAt: number };
+const browserSessionCache = new Map<string, CachedBrowserSession>();
+// Idle sessions are closed and evicted lazily (checked on next lookup for
+// that key) rather than via a background timer, so this module never keeps
+// the Node/Bun process alive on its own via a dangling setInterval.
+const IDLE_EVICTION_MS = 30 * 60_000;
+
+function cacheKeyFor(connection: BrowserConnection, email: string): string | undefined {
+  // Cloudflare's Browser Rendering binding launches a fresh instance every
+  // call with no addressable identity to reconnect to later — never cache.
+  if (connection.kind === "cloudflare") return undefined;
+  return email.trim().toLowerCase();
+}
+
+function isBrowserAlive(browser: AnyBrowser): boolean {
+  try {
+    // Both @cloudflare/puppeteer's and puppeteer-core's Browser expose a
+    // `connected` getter; treat it as alive if the property is missing
+    // (older API surface) since the retry-on-failure path below is the
+    // real safety net regardless.
+    return (browser as unknown as { connected?: boolean }).connected !== false;
+  } catch {
+    return false;
+  }
+}
+
+async function evictCachedSession(key: string): Promise<void> {
+  const cached = browserSessionCache.get(key);
+  if (!cached) return;
+  browserSessionCache.delete(key);
+  await cached.browser.close().catch(() => undefined);
+}
+
+// Exported so start.ts can close every cached browser on process
+// shutdown (SIGINT/SIGTERM) — otherwise a self-hosted deploy would leak
+// orphaned Chrome processes every time the server restarts.
+export async function closeCachedBrowserSessions(): Promise<void> {
+  const sessions = [...browserSessionCache.values()];
+  browserSessionCache.clear();
+  await Promise.all([
+    ...sessions.map((s) => s.browser.close().catch(() => undefined)),
+    patchrightCloseHandler ? patchrightCloseHandler().catch(() => undefined) : Promise.resolve(),
+  ]);
+}
+
+async function acquireBrowser(connection: BrowserConnection): Promise<AnyBrowser> {
+  if (connection.kind === "cloudflare") {
+    return await puppeteer.launch(connection.binding as never);
+  } else if (connection.kind === "self-hosted") {
+    return (await puppeteerCore.connect({ browserWSEndpoint: connection.browserWSEndpoint })) as unknown as AnyBrowser;
+  } else {
+    const chromePath = process.env.HYEB_CHROME_PATH ?? await findChromeExecutable();
+    if (!chromePath) {
+      throw new HyeboardError("CHROME_NOT_FOUND",
+        "No Chrome/Chromium executable found. Install Chrome, set HYEB_CHROME_PATH, "
+        + "or use a remote browser via HYEB_BROWSER_WS_ENDPOINT.", 500);
+    }
+    return (await puppeteerCore.launch({
+      headless: connection.headless ?? true,
+      executablePath: chromePath,
+      args: ["--no-sandbox"],
+    })) as unknown as AnyBrowser;
+  }
 }
 
 // ── Browser orchestration. This drives a real, VNU-specific login UI
@@ -104,46 +236,74 @@ export async function automateVnuGoogleLogin(
     return patchrightLauncher(connection.headless ?? true, email, password, existingCookies, onProgress);
   }
 
-  let browser: AnyBrowser | undefined;
+  const key = cacheKeyFor(connection, email);
+  if (key) await evictStaleIfIdle(key);
+
   const result: GoogleLoginResult = {};
   const log = getLogger();
   // Set HYEB_LOG_LEVEL=debug to see every step of this flow (browser
   // acquisition, navigation, token capture, Canvas SSO hop).
   log.debug({ connectionKind: connection.kind, email }, "automateVnuGoogleLogin: starting");
-  try {
-    if (connection.kind === "cloudflare") {
-      browser = await puppeteer.launch(connection.binding as never);
-    } else if (connection.kind === "self-hosted") {
-      browser = (await puppeteerCore.connect({ browserWSEndpoint: connection.browserWSEndpoint })) as unknown as AnyBrowser;
-    } else {
-      browser = (await puppeteerCore.launch({
-        headless: connection.headless ?? true,
-        executablePath: process.env.HYEB_CHROME_PATH,
-        args: ["--no-sandbox"],
-      })) as unknown as AnyBrowser;
-    }
-    log.debug("automateVnuGoogleLogin: browser acquired");
-    let timeoutId: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS);
-    });
+
+  // Up to two attempts: first, try a cached live browser if one exists
+  // (self-hosted only); if the flow fails while reusing it, evict that
+  // (evidently stale/broken) session and fall back to a freshly launched
+  // browser + full interactive login within this same call, so the caller
+  // never has to know the cache attempt failed.
+  let attempt = 0;
+  while (attempt < 2) {
+    attempt += 1;
+    const cached = key ? browserSessionCache.get(key) : undefined;
+    const reusingCache = Boolean(cached && isBrowserAlive(cached.browser));
+    let browser: AnyBrowser | undefined;
     try {
-      await Promise.race([runFlow(browser, email, password, result, existingCookies, onProgress), timeout]);
-    } finally {
-      clearTimeout(timeoutId!);
+      browser = reusingCache ? cached!.browser : await acquireBrowser(connection);
+      log.debug({ reusingCache }, "automateVnuGoogleLogin: browser acquired");
+
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new HyeboardError("GOOGLE_AUTOMATION_TIMEOUT", "The automated sign-in took too long and was cancelled.", 504)), HARD_TIMEOUT_MS);
+      });
+      try {
+        await Promise.race([runFlow(browser, email, password, result, existingCookies, onProgress), timeout]);
+      } finally {
+        clearTimeout(timeoutId!);
+      }
+
+      // Success: keep the browser alive for the next refresh instead of
+      // closing it (self-hosted only — cacheKeyFor() already excludes
+      // Cloudflare).
+      if (key) browserSessionCache.set(key, { browser, lastUsedAt: Date.now() });
+      else await browser.close().catch(() => undefined);
+      break;
+    } catch (error) {
+      if (reusingCache && key) {
+        // The cached browser was stale/broken (crashed, revoked session,
+        // network drop on a remote CDP endpoint, etc). Evict it and retry
+        // once with a freshly launched browser before giving up.
+        await evictCachedSession(key);
+        log.debug({ err: error }, "automateVnuGoogleLogin: cached browser session failed, retrying with a fresh browser");
+        continue;
+      }
+      if (!reusingCache) await browser?.close().catch(() => undefined);
+      if (error instanceof HyeboardError) throw error;
+      log.error({ err: error }, "automateVnuGoogleLogin: unexpected error");
+      throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
     }
-  } catch (error) {
-    if (error instanceof HyeboardError) throw error;
-    log.error({ err: error }, "automateVnuGoogleLogin: unexpected error");
-    throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
-  } finally {
-    await browser?.close().catch(() => undefined);
   }
+
   log.debug({ hasStudenthub: Boolean(result.studenthub), hasCanvas: Boolean(result.canvas) }, "automateVnuGoogleLogin: finished");
   if (!result.studenthub && !result.canvas) {
     throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
   }
   return result;
+}
+
+async function evictStaleIfIdle(key: string): Promise<void> {
+  const cached = browserSessionCache.get(key);
+  if (cached && Date.now() - cached.lastUsedAt > IDLE_EVICTION_MS) {
+    await evictCachedSession(key);
+  }
 }
 
 // Clicks the "Đăng nhập với VNU mail" button on the given page and waits for
@@ -197,6 +357,27 @@ async function runFlow(
 ): Promise<void> {
   const report = (message: string) => onProgress?.(message);
   const page = await browser.newPage();
+  try {
+    await runFlowBody(page, browser, email, password, result, existingCookies, report);
+  } finally {
+    // Always close this call's page/tab, even on success or a thrown
+    // error — the browser itself may be kept alive afterward (see the
+    // cache in automateVnuGoogleLogin above) for the next refresh, but
+    // without this, every reuse would leak another open tab into that
+    // same long-lived browser process.
+    await page.close().catch(() => undefined);
+  }
+}
+
+async function runFlowBody(
+  page: import("@cloudflare/puppeteer").Page,
+  browser: AnyBrowser,
+  email: string,
+  password: string,
+  result: GoogleLoginResult,
+  existingCookies: GoogleSessionCookie[] | undefined,
+  report: (message: string) => void,
+): Promise<void> {
   let studenthubToken: string | null = null;
 
   // 0. Rehydrate a previously-captured Google session cookie (if any)

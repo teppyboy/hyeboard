@@ -4,24 +4,70 @@ import { DaotaoClient, getAdapter, listUniversities, type BrowserBinding, type B
 import { Elysia, t } from "elysia";
 
 // ─── Runtime config ───────────────────────────────────────────
-// Defaults to process.env, which works natively on both Node and Bun with
-// zero setup. The Cloudflare Workers entry point (index.ts) overrides this
-// at module load with the real `env` object from `cloudflare:workers`,
-// since Workers vars/secrets are not guaranteed to be mirrored onto
-// process.env — this keeps the live-verified Cloudflare-hosted path
-// completely unchanged.
+// Self-hosted (Node/Bun) loads config from config.json + env var overrides
+// (see loadConfigFile below). Cloudflare Workers doesn't use config.json
+// (no filesystem) — index.ts calls setRuntimeConfig directly with env var
+// values from the `cloudflare:workers` binding.
+//
+// HYEB_SESSION_SECRET is NEVER read from config.json — only from env vars
+// or setRuntimeConfig(), to keep it out of files that might be checked in.
 interface RuntimeConfig {
   HYEB_SESSION_SECRET?: string;
   HYEB_ALLOWED_ORIGINS?: string;
   HYEB_BROWSER_WS_ENDPOINT?: string;
   HYEB_BROWSER_LOCAL?: string;
+  HYEB_BROWSER_HEADLESS?: string;
+  HYEB_CHROME_PATH?: string;
   HYEB_LOG_LEVEL?: string;
+  HOST?: string;
+  PORT?: string;
+  HYEB_STATIC_DIR?: string;
 }
 
-let runtimeConfig: RuntimeConfig = (typeof process !== "undefined" ? (process.env as RuntimeConfig) : {}) ?? {};
+let runtimeConfig: RuntimeConfig = {};
 
 export function setRuntimeConfig(config: RuntimeConfig): void {
   runtimeConfig = config;
+}
+
+// Read non-secret config from a JSON file (Node/Bun only, no-op on CF Workers).
+// The file path defaults to ./config.json relative to cwd, overridable via
+// CONFIG_PATH env var. Returns a partial RuntimeConfig — callers merge with
+// env vars (which take precedence) before passing to setRuntimeConfig.
+//
+// HYEB_SESSION_SECRET is intentionally never read from this file. It must
+// come from an env var only.
+// Structured config.json schema:
+//   { "origins": [...], "browser": { "ws_endpoint", "local", "headless" },
+//     "log_level", "host", "port", "static_dir" }
+// See apps/worker/config.json for the full default file.
+export async function loadConfigFile(): Promise<RuntimeConfig> {
+  const isNode = typeof process !== "undefined" && typeof process.cwd === "function";
+  if (!isNode) return {};
+  try {
+    const configPath = process.env.CONFIG_PATH;
+    const { join } = await import("node:path");
+    const path = configPath || join(process.cwd(), "config.json");
+    const { readFileSync, existsSync } = await import("node:fs");
+    if (!existsSync(path)) return {};
+    const raw = readFileSync(path, "utf-8");
+    const cfg = JSON.parse(raw);
+    const r: RuntimeConfig = {};
+    if (Array.isArray(cfg.origins)) r.HYEB_ALLOWED_ORIGINS = cfg.origins.join(", ");
+    if (cfg.browser && typeof cfg.browser === "object") {
+      if (typeof cfg.browser.ws_endpoint === "string") r.HYEB_BROWSER_WS_ENDPOINT = cfg.browser.ws_endpoint;
+      if (typeof cfg.browser.local === "boolean") r.HYEB_BROWSER_LOCAL = String(cfg.browser.local);
+      if (typeof cfg.browser.headless === "boolean") r.HYEB_BROWSER_HEADLESS = String(cfg.browser.headless);
+      if (typeof cfg.browser.chrome_path === "string") r.HYEB_CHROME_PATH = cfg.browser.chrome_path;
+    }
+    if (typeof cfg.log_level === "string") r.HYEB_LOG_LEVEL = cfg.log_level;
+    if (typeof cfg.host === "string") r.HOST = cfg.host;
+    if (typeof cfg.port === "number") r.PORT = String(cfg.port);
+    if (typeof cfg.static_dir === "string") r.HYEB_STATIC_DIR = cfg.static_dir;
+    return r;
+  } catch {
+    return {};
+  }
 }
 
 // On Cloudflare, use the managed Browser Rendering binding (env.BROWSER),
@@ -46,10 +92,21 @@ function getSessionSecret(): string {
   return s;
 }
 
+function browserHeadless(): boolean {
+  const v = runtimeConfig.HYEB_BROWSER_HEADLESS;
+  if (v === undefined || v === "") return true;
+  return v === "true" || v === "1";
+}
+
 function browserConnection(): BrowserConnection {
   const wsEndpoint = runtimeConfig.HYEB_BROWSER_WS_ENDPOINT;
   if (wsEndpoint) return { kind: "self-hosted", browserWSEndpoint: wsEndpoint };
-  if (runtimeConfig.HYEB_BROWSER_LOCAL) return { kind: "local", headless: false };
+  // Explicit "true"/"1" check, not a truthy-string check: HYEB_BROWSER_LOCAL is
+  // always a *string* here (from either an env var or loadConfigFile's
+  // String(boolean) conversion of config.json's browser.local), so a naive
+  // `if (runtimeConfig.HYEB_BROWSER_LOCAL)` would treat the string "false" as
+  // truthy and force "local" mode even when the config explicitly disables it.
+  if (runtimeConfig.HYEB_BROWSER_LOCAL === "true" || runtimeConfig.HYEB_BROWSER_LOCAL === "1") return { kind: "local", headless: browserHeadless() };
   return { kind: "cloudflare", binding: cloudflareBrowserBinding as BrowserBinding };
 }
 
@@ -195,6 +252,21 @@ function createMemoryCache(): CacheLike {
 }
 
 const memoryCache: CacheLike = createMemoryCache();
+
+// Safe request-ID generator. crypto.randomUUID() is available on all modern
+// browsers and Node 19+/14.17.0 via the crypto module, but the esbuild bundle
+// references the global Web Crypto API (globalThis.crypto), which doesn't
+// exist or lacks randomUUID on Node <19. Fall back to Math.random for those
+// environments.
+function requestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().slice(0, 8);
+  }
+  if (typeof require === "function") {
+    try { return require("crypto").randomUUID().slice(0, 8); } catch { /* fall through */ }
+  }
+  return Math.random().toString(36).substring(2, 10);
+}
 
 function hex(bytes: ArrayBuffer): string {
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -348,7 +420,7 @@ export function createApp(adapter: any) {
   return app
     .onRequest(({ request }) => {
       const req = request as unknown as { _hyebReqId?: string; _hyebStart?: number };
-      req._hyebReqId = crypto.randomUUID().slice(0, 8);
+      req._hyebReqId = requestId();
       req._hyebStart = Date.now();
       // Set HYEB_LOG_LEVEL=debug (Node/Bun .env, or a Cloudflare secret/var)
       // to see one line per incoming request here.

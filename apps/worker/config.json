@@ -1,0 +1,13 @@
+{
+  "origins": [],
+  "browser": {
+    "ws_endpoint": "",
+    "local": false,
+    "headless": true,
+    "chrome_path": ""
+  },
+  "log_level": "info",
+  "host": "127.0.0.1",
+  "port": 8787,
+  "static_dir": ""
+}

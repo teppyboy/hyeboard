@@ -3,9 +3,17 @@ import { mapExamRow, mapGpaSummary, mapGradeRow, mapProfile, mapSyllabusRow, map
 import { parseExamTermOptions, parseExamsHtml, parseGradesHtml, parseProfileHtml, parseStudyProgressHtml, parseSyllabusHtml } from "@hyeboard/university-adapters/src/vnu/parser";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
-const SESSION_KEY = "hyeboard.sessionToken"; // legacy single-session key, migrated on first read
+const SESSION_KEY = "hyeboard.sessionToken";
 const ACCOUNTS_KEY = "hyeboard.accounts";
 const ACTIVE_ACCOUNT_KEY = "hyeboard.activeAccountId";
+
+function uuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
 
 // Only these codes mean the Hyeboard session itself is dead - everything else
 // (e.g. a feature that needs a learning-platform credential the user never provided) is
@@ -61,7 +69,7 @@ function migrateLegacySessionIfNeeded(): void {
   const legacyToken = sessionStorage.getItem(SESSION_KEY) ?? localStorage.getItem(SESSION_KEY);
   if (!legacyToken) return;
   const legacyUniversityId = localStorage.getItem("hyeboard.universityId") ?? "uet";
-  const account: StoredAccount = { id: crypto.randomUUID(), universityId: legacyUniversityId, token: legacyToken, addedAt: new Date().toISOString() };
+  const account: StoredAccount = { id: uuid(), universityId: legacyUniversityId, token: legacyToken, addedAt: new Date().toISOString() };
   writeAccounts([account]);
   localStorage.setItem(ACTIVE_ACCOUNT_KEY, account.id);
   sessionStorage.removeItem(SESSION_KEY);
@@ -93,7 +101,7 @@ export function upsertAccount(universityId: string, token: string, studentCode?:
   const matchIndex = accounts.findIndex((account) => account.universityId === universityId && (account.studentCode ?? "") === (studentCode ?? ""));
   const account: StoredAccount = matchIndex >= 0
     ? { ...accounts[matchIndex], token, studentCode: studentCode ?? accounts[matchIndex].studentCode }
-    : { id: crypto.randomUUID(), universityId, token, studentCode, addedAt: new Date().toISOString() };
+    : { id: uuid(), universityId, token, studentCode, addedAt: new Date().toISOString() };
   if (matchIndex >= 0) accounts[matchIndex] = account;
   else accounts.push(account);
   writeAccounts(accounts);
