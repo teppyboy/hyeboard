@@ -91,16 +91,21 @@ export async function start(): Promise<unknown> {
       HYEB_BROWSER_LOCAL: process.env.HYEB_BROWSER_LOCAL ?? fileConfig.HYEB_BROWSER_LOCAL,
       HYEB_BROWSER_HEADLESS: process.env.HYEB_BROWSER_HEADLESS ?? fileConfig.HYEB_BROWSER_HEADLESS,
       HYEB_CHROME_PATH: process.env.HYEB_CHROME_PATH ?? fileConfig.HYEB_CHROME_PATH,
+      HYEB_BROWSER_IDLE_EVICTION_MS: process.env.HYEB_BROWSER_IDLE_EVICTION_MS ?? fileConfig.HYEB_BROWSER_IDLE_EVICTION_MS,
       HYEB_LOG_LEVEL: process.env.HYEB_LOG_LEVEL ?? fileConfig.HYEB_LOG_LEVEL,
     });
 
     // google-login-automation.ts (and its Patchright variant) live in
-    // @hyeboard/university-adapters and read HYEB_CHROME_PATH straight off
-    // process.env — they have no access to app.ts's runtimeConfig. If the
-    // value only came from config.json (not a real env var), mirror it onto
-    // process.env here so that package still sees it.
+    // @hyeboard/university-adapters and read HYEB_CHROME_PATH /
+    // HYEB_BROWSER_IDLE_EVICTION_MS straight off process.env — they have no
+    // access to app.ts's runtimeConfig. If a value only came from
+    // config.json (not a real env var), mirror it onto process.env here so
+    // that package still sees it.
     if (!process.env.HYEB_CHROME_PATH && fileConfig.HYEB_CHROME_PATH) {
       process.env.HYEB_CHROME_PATH = fileConfig.HYEB_CHROME_PATH;
+    }
+    if (!process.env.HYEB_BROWSER_IDLE_EVICTION_MS && fileConfig.HYEB_BROWSER_IDLE_EVICTION_MS) {
+      process.env.HYEB_BROWSER_IDLE_EVICTION_MS = fileConfig.HYEB_BROWSER_IDLE_EVICTION_MS;
     }
 
     const isDev = process.env.NODE_ENV !== "production";

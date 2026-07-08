@@ -78,6 +78,7 @@ async function main() {
       local: false,
       headless: true,
       chrome_path: "",
+      idle_eviction_minutes: 20160,
     },
     log_level: "info",
     host: "127.0.0.1",

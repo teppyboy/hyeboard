@@ -1,42 +1,69 @@
 # Hyeboard
 
-Modern multi-university student dashboard. UET first, with StudentHub + Canvas adapter support.
+Multi-university student dashboard. VNU-UET (StudentHub + Canvas) first, with a Mock adapter for demo/dev use, built as a pnpm monorepo.
 
-## Apps
+## Structure
 
-- `apps/web`: React, Vite, TanStack Router, TanStack Query, shadcn-style UI components, Tailwind CSS.
-- `apps/api`: Elysia Cloudflare Worker BFF/proxy.
-
-## Packages
-
-- `packages/schemas`: shared TypeScript models.
-- `packages/core`: Worker-safe helpers, API envelopes, encrypted bearer session helpers.
-- `packages/university-adapters`: mock adapter and UET adapter boundary.
-
-## Security
-
-Raw HAR files are ignored by git. They can contain cookies, tokens, session IDs, SAML payloads, student IDs, and PII. Do not commit them.
+- `apps/web` — React 19, Vite, TanStack Router/Query, Tailwind CSS v4, local shadcn-style UI primitives.
+- `apps/worker` — Elysia API/BFF. Deploys as a Cloudflare Worker (serving the built web app as static assets) or self-hosts on plain Node.js/Bun.
+- `packages/schemas` — shared Zod schemas + inferred TypeScript types.
+- `packages/core` — Worker-safe helpers: API response envelopes, `HyeboardError`, AES-GCM encrypted session token helpers.
+- `packages/university-adapters` — the `UniversityAdapter` interface and registry (`mock`, `uet`). All university-specific integration logic (StudentHub/Canvas clients, response mapping, Google-login automation) lives here.
 
 ## Development
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev          # runs web (Vite, :5173) + worker (wrangler dev, :8787) together
 ```
 
-API local env lives in `apps/api/.dev.vars`:
+Required env for local dev, `apps/worker/.dev.vars` (gitignored):
 
 ```txt
 HYEB_SESSION_SECRET=replace-with-at-least-32-random-bytes
-HYEB_ALLOWED_ORIGINS=http://localhost:5173
+HYEB_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
-Web local env lives in `apps/web/.env.local`:
+Optional, `apps/web/.env.local`:
 
 ```txt
 VITE_API_BASE_URL=http://localhost:8787
 ```
 
-## Auth Status
+## Building & testing
 
-Hyeboard uses an encrypted Bearer token issued by the Worker. StudentHub and Canvas upstream auth are represented as upstream credentials inside the encrypted payload. Canvas official API access should use OAuth Bearer tokens where available; StudentHub auth transport still needs live probing because HAR exports strip auth headers/cookies.
+```bash
+pnpm build        # builds web (Vite) + typechecks the worker
+pnpm test         # typecheck + vitest across every package
+pnpm --filter @hyeboard/web exec playwright test   # e2e (spins up worker + web itself)
+```
+
+## Deployment
+
+Two supported targets:
+
+**Cloudflare Workers** (single Worker serving the API + the built web app as static assets):
+
+```bash
+pnpm deploy        # wrangler deploy
+```
+
+**Self-hosted (Node.js/Bun)** — produces a standalone `dist/` directory with the bundled worker, the built web app, and a runtime `config.json`:
+
+```bash
+pnpm package        # builds + assembles dist/
+cd dist
+npm install --omit=dev
+cp .env.example .env   # fill in HYEB_SESSION_SECRET
+node dist/index.js      # or: bun run dist/index.js
+```
+
+All non-secret runtime configuration (allowed origins, host/port, browser automation settings) lives in `dist/config.json`; only `HYEB_SESSION_SECRET` is read from the environment.
+
+## Security
+
+Raw HAR captures and any file containing real credentials/cookies/tokens must never be committed — `.gitignore` excludes `*.har`, `cred.txt`, `.env*`, and `.dev.vars`. See `docs/har-security.md` for HAR-handling guidance.
+
+## License
+
+Hyeboard is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).

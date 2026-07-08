@@ -18,3 +18,8 @@ apps/web/blob-report/
 # HAR captures contain cookies, tokens, session IDs, and PII.
 *.har
 !samples/har-redacted/*.har
+
+# Scratch credential/notes files used during local testing.
+cred.txt
+credentials.txt
+*.creds.txt

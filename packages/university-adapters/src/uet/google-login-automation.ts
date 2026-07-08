@@ -152,7 +152,28 @@ const browserSessionCache = new Map<string, CachedBrowserSession>();
 // Idle sessions are closed and evicted lazily (checked on next lookup for
 // that key) rather than via a background timer, so this module never keeps
 // the Node/Bun process alive on its own via a dangling setInterval.
-const IDLE_EVICTION_MS = 30 * 60_000;
+//
+// This MUST outlive the realistic gap between a login and the next refresh
+// call, or the cache is pure dead weight — resolveSession() (app.ts) only
+// re-invokes this automation once studenthub.expiresAt (derived from the
+// real StudentHub JWT's own `exp` claim, see adapter.ts's jwtExpiry()) has
+// actually passed. A previous default of 30 minutes here meant
+// evictStaleIfIdle() (called at the top of every automation call, below)
+// ALWAYS evicted the cache before a genuine refresh could ever reuse it —
+// confirmed bug, refresh calls never actually hit the "reusingCache" path
+// in practice. But the real ceiling on how long a cached browser stays
+// USABLE isn't the (shorter) StudentHub JWT lifetime — it's how long
+// Google's own session cookie and the VNU Keycloak IDP session stay valid,
+// since those are what actually let a cache hit skip the interactive
+// login steps; the StudentHub JWT is just what triggers the refresh call
+// in the first place. Google/VNU IDP session cookies are reported to have
+// a ~2 week TTL, so default to that (minus a safety margin isn't needed —
+// evictCachedSession already runs on any failure, so an expired-but-still-
+// cached context degrades gracefully to a fresh relaunch, not a hard
+// failure). Configurable via HYEB_BROWSER_IDLE_EVICTION_MS (milliseconds)
+// for operators who've measured a different real-world TTL.
+const DEFAULT_IDLE_EVICTION_MS = 14 * 24 * 60 * 60_000;
+const IDLE_EVICTION_MS = Number(process.env.HYEB_BROWSER_IDLE_EVICTION_MS) > 0 ? Number(process.env.HYEB_BROWSER_IDLE_EVICTION_MS) : DEFAULT_IDLE_EVICTION_MS;
 
 function cacheKeyFor(connection: BrowserConnection, email: string): string | undefined {
   // Cloudflare's Browser Rendering binding launches a fresh instance every

@@ -18,6 +18,7 @@ interface RuntimeConfig {
   HYEB_BROWSER_LOCAL?: string;
   HYEB_BROWSER_HEADLESS?: string;
   HYEB_CHROME_PATH?: string;
+  HYEB_BROWSER_IDLE_EVICTION_MS?: string;
   HYEB_LOG_LEVEL?: string;
   HOST?: string;
   PORT?: string;
@@ -38,8 +39,9 @@ export function setRuntimeConfig(config: RuntimeConfig): void {
 // HYEB_SESSION_SECRET is intentionally never read from this file. It must
 // come from an env var only.
 // Structured config.json schema:
-//   { "origins": [...], "browser": { "ws_endpoint", "local", "headless" },
-//     "log_level", "host", "port", "static_dir" }
+//   { "origins": [...], "browser": { "ws_endpoint", "local", "headless",
+//     "chrome_path", "idle_eviction_minutes" }, "log_level", "host", "port",
+//     "static_dir" }
 // See apps/worker/config.json for the full default file.
 export async function loadConfigFile(): Promise<RuntimeConfig> {
   const isNode = typeof process !== "undefined" && typeof process.cwd === "function";
@@ -59,6 +61,7 @@ export async function loadConfigFile(): Promise<RuntimeConfig> {
       if (typeof cfg.browser.local === "boolean") r.HYEB_BROWSER_LOCAL = String(cfg.browser.local);
       if (typeof cfg.browser.headless === "boolean") r.HYEB_BROWSER_HEADLESS = String(cfg.browser.headless);
       if (typeof cfg.browser.chrome_path === "string") r.HYEB_CHROME_PATH = cfg.browser.chrome_path;
+      if (typeof cfg.browser.idle_eviction_minutes === "number") r.HYEB_BROWSER_IDLE_EVICTION_MS = String(cfg.browser.idle_eviction_minutes * 60_000);
     }
     if (typeof cfg.log_level === "string") r.HYEB_LOG_LEVEL = cfg.log_level;
     if (typeof cfg.host === "string") r.HOST = cfg.host;
@@ -151,8 +154,18 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
     const refreshedToken = await encryptSession(refreshed.session, getSessionSecret());
     return { session: refreshed.session, refreshedToken };
   } catch (error) {
-    const message = error instanceof HyeboardError ? error.message : "Automatic sign-in refresh failed.";
-    throw new HyeboardError("GOOGLE_REFRESH_FAILED", `${message} Sign in again.`, 401);
+    // Preserve the real failure code/status instead of collapsing every
+    // refresh failure into a generic GOOGLE_REFRESH_FAILED/401 — the
+    // frontend and logs both need to distinguish e.g. STUDENTHUB_MAINTENANCE
+    // (503, transient, not a "sign in again" situation) from a genuine
+    // GOOGLE_AUTOMATION_TIMEOUT/GOOGLE_AUTOMATION_BLOCKED/challenge failure.
+    // Always log the full original error server-side first, since the code
+    // above previously discarded it entirely (only the message text
+    // survived into the wrapped error, and even that only reached the
+    // client, never the server logs).
+    getLogger().error({ err: error }, "resolveSession: automatic sign-in refresh failed");
+    if (error instanceof HyeboardError) throw error;
+    throw new HyeboardError("GOOGLE_REFRESH_FAILED", "Automatic sign-in refresh failed. Sign in again.", 401);
   }
 }
 

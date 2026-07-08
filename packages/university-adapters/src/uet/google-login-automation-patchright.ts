@@ -46,9 +46,22 @@ import {
 // is the context plus its temp userDataDir, both torn down together.
 type CachedPatchrightSession = { context: BrowserContext; userDataDir: string; lastUsedAt: number; closed: boolean };
 const patchrightSessionCache = new Map<string, CachedPatchrightSession>();
-// Same value as google-login-automation.ts's IDLE_EVICTION_MS, duplicated
-// locally since these are separate modules with no shared export for it.
-const IDLE_EVICTION_MS = 30 * 60_000;
+// Same value/reasoning as google-login-automation.ts's IDLE_EVICTION_MS
+// (see that file's comment for the full explanation of why this must
+// outlive the realistic login→refresh gap, not just be "housekeeping"),
+// duplicated locally since these are separate modules with no shared
+// export for it. Both read the same HYEB_BROWSER_IDLE_EVICTION_MS env var
+// so a single config value governs whichever automation path is active.
+const DEFAULT_IDLE_EVICTION_MS = 14 * 24 * 60 * 60_000;
+const IDLE_EVICTION_MS = Number(process.env.HYEB_BROWSER_IDLE_EVICTION_MS) > 0 ? Number(process.env.HYEB_BROWSER_IDLE_EVICTION_MS) : DEFAULT_IDLE_EVICTION_MS;
+
+// Failure codes that mean a fresh context/login attempt would fail
+// identically — not a symptom of a stale/broken cached context. Retrying
+// these once with a fresh context (as the generic reusingCache-eviction
+// path below does for all other errors) only doubles the wall-clock cost
+// of a doomed call (HARD_TIMEOUT_MS both times) before surfacing the same
+// error anyway.
+const NON_STALE_CACHE_ERROR_CODES = new Set(["STUDENTHUB_MAINTENANCE", "GOOGLE_2FA_REQUIRED", "GOOGLE_CHALLENGE_REQUIRED", "GOOGLE_AUTOMATION_BLOCKED"]);
 
 function cacheKeyFor(email: string): string {
   // Patchright is only ever invoked for the "local" BrowserConnection kind
@@ -169,7 +182,14 @@ export async function automateVnuGoogleLoginPatchright(
         clearTimeout(timeoutId!);
       }
     } catch (error) {
-      if (reusingCache) {
+      // Hard failures whose cause has nothing to do with a stale/broken
+      // cached context — a fresh context will hit the exact same failure,
+      // so retrying just wastes another ~90s HARD_TIMEOUT_MS window (this
+      // was previously always retried once on any error when reusingCache,
+      // which could double the wall-clock time of a doomed refresh call
+      // before finally surfacing an error).
+      const isNonRetryableFailure = error instanceof HyeboardError && NON_STALE_CACHE_ERROR_CODES.has(error.code);
+      if (reusingCache && !isNonRetryableFailure) {
         // The cached context is stale/broken — evict it and retry once
         // with a freshly launched context, so a broken cached session
         // never surfaces as a caller-visible error.
@@ -177,8 +197,11 @@ export async function automateVnuGoogleLoginPatchright(
         await evictCachedSession(key);
         continue;
       }
-      await context.close().catch(() => undefined);
-      rmSync(userDataDir, { recursive: true, force: true });
+      if (reusingCache) await evictCachedSession(key);
+      else {
+        await context.close().catch(() => undefined);
+        rmSync(userDataDir, { recursive: true, force: true });
+      }
       if (error instanceof HyeboardError) throw error;
       log.error({ err: error }, "automateVnuGoogleLoginPatchright: unexpected error");
       throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
@@ -315,6 +338,30 @@ async function runFlowBody(
   if (isStudenthubMaintenance(page.url())) {
     throw new HyeboardError("STUDENTHUB_MAINTENANCE", "StudentHub is currently under maintenance. Please try again later.", 503);
   }
+
+  // On a reused cached context (see the persistent-context cache in
+  // automateVnuGoogleLoginPatchright above), a stale StudentHub
+  // localStorage.accessToken from the PREVIOUS call can still be present
+  // in the profile even though the server has since expired it — this
+  // makes StudentHub's SPA render its authenticated dashboard instead of
+  // the "Đăng nhập với VNU mail" button, so clickGoogleButtonAndWaitForPopup
+  // below would wait 10s for a popup that never opens (this was the
+  // primary confirmed cause of "refresh triggers full re-login every
+  // time" style failures on the reuse path). Detect that and force a
+  // clean, logged-out reload before proceeding.
+  const googleSignInButtonVisible = await page
+    .getByRole("link", { name: "Đăng nhập với VNU mail" })
+    .isVisible({ timeout: 3_000 })
+    .catch(() => false);
+  if (!googleSignInButtonVisible) {
+    log.debug("runFlow(patchright): sign-in button not visible on a reused context — clearing stale localStorage and reloading");
+    await page.evaluate(() => window.localStorage.clear()).catch(() => undefined);
+    await page.goto(STUDENTHUB_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 20_000 });
+    if (isStudenthubMaintenance(page.url())) {
+      throw new HyeboardError("STUDENTHUB_MAINTENANCE", "StudentHub is currently under maintenance. Please try again later.", 503);
+    }
+  }
+
   log.debug("runFlow(patchright): StudentHub login page loaded, clicking Google sign-in button");
   report("Signing in with Google...");
   let popup = await clickGoogleButtonAndWaitForPopup(page);
