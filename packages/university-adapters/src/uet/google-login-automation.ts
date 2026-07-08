@@ -92,6 +92,34 @@ export function serializeCookies(cookies: Array<{ name: string; value: string }>
   return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
 }
 
+// Cookies are captured broadly at the end of a successful login/refresh —
+// every origin actually touched during the flow (StudentHub, Canvas,
+// Google, VNU's IDP), not just a hardcoded Google/IDP allow-list — so
+// nothing Google or VNU's IDP happen to set on some domain here gets
+// silently dropped from what's persisted in the encrypted session token.
+// @cloudflare/puppeteer's Page/BrowserContext types don't expose a
+// no-args "all cookies in the browser" method the way puppeteer-core's
+// newer BrowserContext.cookies() does (confirmed via typecheck), so this
+// stays URL-list-based rather than a true wildcard capture — the list is
+// just wider than before instead of unbounded.
+export function cookieCaptureUrls(): string[] {
+  return [new URL(STUDENTHUB_LOGIN_URL).origin, new URL(CANVAS_SSO_URL).origin, "https://accounts.google.com", "https://www.google.com", "https://idp.vnu.edu.vn"];
+}
+
+// Now that capture is broader (StudentHub/Canvas cookies included, see
+// cookieCaptureUrls above), only Google/IDP cookies are safe to
+// REHYDRATE back into a fresh/reused browser before StudentHub's own login
+// step: rehydrating a captured StudentHub or Canvas cookie here would risk
+// the exact same "already logged in, sign-in button never renders" bug
+// that a stale StudentHub localStorage token caused (see the
+// stale-localStorage detection/recovery in both runFlow implementations),
+// just via cookies instead of localStorage this time. Kept as an
+// allow-list (not a studenthub/canvas deny-list) so it stays correct even
+// if Google/VNU IDP start setting cookies on a domain not anticipated here.
+export function isRehydratableGoogleCookie(domain: string): boolean {
+  return /(^|\.)google\.com$|(^|\.)gstatic\.com$|(^|\.)googleusercontent\.com$|(^|\.)idp\.vnu\.edu\.vn$/.test(domain);
+}
+
 // Auto-detect Chrome/Chromium on the system when HYEB_CHROME_PATH is unset.
 // Searches $PATH via `which` (POSIX) / `where` (Windows), then checks common
 // install locations. Only called in the "local" BrowserConnection kind (Node/Bun
@@ -407,10 +435,12 @@ async function runFlowBody(
   // page, so it also covers the popup opened in step 1 below (same
   // context). Best-effort only: if Google no longer honors the cookie
   // (expired/revoked), the flow below simply falls through to the normal
-  // interactive email/password/Keycloak steps, same as if no cookie were
-  // passed at all.
-  if (existingCookies?.length) {
-    await page.setCookie(...(existingCookies as never[])).catch(() => undefined);
+  // interactive email/password/Keycloak steps. Filtered to Google/IDP
+  // cookies only — existingCookies may also contain StudentHub/Canvas
+  // cookies now that capture is broad (see isRehydratableGoogleCookie).
+  const rehydratableCookies = existingCookies?.filter((c) => isRehydratableGoogleCookie(c.domain)) ?? [];
+  if (rehydratableCookies.length) {
+    await page.setCookie(...(rehydratableCookies as never[])).catch(() => undefined);
   }
 
   // 1. StudentHub → Google sign-in popup.
@@ -435,7 +465,7 @@ async function runFlowBody(
   // (handled by step 2b below) — but the check is cheap and kept as an
   // opportunistic fast path in case a session state exists where it does.
   let silentCookieLogin = false;
-  if (existingCookies?.length) {
+  if (rehydratableCookies.length) {
     getLogger().debug("runFlow: attempting silent cookie-based login");
     // Short timeout since the popup reliably does not auto-close (see
     // above) — waiting longer only delays the fall-through to step 2.
@@ -640,15 +670,17 @@ async function runFlowBody(
     throw new HyeboardError("STUDENTHUB_MAINTENANCE", "StudentHub is currently under maintenance. Please try again later.", 503);
   }
 
-  // Capture both Google session cookies AND VNU IDP (Keycloak) session
-  // cookies from the just-completed login. page.cookies(url) reads cookies
-  // scoped to the given origins from the browser's cookie jar directly via
-  // CDP — it does not require the page to currently be showing that origin,
-  // so this works even though `page` itself is on StudentHub/Canvas by now.
-  // Persisted by the caller (see EncryptedSessionPayload.uetGoogleCredential
-  // .googleCookies) so the next automateVnuGoogleLogin() call can attempt
-  // the silent cookie-based path above instead of a full interactive login.
-  const googleCookies = await page.cookies("https://accounts.google.com", "https://www.google.com", "https://idp.vnu.edu.vn").catch(() => []);
+  // Capture cookies from every origin touched during the flow — see
+  // cookieCaptureUrls's comment for why this is broader than just
+  // Google/IDP and why it isn't a true wildcard capture. page.cookies(url)
+  // reads cookies scoped to the given origins from the browser's cookie jar
+  // directly via CDP — it does not require the page to currently be
+  // showing that origin, so this works even though `page` itself is on
+  // StudentHub/Canvas by now. Persisted by the caller (see
+  // EncryptedSessionPayload.uetGoogleCredential.googleCookies) so the next
+  // automateVnuGoogleLogin() call can attempt the silent cookie-based path
+  // above instead of a full interactive login.
+  const googleCookies = await page.cookies(...cookieCaptureUrls()).catch(() => []);
   if (googleCookies.length) {
     result.googleCookies = googleCookies.map((c) => ({
       name: c.name,

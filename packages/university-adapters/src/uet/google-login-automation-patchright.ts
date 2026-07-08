@@ -7,6 +7,7 @@ import {
   CANVAS_SSO_URL,
   detectChallenge,
   HARD_TIMEOUT_MS,
+  isRehydratableGoogleCookie,
   isStudenthubMaintenance,
   serializeCookies,
   STUDENTHUB_LOGIN_URL,
@@ -307,10 +308,14 @@ async function runFlowBody(
   // it also covers the popup opened in step 1 below (same context).
   // Best-effort: if the cookie is stale, the flow below simply falls
   // through to the normal interactive email/password/Keycloak steps.
-  if (existingCookies?.length) {
+  // Filtered to Google/IDP cookies only — existingCookies may also contain
+  // StudentHub/Canvas cookies now that capture is broad (see
+  // isRehydratableGoogleCookie's comment in google-login-automation.ts).
+  const rehydratableCookies = existingCookies?.filter((c) => isRehydratableGoogleCookie(c.domain)) ?? [];
+  if (rehydratableCookies.length) {
     await context
       .addCookies(
-        existingCookies.map((c) => ({
+        rehydratableCookies.map((c) => ({
           name: c.name,
           value: c.value,
           domain: c.domain,
@@ -378,7 +383,7 @@ async function runFlowBody(
   // practice (the account chooser is shown instead, handled by step 2b) —
   // kept cheap and non-blocking regardless.
   let silentCookieLogin = false;
-  if (existingCookies?.length) {
+  if (rehydratableCookies.length) {
     log.debug("runFlow(patchright): attempting silent cookie-based login");
     silentCookieLogin = await popup
       .waitForEvent("close", { timeout: 1_500 })
@@ -520,10 +525,17 @@ async function runFlowBody(
     throw new HyeboardError("STUDENTHUB_MAINTENANCE", "StudentHub is currently under maintenance. Please try again later.", 503);
   }
 
-  // Capture both Google session cookies AND VNU IDP (Keycloak) session
-  // cookies from the just-completed login, for the caller to persist and
-  // pass back in on the next automateVnuGoogleLoginPatchright() call.
-  const googleCookies = await context.cookies(["https://accounts.google.com", "https://www.google.com", "https://idp.vnu.edu.vn"]).catch(() => []);
+  // Capture EVERY cookie in the context, not just a URL allow-list —
+  // unlike the Puppeteer flow (whose shared @cloudflare/puppeteer type
+  // surface has no no-args "all cookies" method, see cookieCaptureUrls's
+  // comment in google-login-automation.ts), Playwright's BrowserContext
+  // genuinely supports this: context.cookies() with no argument returns
+  // every cookie in the context, not just cookies for the current page's
+  // origin. Persisted by the caller for the next
+  // automateVnuGoogleLoginPatchright() call. Safe to capture broadly here —
+  // isRehydratableGoogleCookie (see step 0 above) still filters what
+  // actually gets rehydrated on the next call.
+  const googleCookies = await context.cookies().catch(() => []);
   if (googleCookies.length) {
     result.googleCookies = googleCookies.map((c) => ({
       name: c.name,
