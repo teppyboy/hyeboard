@@ -949,7 +949,45 @@ function UnsupportedPanel({ title }: { title: string }) {
   );
 }
 
-const AUTOMATION_FAILURE_CODES = new Set(["GOOGLE_CHALLENGE_REQUIRED", "GOOGLE_2FA_REQUIRED", "GOOGLE_AUTOMATION_BLOCKED", "GOOGLE_LOGIN_RATE_LIMITED", "GOOGLE_AUTOMATION_TIMEOUT"]);
+const AUTOMATION_FAILURE_CODES = new Set(["GOOGLE_CHALLENGE_REQUIRED", "GOOGLE_2FA_REQUIRED", "GOOGLE_AUTOMATION_BLOCKED", "GOOGLE_SIGNIN_FAILURE", "GOOGLE_LOGIN_RATE_LIMITED", "GOOGLE_AUTOMATION_TIMEOUT", "GOOGLE_KEYCLOAK_REDIRECT_MISSING"]);
+
+// Maps known error codes to plain-language, actionable text. The server now
+// includes real technical detail in some error messages (e.g.
+// GOOGLE_SIGNIN_FAILURE's message embeds the raw exception text — a
+// TimeoutError stack summary, a Puppeteer/CDP error, etc. — for logs/
+// diagnosis, see google-login-automation.ts) which is exactly the kind of
+// "system error" that shouldn't be shown to the user directly. This is the
+// translation layer: known codes get a clear, friendly message; anything
+// unrecognized falls back to the caller-supplied default rather than
+// leaking a raw stack/exception string into a toast.
+function humanizeUetLoginError(code: string | undefined, fallback: string): string {
+  switch (code) {
+    case "STUDENTHUB_MAINTENANCE":
+      return "StudentHub is currently under maintenance. Please try again later.";
+    case "GOOGLE_2FA_REQUIRED":
+      return "Your Google account has two-factor verification enabled, which can't be completed automatically. Use the manual token option below.";
+    case "GOOGLE_CHALLENGE_REQUIRED":
+      return "Google is asking for extra verification that can't be completed automatically. Use the manual token option below.";
+    case "GOOGLE_AUTOMATION_BLOCKED":
+      return "Google blocked this sign-in as unusual activity. Use the manual token option below.";
+    case "GOOGLE_SIGNIN_FAILURE":
+      return "Google sign-in couldn't complete. Try again, or use the manual token option below.";
+    case "GOOGLE_AUTOMATION_TIMEOUT":
+      return "Sign-in took too long and was cancelled. Try again, or use the manual token option below.";
+    case "GOOGLE_KEYCLOAK_REDIRECT_MISSING":
+      return "Google didn't redirect to the VNU sign-in page as expected. Try again, or use the manual token option below.";
+    case "GOOGLE_LOGIN_RATE_LIMITED":
+      return "Too many sign-in attempts. Wait 15 minutes and try again.";
+    case "INVALID_STUDENTHUB_CREDENTIAL":
+      return "Incorrect username or password.";
+    case "MISSING_UPSTREAM_CREDENTIAL":
+      return "Enter both your username/email and password.";
+    case "SERVER_CONFIG_ERROR":
+      return "Automated sign-in isn't available on this server right now.";
+    default:
+      return fallback;
+  }
+}
 
 function LoginPage() {
   const state = useHyeboard();
@@ -1065,13 +1103,11 @@ function LoginPage() {
       await navigate({ to: "/" });
     } catch (error) {
       const code = error instanceof ApiError ? error.code : undefined;
-      if (code === "STUDENTHUB_MAINTENANCE") {
-        toast.error("StudentHub is currently under maintenance. Please try again later.");
-      } else if (isParentLogin) {
-        toast.error(error instanceof Error ? error.message : "Sign-in failed. Check your username and password.");
+      if (isParentLogin) {
+        toast.error(humanizeUetLoginError(code, error instanceof Error ? error.message : "Sign-in failed. Check your username and password."));
       } else {
         if (code && AUTOMATION_FAILURE_CODES.has(code)) setShowManualFallback(true);
-        toast.error(error instanceof Error ? error.message : "Google sign-in did not complete. Try the manual option below.");
+        toast.error(humanizeUetLoginError(code, error instanceof Error ? error.message : "Google sign-in did not complete. Try the manual option below."));
       }
       setStatus(undefined);
     } finally {

@@ -1,4 +1,5 @@
 import { HyeboardError, type EncryptedSessionPayload } from "@hyeboard/core";
+import { BROWSER_USER_AGENT } from "../http";
 import type { CanvasAssignment, CanvasDashboardCard, CanvasPlannerItem } from "./types";
 
 const CANVAS_BASE = "https://portal.uet.vnu.edu.vn";
@@ -8,7 +9,7 @@ export class CanvasClient {
 
   private headers(): HeadersInit {
     const credential = this.session?.canvas;
-    const headers: Record<string, string> = { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" };
+    const headers: Record<string, string> = { Accept: "application/json", "X-Requested-With": "XMLHttpRequest", "User-Agent": BROWSER_USER_AGENT };
     if (credential?.kind === "bearer") headers.Authorization = `Bearer ${credential.value}`;
     if (credential?.kind === "cookie") headers.Cookie = credential.value;
     if (credential?.csrfToken) headers["X-CSRF-Token"] = credential.csrfToken;

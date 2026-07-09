@@ -126,7 +126,13 @@ export function createUetAdapter(): UniversityAdapter {
         // flow below for every other (student) account.
         if (/^ph/i.test(rawInput)) {
           const result = await new StudentHubClient().authenticateDirect(rawInput, input.uetGooglePassword);
-          if (!result.accessToken) {
+          // A wrong username/password does NOT necessarily come back as a
+          // non-2xx HTTP status here — StudentHub can respond 200 with
+          // { code, msgCode, data: null } for a failed login, which
+          // unwrapStudentHubEnvelope correctly unwraps to a bare `null`
+          // (confirmed live: crashed with "Cannot read properties of null"
+          // before this null-check was added).
+          if (!result || !result.accessToken) {
             throw new HyeboardError("INVALID_STUDENTHUB_CREDENTIAL", "Incorrect username or password.", 401);
           }
           const expiresAt = addDays(30);

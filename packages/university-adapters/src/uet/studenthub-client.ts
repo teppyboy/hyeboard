@@ -1,4 +1,5 @@
 import { HyeboardError, unwrapStudentHubEnvelope, type EncryptedSessionPayload } from "@hyeboard/core";
+import { BROWSER_USER_AGENT } from "../http";
 import type {
   StudentHubAdmissionInfo,
   StudentHubBill,
@@ -45,7 +46,7 @@ export class StudentHubClient {
 
   private headers(): HeadersInit {
     const credential = this.session?.studenthub;
-    const headers: Record<string, string> = { Accept: "application/json" };
+    const headers: Record<string, string> = { Accept: "application/json", "User-Agent": BROWSER_USER_AGENT };
     if (credential?.kind === "bearer") headers.Authorization = `Bearer ${credential.value}`;
     if (credential?.kind === "cookie") headers.Cookie = credential.value;
     return headers;
@@ -80,12 +81,18 @@ export class StudentHubClient {
   // Unlike exchangeGoogleCredential/request's other callers, this response
   // is NOT wrapped in the {code, msgCode, data} envelope in the captured
   // HAR, so it's read directly rather than via unwrapStudentHubEnvelope.
-  async authenticateDirect(username: string, password: string): Promise<StudentHubDirectLogin> {
+  // Returns null (not a thrown error) when StudentHub responds 200 with
+  // { code, msgCode, data: null } — its way of representing a rejected
+  // login (wrong username/password) without a non-2xx HTTP status.
+  // Confirmed live: a caller that assumed this was always non-null crashed
+  // with "Cannot read properties of null" instead of a clean
+  // INVALID_STUDENTHUB_CREDENTIAL error — see adapter.ts's null-check.
+  async authenticateDirect(username: string, password: string): Promise<StudentHubDirectLogin | null> {
     let response: Response;
     try {
       response = await fetch(`${STUDENTHUB_BASE}/api/auth/login`, {
         method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": BROWSER_USER_AGENT },
         body: JSON.stringify({ userName: username, password }),
       });
     } catch {

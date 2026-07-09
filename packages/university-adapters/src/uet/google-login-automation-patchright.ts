@@ -205,7 +205,14 @@ export async function automateVnuGoogleLoginPatchright(
       }
       if (error instanceof HyeboardError) throw error;
       log.error({ err: error }, "automateVnuGoogleLoginPatchright: unexpected error");
-      throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
+      // Carry the real underlying error message through instead of a fully
+      // generic "Google blocked" message — see the Puppeteer flow's
+      // equivalent comment. GOOGLE_AUTOMATION_BLOCKED is reserved for
+      // detectChallenge()'s output (Google's own UI actually blocking the
+      // sign-in) — this is a different situation: an unexpected exception
+      // in our own automation.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new HyeboardError("GOOGLE_SIGNIN_FAILURE", `Google sign-in automation failed: ${reason}`, 502, { originalMessage: reason, originalName: error instanceof Error ? error.name : undefined });
     }
 
     log.debug({ hasStudenthub: Boolean(result.studenthub), hasCanvas: Boolean(result.canvas) }, "automateVnuGoogleLoginPatchright: finished");
@@ -217,7 +224,7 @@ export async function automateVnuGoogleLoginPatchright(
       }
       await context.close().catch(() => undefined);
       rmSync(userDataDir, { recursive: true, force: true });
-      throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
+      throw new HyeboardError("GOOGLE_SIGNIN_FAILURE", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
     }
 
     // Success — keep the context alive in the cache instead of closing it,
@@ -240,7 +247,7 @@ export async function automateVnuGoogleLoginPatchright(
 
   // Unreachable in practice (the loop above always returns or throws), but
   // keeps TypeScript's control-flow analysis happy.
-  throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
+  throw new HyeboardError("GOOGLE_SIGNIN_FAILURE", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
 }
 
 // Waits for a new popup Page to open as a result of the given action, then
@@ -492,14 +499,16 @@ async function runFlowBody(
         }
       }
     } else {
-      // No Keycloak redirect observed for this account — fall back to
-      // Google's own password step directly. Defensive fallback, not the
-      // primary observed flow for @vnu.edu.vn accounts.
-      const passwordInput = popup.locator('input[type="password"]');
-      await passwordInput.waitFor({ state: "visible", timeout: 10_000 });
-      await passwordInput.pressSequentially(password, { delay: 20 });
-      await popup.locator("#passwordNext").click({ timeout: 10_000 });
-      await popup.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
+      // @vnu.edu.vn accounts are always federated to VNU's own Keycloak
+      // IDP — there is no legitimate path where Google shows its own
+      // password page for these accounts. See the Puppeteer flow's
+      // equivalent comment (google-login-automation.ts) for why the old
+      // "defensive fallback" here (blind-typing the password into
+      // whatever page the popup happened to be on) was removed. Fail fast
+      // and specifically instead.
+      await checkPopupChallenge(popup);
+      log.error({ url: popup.url() }, "runFlow(patchright): expected a Keycloak (idp.vnu.edu.vn) redirect after the email step but never got one");
+      throw new HyeboardError("GOOGLE_KEYCLOAK_REDIRECT_MISSING", "Google did not redirect to the VNU sign-in page as expected. Try again, or use the manual token option below.", 502);
     }
     if (!popup.isClosed()) await checkPopupChallenge(popup);
   }

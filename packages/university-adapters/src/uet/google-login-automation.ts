@@ -337,13 +337,26 @@ export async function automateVnuGoogleLogin(
       if (!reusingCache) await browser?.close().catch(() => undefined);
       if (error instanceof HyeboardError) throw error;
       log.error({ err: error }, "automateVnuGoogleLogin: unexpected error");
-      throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google blocked automated sign-in in this environment. Use the manual token option below.", 502);
+      // Carry the real underlying error message through instead of a fully
+      // generic "Google blocked" message that hides what actually broke
+      // (a Puppeteer/CDP crash, a selector that no longer exists, a network
+      // failure, etc) — details still lets the frontend/logs distinguish
+      // this from an intentional block if it needs to.
+      const reason = error instanceof Error ? error.message : String(error);
+      // GOOGLE_AUTOMATION_BLOCKED is reserved for detectChallenge()'s
+      // output — Google's own UI actually telling us the sign-in is
+      // blocked/unsafe. This is a different situation: an unexpected
+      // exception in OUR automation (a selector that no longer exists, a
+      // crashed CDP connection, a network blip) — not Google blocking
+      // anything. Using the same code for both hid the real cause and
+      // wrongly implied Google itself was at fault every time.
+      throw new HyeboardError("GOOGLE_SIGNIN_FAILURE", `Google sign-in automation failed: ${reason}`, 502, { originalMessage: reason, originalName: error instanceof Error ? error.name : undefined });
     }
   }
 
   log.debug({ hasStudenthub: Boolean(result.studenthub), hasCanvas: Boolean(result.canvas) }, "automateVnuGoogleLogin: finished");
   if (!result.studenthub && !result.canvas) {
-    throw new HyeboardError("GOOGLE_AUTOMATION_BLOCKED", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
+    throw new HyeboardError("GOOGLE_SIGNIN_FAILURE", "Google did not complete the sign-in. Check your email and password, or use the manual token option below.", 502);
   }
   return result;
 }
@@ -633,14 +646,20 @@ async function runFlowBody(
         }
       }
     } else {
-      // No Keycloak redirect observed for this account — fall back to
-      // Google's own password step directly. Kept as a defensive fallback,
-      // not the primary observed flow for @vnu.edu.vn accounts.
-      await popup.waitForSelector('input[type="password"]', { timeout: 10_000, visible: true });
-      await popup.type('input[type="password"]', password, { delay: 20 });
-      await popup.waitForSelector("#passwordNext", { timeout: 10_000 });
-      await popup.click("#passwordNext");
-      await popup.waitForNavigation({ waitUntil: "networkidle0" }).catch(() => undefined);
+      // @vnu.edu.vn accounts are always federated to VNU's own Keycloak
+      // IDP — there is no legitimate path where Google shows its own
+      // password page for these accounts. A previous "defensive fallback"
+      // here that blind-typed the account's password into whatever page
+      // the popup happened to be on was wrong: it was never a real
+      // observed path, just an unverified guess, and it produced an
+      // undiagnosable generic timeout when the popup was actually on some
+      // other interstitial. Fail fast and specifically instead. Check for
+      // a known challenge first (2FA/captcha/suspicious-activity) so that
+      // surfaces as its own real code; otherwise report the missing
+      // redirect explicitly, with the popup's URL logged for diagnosis.
+      await checkPopupChallenge(popup);
+      getLogger().error({ url: popup.url() }, "runFlow: expected a Keycloak (idp.vnu.edu.vn) redirect after the email step but never got one");
+      throw new HyeboardError("GOOGLE_KEYCLOAK_REDIRECT_MISSING", "Google did not redirect to the VNU sign-in page as expected. Try again, or use the manual token option below.", 502);
     }
     if (!popup.isClosed()) await checkPopupChallenge(popup);
   }

@@ -5,6 +5,7 @@
 // subsequent call is an authenticated HTML page fetch parsed by parser.ts.
 
 import { HyeboardError, type EncryptedSessionPayload } from "@hyeboard/core";
+import { BROWSER_USER_AGENT } from "../http";
 import { hasLoginForm } from "./parser";
 
 const BASE = "https://daotao.vnu.edu.vn";
@@ -22,7 +23,7 @@ export class DaotaoClient {
     try {
       response = await fetch(`${BASE}${path}`, {
         redirect: "follow",
-        headers: cookie ? { Cookie: cookie } : {},
+        headers: { "User-Agent": BROWSER_USER_AGENT, ...(cookie ? { Cookie: cookie } : {}) },
       });
     } catch {
       throw new HyeboardError("VNU_UPSTREAM_UNAVAILABLE", "Could not reach daotao.vnu.edu.vn. The portal may be down or your network may be blocking it.", 502);
@@ -49,7 +50,7 @@ export class DaotaoClient {
       response = await fetch(`${BASE}/dkmh/login.asp`, {
         method: "POST",
         redirect: "manual",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": BROWSER_USER_AGENT },
         body: body.toString(),
       });
     } catch {

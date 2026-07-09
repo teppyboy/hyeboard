@@ -194,7 +194,11 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
 // report its own errors as an "error" SSE event instead).
 function errorPayload(error: unknown): { code: string; message: string; status: number } {
   if (error instanceof HyeboardError) return { code: error.code, message: error.message, status: error.status };
-  return { code: "GOOGLE_AUTOMATION_BLOCKED", message: "Google did not complete the sign-in. Use the manual token option below.", status: 502 };
+  // A truly unexpected (non-HyeboardError) failure reaching this far means
+  // the automation's own error handling didn't catch it — surface the real
+  // message instead of a fully generic one, so it's actually diagnosable.
+  const reason = error instanceof Error ? error.message : String(error);
+  return { code: "GOOGLE_SIGNIN_FAILURE", message: `Google sign-in did not complete: ${reason}`, status: 502 };
 }
 
 function routeError(error: unknown, requestId?: string) {
