@@ -1,4 +1,4 @@
-import { HyeboardError, unwrapStudentHubEnvelope, type EncryptedSessionPayload } from "@hyeboard/core";
+import { getLogger, HyeboardError, unwrapStudentHubEnvelope, type EncryptedSessionPayload } from "@hyeboard/core";
 import { BROWSER_USER_AGENT } from "../http";
 import type {
   StudentHubAdmissionInfo,
@@ -46,7 +46,18 @@ export class StudentHubClient {
 
   private headers(): HeadersInit {
     const credential = this.session?.studenthub;
-    const headers: Record<string, string> = { Accept: "application/json", "User-Agent": BROWSER_USER_AGENT };
+    // Origin/Referer match a real browser request to studenthub.uet.edu.vn
+    // (confirmed via a live HAR capture) — some endpoints appear to reject
+    // requests missing these as if the credentials themselves were wrong
+    // (same generic {code, msgCode, data: null} shape either way), so a
+    // request lacking them can look identical to a genuine wrong-password
+    // rejection with no way to tell the difference from the response alone.
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "User-Agent": BROWSER_USER_AGENT,
+      Origin: STUDENTHUB_BASE,
+      Referer: `${STUDENTHUB_BASE}/login`,
+    };
     if (credential?.kind === "bearer") headers.Authorization = `Bearer ${credential.value}`;
     if (credential?.kind === "cookie") headers.Cookie = credential.value;
     return headers;
@@ -92,19 +103,41 @@ export class StudentHubClient {
     try {
       response = await fetch(`${STUDENTHUB_BASE}/api/auth/login`, {
         method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": BROWSER_USER_AGENT },
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": BROWSER_USER_AGENT,
+          Origin: STUDENTHUB_BASE,
+          Referer: `${STUDENTHUB_BASE}/login`,
+        },
         body: JSON.stringify({ userName: username, password }),
       });
     } catch {
       throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "Could not reach the university portal. Try again later.", 502);
     }
     if (!response.ok) throw new HyeboardError("INVALID_STUDENTHUB_CREDENTIAL", "Incorrect username or password.", 401);
+    let bodyText: string;
     try {
-      const json = (await response.json()) as { data?: StudentHubDirectLogin } | StudentHubDirectLogin;
-      return unwrapStudentHubEnvelope(json);
+      bodyText = await response.text();
     } catch {
       throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "The university portal returned a non-JSON response.", 502);
     }
+    let json: { data?: StudentHubDirectLogin } | StudentHubDirectLogin;
+    try {
+      json = JSON.parse(bodyText) as { data?: StudentHubDirectLogin } | StudentHubDirectLogin;
+    } catch {
+      throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "The university portal returned a non-JSON response.", 502);
+    }
+    const result = unwrapStudentHubEnvelope(json);
+    if (!result || !result.accessToken) {
+      // Diagnostic-only: log the raw response body shape (never the
+      // password) when a login attempt comes back without a usable token,
+      // so a genuinely-correct-credentials report can be distinguished
+      // from a real wrong-password rejection via HYEB_LOG_LEVEL=debug logs
+      // instead of staying a total black box.
+      getLogger().debug({ username, status: response.status, body: bodyText.slice(0, 500) }, "authenticateDirect: login did not return a usable accessToken");
+    }
+    return result;
   }
 
   getProfile() { return this.request<StudentHubStudent>("/api/student/detail"); }
