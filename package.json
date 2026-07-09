@@ -16,7 +16,7 @@
     "build:worker": "pnpm --filter @hyeboard/worker build",
     "build:node": "pnpm --filter @hyeboard/worker build:node",
     "package": "node scripts/package.mjs",
-    "build": "pnpm build:web && pnpm build:worker",
+    "build": "pnpm build:web && pnpm build:worker && pnpm build:node",
     "deploy": "pnpm --filter @hyeboard/worker deploy",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",

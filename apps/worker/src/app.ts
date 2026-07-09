@@ -66,7 +66,15 @@ export async function loadConfigFile(): Promise<RuntimeConfig> {
     if (typeof cfg.log_level === "string") r.HYEB_LOG_LEVEL = cfg.log_level;
     if (typeof cfg.host === "string") r.HOST = cfg.host;
     if (typeof cfg.port === "number") r.PORT = String(cfg.port);
-    if (typeof cfg.static_dir === "string") r.HYEB_STATIC_DIR = cfg.static_dir;
+    // Empty string means "use the built-in default" (see config.json's
+    // checked-in default) — only set it when non-empty, since start.ts's
+    // `process.env.HYEB_STATIC_DIR ?? fileConfig.HYEB_STATIC_DIR ?? default`
+    // fallback chain uses `??`, which does NOT treat an empty string as
+    // nullish. Setting it unconditionally here would make config.json's
+    // default "" silently win over the real default path, breaking static
+    // asset serving (confirmed live: registerStaticAssets("") resolves to
+    // the current working directory, not apps/web/dist).
+    if (typeof cfg.static_dir === "string" && cfg.static_dir !== "") r.HYEB_STATIC_DIR = cfg.static_dir;
     return r;
   } catch {
     return {};
@@ -267,10 +275,10 @@ function createMemoryCache(): CacheLike {
 const memoryCache: CacheLike = createMemoryCache();
 
 // Safe request-ID generator. crypto.randomUUID() is available on all modern
-// browsers and Node 19+/14.17.0 via the crypto module, but the esbuild bundle
-// references the global Web Crypto API (globalThis.crypto), which doesn't
-// exist or lacks randomUUID on Node <19. Fall back to Math.random for those
-// environments.
+// browsers and Node 19+/14.17.0 via the crypto module, but the bundled
+// worker references the global Web Crypto API (globalThis.crypto), which
+// doesn't exist or lacks randomUUID on Node <19. Fall back to Math.random
+// for those environments.
 function requestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID().slice(0, 8);

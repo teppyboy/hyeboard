@@ -26,8 +26,8 @@ if (process.env.HYEB_BROWSER_PATCHRIGHT === "true") {
   // Node's ESM loader require patchright to be resolvable the moment
   // this file loads, unconditionally — breaking dist/index.js startup
   // for any self-hosted deployment that doesn't opt into Patchright
-  // (esbuild marks "patchright" external in build-node.mjs, so it must
-  // stay resolvable from node_modules only when actually needed).
+  // (build-node.mjs marks "patchright" external, so it must stay
+  // resolvable from node_modules only when actually needed).
   const patchrightModule = await import("@hyeboard/university-adapters/src/uet/google-login-automation-patchright");
   setPatchrightLauncher(patchrightModule.automateVnuGoogleLoginPatchright);
   setPatchrightCloseHandler(patchrightModule.closeCachedPatchrightSessions);

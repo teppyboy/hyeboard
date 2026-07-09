@@ -118,8 +118,7 @@ export async function start(): Promise<unknown> {
       // via pino's string `transport` option) so no worker thread spawn
       // is needed at all, and pino-pretty is only ever required here —
       // never statically imported by this module — so it stays out of
-      // the esbuild bundle used for `pnpm build:node` / production Bun
-      // runs.
+      // the bundle used for `pnpm build:node` / production Bun runs.
       const pretty = (await import("pino-pretty")).default;
       configureLogger({ level, destination: pretty({ colorize: true, translateTime: "SYS:standard", ignore: "pid,hostname" }) });
     } else {
