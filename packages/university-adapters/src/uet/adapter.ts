@@ -110,8 +110,37 @@ export function createUetAdapter(): UniversityAdapter {
     async importSession(input: LoginImportInput, context?: ImportSessionContext): Promise<ImportedSession> {
       if (input.uetGoogleEmail || input.uetGooglePassword) {
         if (!input.uetGoogleEmail || !input.uetGooglePassword) {
-          throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide both your VNU Google email and password.", 400);
+          throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide both your username/email and password.", 400);
         }
+        const rawInput = input.uetGoogleEmail.trim();
+
+        // Parent/guardian accounts authenticate directly against
+        // StudentHub's own POST /api/auth/login with a plain
+        // username/password — no Google OAuth, no browser automation,
+        // resolves near-instantly. Detected by the "PH" account-code
+        // prefix observed live in a parent/guardian HAR capture (see
+        // har-notes.md's "parent/guardian account" section) — a
+        // StudentHub account-code convention (likely short for "Phụ
+        // huynh", Vietnamese for parent/guardian), not something Hyeboard
+        // invented. Falls through to the interactive Google-automation
+        // flow below for every other (student) account.
+        if (/^ph/i.test(rawInput)) {
+          const result = await new StudentHubClient().authenticateDirect(rawInput, input.uetGooglePassword);
+          if (!result.accessToken) {
+            throw new HyeboardError("INVALID_STUDENTHUB_CREDENTIAL", "Incorrect username or password.", 401);
+          }
+          const expiresAt = addDays(30);
+          const session: EncryptedSessionPayload = {
+            version: 1,
+            universityId: "uet",
+            studentCode: result.accountCode ?? rawInput,
+            expiresAt,
+            uetParentCredential: { username: rawInput, password: input.uetGooglePassword },
+            studenthub: { kind: "bearer", value: result.accessToken, expiresAt: jwtExpiry(result.accessToken) ?? expiresAt },
+          };
+          return { universityId: "uet", studentCode: session.studentCode, expiresAt, session };
+        }
+
         if (!context?.browserConnection) {
           throw new HyeboardError("SERVER_CONFIG_ERROR", "Automated sign-in is not configured on this server.", 500);
         }
@@ -122,7 +151,7 @@ export function createUetAdapter(): UniversityAdapter {
         // this normalization a caller could pass an arbitrary external
         // address (e.g. abc@gmail.com) and have this server's Puppeteer
         // automation attempt a real Google sign-in against it.
-        const studentCode = input.uetGoogleEmail.trim().split("@")[0]?.trim();
+        const studentCode = rawInput.split("@")[0]?.trim();
         if (!studentCode) {
           throw new HyeboardError("MISSING_UPSTREAM_CREDENTIAL", "Provide your VNU student code (MSV).", 400);
         }

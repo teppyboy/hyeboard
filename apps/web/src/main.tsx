@@ -967,6 +967,12 @@ function LoginPage() {
   const [uetGoogleEmail, setUetGoogleEmail] = useState("");
   const [uetGooglePassword, setUetGooglePassword] = useState("");
   const [showManualFallback, setShowManualFallback] = useState(false);
+  // Parent/guardian accounts use a "PH..." account code and log in with a
+  // direct StudentHub username/password instead of VNU Google SSO — same
+  // two input boxes below, detected purely by this prefix (see
+  // importUetGoogleSession and har-notes.md's "parent/guardian account"
+  // section).
+  const isUetParentLogin = /^ph/i.test(uetGoogleEmail.trim());
 
   // The global palette can be left over from a previous session (e.g. still
   // "geist" after signing out of a mock session). Force it to match whichever
@@ -1027,22 +1033,32 @@ function LoginPage() {
 
   const importUetGoogleSession = async () => {
     setBusy(true);
-    setStatus("Signing in with your VNU Google account...");
+    // The login box only ever needs the student code (MSV) or a
+    // parent/guardian account code — the server always derives the
+    // @vnu.edu.vn address itself for student logins and ignores any other
+    // domain a caller might supply, so no client-side email construction
+    // happens here (see MISSING_UPSTREAM_CREDENTIAL / adapter.ts normalization).
+    const studentCodeInput = uetGoogleEmail.trim();
+    // Parent/guardian accounts ("PH..." prefix) authenticate directly with
+    // their StudentHub username/password — no Google OAuth automation, no
+    // SSE progress stream needed, resolves near-instantly (see adapter.ts's
+    // importSession() and har-notes.md's "parent/guardian account" section).
+    const isParentLogin = /^ph/i.test(studentCodeInput);
+    setStatus(isParentLogin ? "Signing in with your parent/guardian account..." : "Signing in with your VNU Google account...");
     try {
-      // The login box only ever needs the student code (MSV) — the server
-      // always derives the @vnu.edu.vn address itself and ignores any other
-      // domain a caller might supply, so no client-side email construction
-      // happens here (see MISSING_UPSTREAM_CREDENTIAL / adapter.ts normalization).
-      const studentCodeInput = uetGoogleEmail.trim();
-      // This login mode alone streams interim progress (Opening StudentHub...,
-      // Signing in with Google..., etc.) from the server over SSE, since it's
-      // the one slow (potentially 90s+), multi-step automated flow — every
-      // other login mode on this page resolves near-instantly and doesn't
-      // need this.
-      await api.importUetGoogleSession(
-        { uetGoogleEmail: studentCodeInput, uetGooglePassword },
-        (message) => setStatus(message),
-      );
+      if (isParentLogin) {
+        await api.importSession("uet", { uetGoogleEmail: studentCodeInput, uetGooglePassword });
+      } else {
+        // This login mode alone streams interim progress (Opening StudentHub...,
+        // Signing in with Google..., etc.) from the server over SSE, since it's
+        // the one slow (potentially 90s+), multi-step automated flow — every
+        // other login mode on this page resolves near-instantly and doesn't
+        // need this.
+        await api.importUetGoogleSession(
+          { uetGoogleEmail: studentCodeInput, uetGooglePassword },
+          (message) => setStatus(message),
+        );
+      }
       state.selectUniversity("uet", { clearSession: false });
       state.refreshSession();
       setStatus("University session ready. Opening dashboard...");
@@ -1051,6 +1067,8 @@ function LoginPage() {
       const code = error instanceof ApiError ? error.code : undefined;
       if (code === "STUDENTHUB_MAINTENANCE") {
         toast.error("StudentHub is currently under maintenance. Please try again later.");
+      } else if (isParentLogin) {
+        toast.error(error instanceof Error ? error.message : "Sign-in failed. Check your username and password.");
       } else {
         if (code && AUTOMATION_FAILURE_CODES.has(code)) setShowManualFallback(true);
         toast.error(error instanceof Error ? error.message : "Google sign-in did not complete. Try the manual option below.");
@@ -1105,6 +1123,8 @@ function LoginPage() {
                 <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : selectedUniversity === "vnu" ? "Connect VNU (daotao) account" : "Use Demo Data"}</CardTitle>
                 {selectedUniversity === "uet" && showManualFallback ? (
                   <CardDescription>Import a university portal session. Learning-platform access can be added later for courses and assignments.</CardDescription>
+                ) : selectedUniversity === "uet" && isUetParentLogin ? (
+                  <CardDescription>Sign in with your parent/guardian account username and password.</CardDescription>
                 ) : selectedUniversity === "uet" ? (
                   <CardDescription>Sign in with your VNU Google account and password.</CardDescription>
                 ) : selectedUniversity === "vnu" ? (
@@ -1126,9 +1146,9 @@ function LoginPage() {
           <CardContent className="space-y-3">
             {selectedUniversity === "uet" ? (
               <>
-                <Input type="text" autoComplete="username" placeholder="Student code" value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
-                <Input type="password" autoComplete="current-password" placeholder="Google account password" value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
-                <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}Sign in with Google</Button>
+                <Input type="text" autoComplete="username" placeholder="Student code, or parent/guardian code (PH...)" value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                <Input type="password" autoComplete="current-password" placeholder={isUetParentLogin ? "Password" : "Google account password"} value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{isUetParentLogin ? "Sign in" : "Sign in with Google"}</Button>
 
                 {!showManualFallback ? (
                   <button type="button" className="w-full text-center text-xs text-muted-foreground underline underline-offset-2" onClick={() => setShowManualFallback(true)}>

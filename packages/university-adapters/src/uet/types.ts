@@ -160,6 +160,176 @@ export type StudentHubServiceRequest = {
 
 export type StudentHubRequestType = { label?: string; value?: string | number };
 
+// Same response shape as the Google-OAuth callback login — StudentHub's
+// direct username/password login (POST /api/auth/login, used by
+// parent/guardian accounts, see har-notes.md's "parent/guardian account"
+// section) returns identical fields.
+export type StudentHubDirectLogin = StudentHubGoogleLogin;
+
+// Generic Spring Data Page<T> envelope — used by the reference/lookup
+// endpoints (province/district/ward/nation/blood-type search) and shares
+// the same shape as the notifications page.
+export type StudentHubPage<T> = {
+  content?: T[];
+  pageable?: { pageNumber?: number; pageSize?: number; offset?: number; paged?: boolean; unpaged?: boolean };
+  last?: boolean;
+  first?: boolean;
+  totalElements?: number;
+  totalPages?: number;
+  size?: number;
+  number?: number;
+  numberOfElements?: number;
+  empty?: boolean;
+};
+
+export type StudentHubAdmissionInfo = {
+  id?: string | number;
+  studentCode?: string;
+  graduationCert?: unknown;
+  transcript?: unknown;
+  cccdFront?: unknown;
+  cccdBack?: unknown;
+  birthCert?: unknown;
+  militaryDoc?: unknown;
+  priorityDoc?: unknown;
+  studentBankInfo?: unknown;
+  workflowState?: unknown;
+  admissionNotice?: unknown;
+  personalInfo?: unknown;
+  residenceInfo?: unknown;
+  tempGraduationCert?: unknown;
+  isLocked?: boolean;
+};
+
+export type StudentHubCommitteeCheck = { check?: boolean };
+
+export type StudentHubCourseRef = { courseCode?: string; courseName?: string; [key: string]: unknown };
+
+export type StudentHubCourseGroup = { courses?: StudentHubCourseRef[]; typeName?: string; optionalNum?: number | null };
+
+// Keyed by a numeric course-category id (e.g. "32", "38") — see
+// /api/student/dktn/course and /api/student/program's groupedCourses.
+export type StudentHubCourseGroups = Record<string, StudentHubCourseGroup>;
+
+export type StudentHubDktnCourses = { listPhysical?: unknown[]; listCourses?: StudentHubCourseGroups };
+
+export type StudentHubBillOptional = StudentHubBill & { paymentStatus?: number | string | null };
+
+export type StudentHubPersonDetail = {
+  studentCode?: string;
+  id?: string | number;
+  personCode?: string;
+  nowCountry?: string | null;
+  nowProvince?: string | null;
+  nowDistrict?: string | null;
+  nowWard?: string | null;
+  nowRoad?: string | null;
+  nowHomeNumber?: string | null;
+  phoneNumber?: string;
+  homePhoneNumber?: string | null;
+  ttProvince?: string | null;
+  ttDistrict?: string | null;
+  ttWard?: string | null;
+  ttRoad?: string | null;
+  ttHomeNumber?: string | null;
+  graduateYear?: number;
+  academicPerformance?: string;
+  conduct?: string;
+  avg12?: number;
+  collegeGraduation?: string;
+  intermediateSchoolGraduation?: string;
+  province12Code?: string;
+  school12Code?: string;
+  isDisabledStudent?: number;
+  disabilityLevel?: number;
+  disabilityType?: number;
+};
+
+export type StudentHubFamilyDetail = {
+  id?: string | number;
+  personCode?: string;
+  studentCode?: string;
+  fatherName?: string;
+  fatherYear?: number;
+  fatherPhoneNumber?: string;
+  fatherJob?: string;
+  fatherEmail?: string | null;
+  fatherAddress?: string | null;
+  motherName?: string;
+  motherYear?: number;
+  motherPhoneNumber?: string;
+  motherJob?: string;
+  motherEmail?: string | null;
+  motherAddress?: string | null;
+  otherInformation?: string | null;
+  siblingUniStatus?: unknown;
+  inFamilyOrder?: unknown;
+};
+
+export type StudentHubHealthcareDetail = {
+  id?: string | number;
+  personCode?: string;
+  healthcareCode?: string;
+  hkOwnerName?: string | null;
+  hkOwnerBirth?: string | null;
+  hkOwnerRelation?: string | null;
+  hkOwnerSex?: string | null;
+  ttProvince?: string | null;
+  ttWard?: string | null;
+};
+
+export type StudentHubProgramDetails = {
+  programCode?: string;
+  engName?: string;
+  name?: string;
+  creditAmount?: string;
+  graduateMinPoint?: string;
+  plo?: unknown;
+};
+
+export type StudentHubProgram = { programDetails?: StudentHubProgramDetails; groupedCourses?: StudentHubCourseGroups };
+
+export type StudentHubRegistrationWindow = { startAt?: string; endAt?: string; manualMode?: string | boolean };
+
+export type StudentHubSemesterAdvice = {
+  programCode?: string;
+  courseCode?: string;
+  name?: string;
+  egName?: string | null;
+  courseCredit?: number;
+  typeId?: number;
+  typeName?: string;
+  scorable?: unknown;
+  termCode?: string | null;
+  courseSpecialCodes?: unknown;
+  termExpect?: unknown;
+  obligatory?: number;
+  optionalNum?: number | null;
+  isEdit?: number;
+};
+
+export type StudentHubSemesterExpected = {
+  id?: string | number;
+  studentCode?: string;
+  termCode?: string;
+  termName?: string;
+  termExpect?: number;
+  isLock?: number;
+  isActive?: unknown;
+  termLock?: number;
+};
+
+export type StudentHubCanvasLinkInfo = { userCanvasId?: number; lastReqAt?: string; curLoginAt?: string };
+
+export type StudentHubReferenceItem = { id?: string | number; [key: string]: unknown };
+export type StudentHubBloodType = { id?: string | number; bloodType?: string };
+export type StudentHubNation = { id?: string | number; nation?: string };
+export type StudentHubProvince = { id?: string | number; provinceCode?: string; provinceName?: string };
+export type StudentHubDistrict = { id?: string | number; districtCode?: string; districtName?: string; provinceCode?: string };
+export type StudentHubWard = { id?: string | number; name?: string; provinceCode?: string; wardCode?: string };
+
+export type StudentHubDashboardBanner = { title?: string; content?: string; isShow?: boolean; status?: string; stopAt?: string };
+
 export type CanvasDashboardCard = {
   id?: string | number;
   longName?: string;

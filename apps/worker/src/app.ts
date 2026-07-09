@@ -135,9 +135,10 @@ type ResolvedSession = { session: EncryptedSessionPayload; refreshedToken?: stri
 
 // Lazy, per-request refresh (no background jobs/Durable Object alarms — see
 // spec's "lazy on next API call" decision). Only uet sessions created via
-// automated Google login carry uetGoogleCredential; every other session
-// (manual paste, vnu, mock) passes straight through the plain decrypt path
-// with the shortcut check below being a cheap no-op.
+// automated Google login (uetGoogleCredential) or a parent/guardian direct
+// login (uetParentCredential) carry a refreshable credential; every other
+// session (manual paste, vnu, mock) passes straight through the plain
+// decrypt path with the shortcut check below being a cheap no-op.
 async function resolveSession(headers: Headers | Record<string, string | undefined>): Promise<ResolvedSession> {
   const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
   const token = parseBearerToken(h.get("Authorization"));
@@ -145,20 +146,28 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
   if (await isTokenRevoked(token)) throw new HyeboardError("SESSION_EXPIRED", "Session expired", 401);
   const session = await decryptSession(token, getSessionSecret());
 
-  if (session.universityId !== "uet" || !session.uetGoogleCredential) return { session };
+  if (session.universityId !== "uet" || (!session.uetGoogleCredential && !session.uetParentCredential)) return { session };
   const studenthubExpiresAt = session.studenthub?.expiresAt;
   if (studenthubExpiresAt && !isExpired(studenthubExpiresAt)) return { session };
 
   try {
     const adapter = getAdapter("uet");
-    const refreshed = await adapter.importSession(
-      {
-        uetGoogleEmail: session.uetGoogleCredential.email,
-        uetGooglePassword: session.uetGoogleCredential.password,
-        uetGoogleCookies: session.uetGoogleCredential.googleCookies,
-      },
-      { browserConnection: browserConnection() },
-    );
+    // Parent/guardian accounts refresh via a single fast JSON POST (no
+    // browser automation, no browserConnection needed at all) — see
+    // adapter.ts's importSession() PH-prefix branch.
+    const refreshed = session.uetParentCredential
+      ? await adapter.importSession({
+          uetGoogleEmail: session.uetParentCredential.username,
+          uetGooglePassword: session.uetParentCredential.password,
+        })
+      : await adapter.importSession(
+          {
+            uetGoogleEmail: session.uetGoogleCredential!.email,
+            uetGooglePassword: session.uetGoogleCredential!.password,
+            uetGoogleCookies: session.uetGoogleCredential!.googleCookies,
+          },
+          { browserConnection: browserConnection() },
+        );
     const refreshedToken = await encryptSession(refreshed.session, getSessionSecret());
     return { session: refreshed.session, refreshedToken };
   } catch (error) {
@@ -458,7 +467,14 @@ export function createApp(adapter: any) {
     .get("/api/universities", () => ok(listUniversities()))
     .post("/api/:universityId/auth/import-session", async ({ params, body }) => {
       const adapterInstance = getAdapter(params.universityId);
-      if (params.universityId === "uet" && body.uetGoogleEmail) {
+      // Parent/guardian accounts ("PH..." prefix — see adapter.ts's
+      // importSession() and har-notes.md) authenticate with a single fast
+      // JSON POST, no browser automation involved — they don't need the
+      // SSE progress stream or the Google-automation rate limiter below,
+      // and fall straight through to the plain-response branch at the
+      // bottom of this handler, same as vnu/manual-token/mock logins.
+      const isParentLogin = Boolean(body.uetGoogleEmail && /^ph/i.test(body.uetGoogleEmail.trim()));
+      if (params.universityId === "uet" && body.uetGoogleEmail && !isParentLogin) {
         await checkAndIncrementGoogleLoginAttempts(body.uetGoogleEmail);
         // The uet Google-login automation is the one slow (potentially 90s+),
         // multi-step login path in the app — stream interim progress to the
