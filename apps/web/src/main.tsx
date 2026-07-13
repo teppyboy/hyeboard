@@ -66,6 +66,11 @@ const weekdays = [
   { value: 7, key: "sun" },
 ] as const;
 
+const LOCALE_FLAGS: Record<Locale, string> = {
+  en: "\u{1F1EC}\u{1F1E7}",
+  vi: "\u{1F1FB}\u{1F1F3}",
+};
+
 const periodBlocks = [
   { start: 1, end: 3, label: "07:00 - 09:40" },
   { start: 4, end: 6, label: "09:50 - 12:30" },
@@ -1210,17 +1215,17 @@ function LoginPage() {
 
   return (
     <main className="login-screen min-h-screen bg-background px-4 py-10 text-foreground">
-      <div className="mx-auto flex w-full max-w-md justify-end">
-        <Select value={locale} onValueChange={(value) => setLocale(value as Locale)}>
-          <SelectTrigger className="h-8 w-[130px] text-xs" aria-label={t.settings.language}><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {LOCALES.map((option) => (
-              <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="animate-page mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-md flex-col justify-center">
+      <button
+        type="button"
+        onClick={() => setLocale(locale === "en" ? "vi" : "en")}
+        className="fixed bottom-4 right-4 z-10 flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-sm shadow-sm transition-colors hover:bg-muted"
+        aria-label={t.settings.language}
+        title={t.settings.language}
+      >
+        <span aria-hidden="true">{LOCALE_FLAGS[locale]}</span>
+        <span className="text-xs font-medium text-muted-foreground">{LOCALES.find((option) => option.id === locale)?.label}</span>
+      </button>
+      <div className="animate-page mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-md flex-col justify-center">
         <div className="mb-8 flex flex-col items-center text-center">
           <div className={cn("mb-4 grid h-16 w-16 place-items-center rounded-xl shadow-sm", universityLogoUrl(selectedUniversity) ? "border border-border bg-background p-2" : "bg-primary text-primary-foreground")}>
             {universityLogoUrl(selectedUniversity)
