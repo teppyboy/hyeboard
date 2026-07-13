@@ -66,10 +66,35 @@ const weekdays = [
   { value: 7, key: "sun" },
 ] as const;
 
-const LOCALE_FLAGS: Record<Locale, string> = {
-  en: "\u{1F1EC}\u{1F1E7}",
-  vi: "\u{1F1FB}\u{1F1F3}",
-};
+// Country-flag emoji render inconsistently across platforms (Windows Chrome
+// falls back to plain "GB"/"VN" region-indicator text instead of a flag
+// glyph), so the language toggle uses these small inline SVGs instead.
+function FlagIcon({ locale, className }: { locale: Locale; className?: string }) {
+  const clipId = `flag-clip-${locale}`;
+  if (locale === "vi") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+        <clipPath id={clipId}><circle cx="12" cy="12" r="12" /></clipPath>
+        <g clipPath={`url(#${clipId})`}>
+          <rect width="24" height="24" fill="#DA251D" />
+          <path d="M12 5.5 13.76 10.9 19.44 10.9 14.84 14.2 16.6 19.6 12 16.3 7.4 19.6 9.16 14.2 4.56 10.9 10.24 10.9Z" fill="#FFCD00" />
+        </g>
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <clipPath id={clipId}><circle cx="12" cy="12" r="12" /></clipPath>
+      <g clipPath={`url(#${clipId})`}>
+        <rect width="24" height="24" fill="#00247D" />
+        <path d="M0 0 24 24M24 0 0 24" stroke="#fff" strokeWidth="4" />
+        <path d="M0 0 24 24M24 0 0 24" stroke="#CF142B" strokeWidth="2" />
+        <path d="M12 0V24M0 12H24" stroke="#fff" strokeWidth="7" />
+        <path d="M12 0V24M0 12H24" stroke="#CF142B" strokeWidth="4" />
+      </g>
+    </svg>
+  );
+}
 
 const periodBlocks = [
   { start: 1, end: 3, label: "07:00 - 09:40" },
@@ -1222,8 +1247,8 @@ function LoginPage() {
         aria-label={t.settings.language}
         title={t.settings.language}
       >
-        <span aria-hidden="true">{LOCALE_FLAGS[locale]}</span>
-        <span className="text-xs font-medium text-muted-foreground">{LOCALES.find((option) => option.id === locale)?.label}</span>
+        <FlagIcon locale={locale} className="h-4 w-4 shrink-0" />
+        <span className="text-xs font-medium leading-none text-muted-foreground">{LOCALES.find((option) => option.id === locale)?.label}</span>
       </button>
       <div className="animate-page mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-md flex-col justify-center">
         <div className="mb-8 flex flex-col items-center text-center">
