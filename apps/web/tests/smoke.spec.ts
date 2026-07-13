@@ -113,7 +113,7 @@ test("account menu opens and signs out", async ({ page }) => {
   await accountButton.click();
   await expect(page.getByTestId("account-trigger")).toHaveCSS("transform", /matrix\(0\.94/);
   await expect(page.getByRole("menuitem", { name: /Settings/i })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Switch account/i })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Add account/i })).toBeVisible();
   await page.getByRole("menuitem", { name: /Sign out/i }).click();
   await expect(page).toHaveURL(/\/login$/);
 });
