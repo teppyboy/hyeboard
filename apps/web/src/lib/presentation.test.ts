@@ -47,6 +47,7 @@ describe("formatStatus", () => {
     ["awaiting_department_review", "Awaiting department review"],
     ["ON-HOLD", "On hold"],
     ["custom status", "Custom status"],
+    ["constructor", "Constructor"],
   ])("preserves unknown status meaning for %s", (status, label) => {
     expect(formatStatus(status, statusLabels)).toEqual({ label, tone: "neutral" });
   });

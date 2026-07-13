@@ -39,29 +39,29 @@ const statusTones: Record<keyof StatusLabels, StatusTone> = {
   available: "neutral",
 };
 
-const statusKeys: Record<string, keyof StatusLabels> = {
-  not_started: "notStarted",
-  in_progress: "inProgress",
-  missing: "missing",
-  submitted: "submitted",
-  graded: "graded",
-  late: "late",
-  active: "active",
-  completed: "completed",
-  upcoming: "upcoming",
-  paid: "paid",
-  unpaid: "unpaid",
-  partial: "partial",
-  credit: "credit",
-  available: "available",
-};
+const statusKeys = new Map<string, keyof StatusLabels>([
+  ["not_started", "notStarted"],
+  ["in_progress", "inProgress"],
+  ["missing", "missing"],
+  ["submitted", "submitted"],
+  ["graded", "graded"],
+  ["late", "late"],
+  ["active", "active"],
+  ["completed", "completed"],
+  ["upcoming", "upcoming"],
+  ["paid", "paid"],
+  ["unpaid", "unpaid"],
+  ["partial", "partial"],
+  ["credit", "credit"],
+  ["available", "available"],
+]);
 
 export function formatStatus(status: string | undefined, labels: StatusLabels): { label: string; tone: StatusTone } {
   const value = status?.trim();
   if (!value) return { label: "-", tone: "neutral" };
 
   const normalized = value.toLowerCase().replace(/[\s-]+/g, "_");
-  const key = statusKeys[normalized];
+  const key = statusKeys.get(normalized);
   if (key) return { label: labels[key], tone: statusTones[key] };
 
   const readable = normalized.replace(/_+/g, " ");
