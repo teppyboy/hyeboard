@@ -1017,7 +1017,7 @@ function humanizeUetLoginError(code: string | undefined, fallback: string, t: Tr
 
 function LoginPage() {
   const state = useHyeboard();
-  const { t } = useLocale();
+  const { t, locale, setLocale } = useLocale();
   const navigate = useNavigate();
   const [selectedUniversity, setSelectedUniversity] = useState<"mock" | "uet" | "vnu">(() => (getSessionToken() && (state.universityId === "mock" || state.universityId === "vnu") ? (state.universityId as "mock" | "vnu") : "uet"));
   const [studenthubToken, setStudenthubToken] = useState("");
@@ -1210,7 +1210,17 @@ function LoginPage() {
 
   return (
     <main className="login-screen min-h-screen bg-background px-4 py-10 text-foreground">
-      <div className="animate-page mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-md flex-col justify-center">
+      <div className="mx-auto flex w-full max-w-md justify-end">
+        <Select value={locale} onValueChange={(value) => setLocale(value as Locale)}>
+          <SelectTrigger className="h-8 w-[130px] text-xs" aria-label={t.settings.language}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {LOCALES.map((option) => (
+              <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="animate-page mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-md flex-col justify-center">
         <div className="mb-8 flex flex-col items-center text-center">
           <div className={cn("mb-4 grid h-16 w-16 place-items-center rounded-xl shadow-sm", universityLogoUrl(selectedUniversity) ? "border border-border bg-background p-2" : "bg-primary text-primary-foreground")}>
             {universityLogoUrl(selectedUniversity)
