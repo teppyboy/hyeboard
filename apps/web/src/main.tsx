@@ -19,6 +19,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
 import { ACCOUNT_SWITCHED_EVENT, api, ApiError, clearSessionToken, getActiveAccount, getActiveAccountId, getSessionToken, listAccounts, removeAccount, SESSION_CLEARED_EVENT, type StoredAccount, switchAccount } from "@/lib/api";
+import { LOCALES, LocaleProvider, type Locale, type Translations, useLocale } from "@/lib/i18n";
 import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
 
 declare const __HYEB_GIT_COMMIT__: string;
@@ -31,38 +32,38 @@ type Palette = "geist" | "uet" | "vnu";
 type Mode = "light" | "dark";
 
 const THEME_HUE_PRESETS = [
-  { hue: 209, label: "Blue" },
-  { hue: 152, label: "Green" },
-  { hue: 0, label: "Red" },
-  { hue: 271, label: "Purple" },
-  { hue: 25, label: "Orange" },
-  { hue: 199, label: "Teal" },
+  { hue: 209, key: "blue" },
+  { hue: 152, key: "green" },
+  { hue: 0, key: "red" },
+  { hue: 271, key: "purple" },
+  { hue: 25, key: "orange" },
+  { hue: 199, key: "teal" },
 ] as const;
 
 const VNU_UET_LOGO_URL = "https://2489013871.e.cdneverest.net/uet.edu.vn/2017/02/cropped-logo2_new-1-180x180.png";
 const VNU_LOGO_URL = "https://raw.githubusercontent.com/gawgua/vnu-dashboard/master/public/vnu_logo.png";
 
 const nav = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/timetable", label: "Timetable", icon: CalendarDays, capability: "timetable" },
-  { to: "/courses", label: "Courses", icon: BookOpen, capability: "courses" },
-  { to: "/assignments", label: "Assignments", icon: ClipboardList, capability: "assignments" },
-  { to: "/grades", label: "Grades", icon: GraduationCap, capability: "grades" },
-  { to: "/exams", label: "Exams", icon: LibraryBig, capability: "exams" },
-  { to: "/tuition", label: "Tuition", icon: Receipt, capability: "tuition" },
-  { to: "/documents", label: "Documents", icon: FileText, capability: "documentsHub" },
-  { to: "/training-points", label: "Training Points", icon: CheckCircle2, capability: "trainingPoints" },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/", key: "dashboard", icon: LayoutDashboard },
+  { to: "/timetable", key: "timetable", icon: CalendarDays, capability: "timetable" },
+  { to: "/courses", key: "courses", icon: BookOpen, capability: "courses" },
+  { to: "/assignments", key: "assignments", icon: ClipboardList, capability: "assignments" },
+  { to: "/grades", key: "grades", icon: GraduationCap, capability: "grades" },
+  { to: "/exams", key: "exams", icon: LibraryBig, capability: "exams" },
+  { to: "/tuition", key: "tuition", icon: Receipt, capability: "tuition" },
+  { to: "/documents", key: "documents", icon: FileText, capability: "documentsHub" },
+  { to: "/training-points", key: "trainingPoints", icon: CheckCircle2, capability: "trainingPoints" },
+  { to: "/settings", key: "settings", icon: Settings },
 ] as const;
 
 const weekdays = [
-  { value: 1, label: "Mon" },
-  { value: 2, label: "Tue" },
-  { value: 3, label: "Wed" },
-  { value: 4, label: "Thu" },
-  { value: 5, label: "Fri" },
-  { value: 6, label: "Sat" },
-  { value: 7, label: "Sun" },
+  { value: 1, key: "mon" },
+  { value: 2, key: "tue" },
+  { value: 3, key: "wed" },
+  { value: 4, key: "thu" },
+  { value: 5, key: "fri" },
+  { value: 6, key: "sat" },
+  { value: 7, key: "sun" },
 ] as const;
 
 const periodBlocks = [
@@ -226,6 +227,7 @@ function useFeatureQuery<T>(name: string, queryFn: () => Promise<T>, options: { 
 
 function SidebarNav({ collapsed = false }: { collapsed?: boolean } = {}) {
   const state = useHyeboard();
+  const { t } = useLocale();
   const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
   const visibleNav = nav.filter((item) => {
     if (!("capability" in item)) return true;
@@ -235,14 +237,15 @@ function SidebarNav({ collapsed = false }: { collapsed?: boolean } = {}) {
   });
   return (
     <nav className="space-y-1 px-3 py-4">
-      {visibleNav.map((item) => <NavLink key={item.to} {...item} collapsed={collapsed} />)}
+      {visibleNav.map((item) => <NavLink key={item.to} to={item.to} label={t.nav[item.key]} icon={item.icon} collapsed={collapsed} />)}
     </nav>
   );
 }
 
 function SidebarFooter({ collapsed = false }: { collapsed?: boolean } = {}) {
+  const { t } = useLocale();
   if (collapsed) return <div className="mt-auto" />;
-  return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">Powered by Hyeboard ({__HYEB_GIT_COMMIT__})</p>;
+  return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">{t.common.poweredBy(__HYEB_GIT_COMMIT__)}</p>;
 }
 
 function universityLogoUrl(universityId: string): string | undefined {
@@ -292,6 +295,7 @@ function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
 }
 
 function RootLayout() {
+  const { t } = useLocale();
   const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("hyeboard.sidebarCollapsed") === "true");
@@ -317,7 +321,7 @@ function RootLayout() {
               size="sm"
               className={cn("sidebar-rail-button shrink-0 transition-transform duration-200 ease-[var(--ease-out-quint)] active:scale-95", sidebarCollapsed ? "ml-[18px]" : "mr-2")}
               onClick={() => setSidebarCollapsed((value) => !value)}
-              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={sidebarCollapsed ? t.common.expandSidebar : t.common.collapseSidebar}
             >
               {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
             </Button>
@@ -328,7 +332,7 @@ function RootLayout() {
 
         <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
           <SheetContent className="lg:hidden">
-            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <SheetTitle className="sr-only">{t.common.navigation}</SheetTitle>
             <BrandMark />
             <div onClick={() => setMobileNavOpen(false)}><SidebarNav /></div>
           </SheetContent>
@@ -336,7 +340,7 @@ function RootLayout() {
 
         <main className="min-w-0">
           <header className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b border-border bg-background/85 px-4 backdrop-blur lg:px-6">
-            <Button variant="ghost" size="sm" className="lg:hidden" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation menu"><Menu size={18} /></Button>
+            <Button variant="ghost" size="sm" className="lg:hidden" onClick={() => setMobileNavOpen(true)} aria-label={t.common.openNavigationMenu}><Menu size={18} /></Button>
             <NavSearch />
             <NotificationsMenu />
             <AccountMenu />
@@ -351,16 +355,19 @@ function RootLayout() {
 }
 
 function NavSearch() {
+  const { t } = useLocale();
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
 
+  const navWithLabels = useMemo(() => nav.map((item) => ({ ...item, label: t.nav[item.key] })), [t]);
+
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return nav;
-    return nav.filter((item) => item.label.toLowerCase().includes(q));
-  }, [query]);
+    if (!q) return navWithLabels;
+    return navWithLabels.filter((item) => item.label.toLowerCase().includes(q));
+  }, [query, navWithLabels]);
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
@@ -385,7 +392,7 @@ function NavSearch() {
           onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           onKeyDown={(event) => { if (event.key === "Enter" && matches[0]) go(matches[0].to); if (event.key === "Escape") setOpen(false); }}
-          placeholder="Search pages..."
+          placeholder={t.common.searchPlaceholder}
           className="min-w-0 flex-1 truncate bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
         />
       </div>
@@ -395,7 +402,7 @@ function NavSearch() {
             <button key={item.to} type="button" onClick={() => go(item.to)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
               <item.icon size={15} className="text-muted-foreground" /> {item.label}
             </button>
-          )) : <p className="px-3 py-2 text-sm text-muted-foreground">No page matches that search.</p>}
+          )) : <p className="px-3 py-2 text-sm text-muted-foreground">{t.common.noPageMatches}</p>}
         </div>
       ) : null}
     </div>
@@ -404,38 +411,40 @@ function NavSearch() {
 
 function NotificationsMenu() {
   const { dashboard } = useHyeboard();
+  const { t } = useLocale();
   const items: Notification[] = dashboard.data?.notifications ?? [];
   const unreadCount = items.filter((item) => item.unread).length;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="pressable-icon-button relative" aria-label="Notifications" data-testid="notifications-trigger">
+        <Button variant="ghost" size="sm" className="pressable-icon-button relative" aria-label={t.common.notifications} data-testid="notifications-trigger">
           <Bell size={17} />
           {unreadCount ? <span className="absolute right-0.5 top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">{unreadCount > 9 ? "9+" : unreadCount}</span> : null}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+        <DropdownMenuLabel>{t.common.notifications}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {items.length ? items.slice(0, 6).map((item) => (
           <DropdownMenuItem key={item.id} className="flex-col items-start gap-0.5">
             <span className="text-sm font-medium leading-tight">{item.title}</span>
             <span className="text-xs text-muted-foreground">{formatDateTime(item.createdAt)}</span>
           </DropdownMenuItem>
-        )) : <p className="px-2 py-3 text-sm text-muted-foreground">No notifications right now.</p>}
+        )) : <p className="px-2 py-3 text-sm text-muted-foreground">{t.common.noNotifications}</p>}
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
-function accountLabel(account: StoredAccount): string {
+function accountLabel(account: StoredAccount, t: Translations): string {
   if (account.studentCode) return account.studentCode;
-  if (account.universityId === "mock") return "Demo";
+  if (account.universityId === "mock") return t.common.demo;
   return account.universityId.toUpperCase();
 }
 
 function AccountMenu() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const navigate = useNavigate();
   const student = state.dashboard.data?.student;
 
@@ -453,17 +462,17 @@ function AccountMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="pressable-icon-button" aria-label="Open account menu" data-testid="account-trigger"><UserRound size={17} /></Button>
+        <Button variant="ghost" size="sm" className="pressable-icon-button" aria-label={t.common.openAccountMenu} data-testid="account-trigger"><UserRound size={17} /></Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel>
-          <span className="block text-sm">{student?.fullName ?? "Account"}</span>
+          <span className="block text-sm">{student?.fullName ?? t.common.account}</span>
           <span className="block text-xs font-normal text-muted-foreground">{student?.studentCode ?? state.universityId.toUpperCase()}</span>
         </DropdownMenuLabel>
         {state.accounts.length > 1 ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Accounts</DropdownMenuLabel>
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{t.common.accounts}</DropdownMenuLabel>
             {state.accounts.map((account) => (
               <DropdownMenuItem
                 key={account.id}
@@ -473,9 +482,9 @@ function AccountMenu() {
               >
                 <span className="flex min-w-0 items-center gap-2">
                   {account.id === state.activeAccountId ? <Check size={14} className="shrink-0 text-primary" /> : <span className="w-3.5 shrink-0" />}
-                  <span className="truncate">{accountLabel(account)} <span className="text-muted-foreground">({account.universityId.toUpperCase()})</span></span>
+                  <span className="truncate">{accountLabel(account, t)} <span className="text-muted-foreground">({account.universityId.toUpperCase()})</span></span>
                 </span>
-                <button type="button" onClick={(event) => handleRemove(event, account.id)} aria-label={`Remove ${accountLabel(account)}`} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive">
+                <button type="button" onClick={(event) => handleRemove(event, account.id)} aria-label={t.common.remove(accountLabel(account, t))} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive">
                   <X size={13} />
                 </button>
               </DropdownMenuItem>
@@ -483,10 +492,10 @@ function AccountMenu() {
           </>
         ) : null}
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild><Link to="/settings"><Settings size={16} /> Settings</Link></DropdownMenuItem>
-        <DropdownMenuItem asChild><Link to="/login"><UserRound size={16} /> Add account</Link></DropdownMenuItem>
+        <DropdownMenuItem asChild><Link to="/settings"><Settings size={16} /> {t.common.settings}</Link></DropdownMenuItem>
+        <DropdownMenuItem asChild><Link to="/login"><UserRound size={16} /> {t.common.addAccount}</Link></DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={signOut} className="text-destructive focus:text-destructive"><LogOut size={16} /> Sign out</DropdownMenuItem>
+        <DropdownMenuItem onSelect={signOut} className="text-destructive focus:text-destructive"><LogOut size={16} /> {t.common.signOut}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -510,6 +519,7 @@ function NavLink({ to, label, icon: Icon, collapsed = false }: { to: string; lab
 
 function DashboardPage() {
   const { dashboard } = useHyeboard();
+  const { t } = useLocale();
   const data = dashboard.data;
   if (dashboard.isLoading) return <DashboardSkeleton />;
   if (dashboard.error) return <QueryErrorPanel error={dashboard.error} />;
@@ -517,42 +527,42 @@ function DashboardPage() {
     <div className="space-y-6 animate-page">
       <section className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2"><Badge className="bg-primary/10 text-primary">{data?.currentTerm?.name ?? "Current term"}</Badge><Badge className="border border-border bg-background text-foreground">{data?.student?.studentCode ?? "Demo"}</Badge></div>
-          <h1 className="text-3xl font-semibold tracking-[-0.03em] md:text-4xl">Welcome back, {data?.student?.fullName ?? "student"}</h1>
-          <p className="max-w-2xl text-sm text-muted-foreground">Your timetable, coursework, grades, tuition, and university updates in one place.</p>
+          <div className="flex flex-wrap items-center gap-2"><Badge className="bg-primary/10 text-primary">{data?.currentTerm?.name ?? t.dashboard.currentTerm}</Badge><Badge className="border border-border bg-background text-foreground">{data?.student?.studentCode ?? t.common.demo}</Badge></div>
+          <h1 className="text-3xl font-semibold tracking-[-0.03em] md:text-4xl">{t.dashboard.welcomeBack(data?.student?.fullName ?? t.dashboard.student)}</h1>
+          <p className="max-w-2xl text-sm text-muted-foreground">{t.dashboard.subtitle}</p>
         </div>
         <Card className="animate-card min-w-64">
-          <CardHeader className="pb-2"><CardDescription>Next class</CardDescription><CardTitle className="text-2xl">{data?.nextClass?.courseCode ?? "All clear"}</CardTitle></CardHeader>
-          <CardContent><p className="text-sm text-muted-foreground">{data?.nextClass ? (data.nextClass.timeLabel ?? formatDateTime(data.nextClass.startTime)) : "No upcoming class today."}</p></CardContent>
+          <CardHeader className="pb-2"><CardDescription>{t.dashboard.nextClass}</CardDescription><CardTitle className="text-2xl">{data?.nextClass?.courseCode ?? t.dashboard.allClear}</CardTitle></CardHeader>
+          <CardContent><p className="text-sm text-muted-foreground">{data?.nextClass ? (data.nextClass.timeLabel ?? formatDateTime(data.nextClass.startTime)) : t.dashboard.noUpcomingClass}</p></CardContent>
         </Card>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric title="GPA" value={data?.gpa?.gpa?.toFixed(2) ?? "-"} detail={`CPA ${data?.gpa?.cpa?.toFixed(2) ?? "-"}`} icon={GraduationCap} tone="accent" />
-        <Metric title="Credits" value={String(data?.gpa?.totalAccumulatedCredits ?? "-")} detail={data?.courseCount ? `${data.courseCount.completed} completed · ${data.courseCount.inTerm} enrolled` : `${data?.gpa?.totalCredits ?? 0} this term`} icon={BookOpen} />
-        <Metric title="Assignments" value={String(data?.assignments?.length ?? 0)} detail={`${data?.assignments?.filter((item) => item.status === "missing").length ?? 0} require attention`} icon={ClipboardList} />
-        <Metric title="Tuition" value={formatCurrency(data?.tuition?.remainingAmount)} detail="outstanding balance" icon={WalletCards} />
+        <Metric title={t.dashboard.gpa} value={data?.gpa?.gpa?.toFixed(2) ?? "-"} detail={`${t.grades.cpa} ${data?.gpa?.cpa?.toFixed(2) ?? "-"}`} icon={GraduationCap} tone="accent" />
+        <Metric title={t.dashboard.credits} value={String(data?.gpa?.totalAccumulatedCredits ?? "-")} detail={data?.courseCount ? t.dashboard.completedEnrolled(data.courseCount.completed, data.courseCount.inTerm) : t.dashboard.thisTerm(data?.gpa?.totalCredits ?? 0)} icon={BookOpen} />
+        <Metric title={t.dashboard.assignments} value={String(data?.assignments?.length ?? 0)} detail={t.dashboard.requireAttention(data?.assignments?.filter((item) => item.status === "missing").length ?? 0)} icon={ClipboardList} />
+        <Metric title={t.dashboard.tuition} value={formatCurrency(data?.tuition?.remainingAmount)} detail={t.dashboard.outstandingBalance} icon={WalletCards} />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <Card className="animate-card">
-          <CardHeader><CardTitle>Today's Schedule</CardTitle><CardDescription>Classes from the university portal, mapped to official period blocks.</CardDescription></CardHeader>
-          <CardContent className="divide-y divide-border pt-0">{data?.todaySchedule?.length ? data.todaySchedule.map((item) => <ScheduleItem key={item.id} item={item} />) : <Empty text="No classes scheduled today." />}</CardContent>
+          <CardHeader><CardTitle>{t.dashboard.todaySchedule}</CardTitle><CardDescription>{t.dashboard.todayScheduleDesc}</CardDescription></CardHeader>
+          <CardContent className="divide-y divide-border pt-0">{data?.todaySchedule?.length ? data.todaySchedule.map((item) => <ScheduleItem key={item.id} item={item} />) : <Empty text={t.dashboard.noClassesToday} />}</CardContent>
         </Card>
         <Card className="animate-card">
-          <CardHeader><CardTitle>Assignment Timeline</CardTitle><CardDescription>Upcoming and missing work from the learning platform.</CardDescription></CardHeader>
-          <CardContent className="divide-y divide-border pt-0">{data?.assignments?.length ? data.assignments.slice(0, 5).map((item) => <AssignmentItem key={item.id} item={item} />) : <Empty text="No assignments need attention." />}</CardContent>
+          <CardHeader><CardTitle>{t.dashboard.assignmentTimeline}</CardTitle><CardDescription>{t.dashboard.assignmentTimelineDesc}</CardDescription></CardHeader>
+          <CardContent className="divide-y divide-border pt-0">{data?.assignments?.length ? data.assignments.slice(0, 5).map((item) => <AssignmentItem key={item.id} item={item} />) : <Empty text={t.dashboard.noAssignmentsAttention} />}</CardContent>
         </Card>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
         <Card className="animate-card xl:col-span-2">
-          <CardHeader><CardTitle>Active Courses</CardTitle><CardDescription>Course spaces available for this session.</CardDescription></CardHeader>
-          <CardContent className="grid gap-3 pt-0 md:grid-cols-2">{data?.courses?.length ? data.courses.map((course) => <CourseCard key={course.id} course={course} />) : <Empty text="No courses yet." />}</CardContent>
+          <CardHeader><CardTitle>{t.dashboard.activeCourses}</CardTitle><CardDescription>{t.dashboard.activeCoursesDesc}</CardDescription></CardHeader>
+          <CardContent className="grid gap-3 pt-0 md:grid-cols-2">{data?.courses?.length ? data.courses.map((course) => <CourseCard key={course.id} course={course} />) : <Empty text={t.dashboard.noCoursesYet} />}</CardContent>
         </Card>
         <Card className="animate-card">
-          <CardHeader><CardTitle>Recent Notifications</CardTitle><CardDescription>Latest messages from connected university services.</CardDescription></CardHeader>
-          <CardContent className="divide-y divide-border pt-0">{data?.notifications?.length ? data.notifications.map((item) => <FeedItem key={item.id} title={item.title} detail={item.source ?? "University"} />) : <Empty text="No recent notifications." />}</CardContent>
+          <CardHeader><CardTitle>{t.dashboard.recentNotifications}</CardTitle><CardDescription>{t.dashboard.recentNotificationsDesc}</CardDescription></CardHeader>
+          <CardContent className="divide-y divide-border pt-0">{data?.notifications?.length ? data.notifications.map((item) => <FeedItem key={item.id} title={item.title} detail={item.source ?? t.common.university} />) : <Empty text={t.dashboard.noRecentNotifications} />}</CardContent>
         </Card>
       </section>
     </div>
@@ -561,24 +571,27 @@ function DashboardPage() {
 
 function TimetablePage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const [view, setView] = useState<"calendar" | "list">("calendar");
   const query = useFeatureQuery("timetable", () => api.timetable(state.universityId, state.termCode));
   return (
-    <FeatureFrame title="Timetable" description="Weekly classes from the university portal, shown by official period blocks." query={query}>
+    <FeatureFrame title={t.timetable.title} description={t.timetable.description} query={query}>
       {(items) => items.length ? (
         <div className="space-y-4">
           <ViewToggle value={view} onChange={setView} />
           <div key={view} className="view-panel">{view === "calendar" ? <TimetableCalendar items={items} /> : <TimetableList items={items} />}</div>
         </div>
-      ) : <Empty text="No classes are listed for this term." />}
+      ) : <Empty text={t.timetable.noClasses} />}
     </FeatureFrame>
   );
 }
 
 function ViewToggle<T extends string>({ value, onChange, options = ["list", "calendar"] as T[] }: { value: T; onChange: (value: T) => void; options?: T[] }) {
+  const { t } = useLocale();
+  const optionLabel = (option: T) => (option === "list" ? t.common.list : option === "calendar" ? t.common.calendar : option);
   return (
     <div className="flex flex-wrap justify-end gap-2">
-      {options.map((option) => <Button key={option} variant={value === option ? "default" : "outline"} size="sm" onClick={() => onChange(option)}>{option[0].toUpperCase() + option.slice(1)}</Button>)}
+      {options.map((option) => <Button key={option} variant={value === option ? "default" : "outline"} size="sm" onClick={() => onChange(option)}>{optionLabel(option)}</Button>)}
     </div>
   );
 }
@@ -590,17 +603,18 @@ function sessionsForBlock(items: ClassSession[], weekday: number, block: { start
 }
 
 function TimetableCalendar({ items }: { items: ClassSession[] }) {
+  const { t } = useLocale();
   return (
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
         <div className="min-w-[980px]">
           <div className="grid grid-cols-[8.5rem_repeat(7,minmax(0,1fr))] border-b border-border bg-muted/60 text-xs font-medium text-muted-foreground">
-            <div className="px-3 py-3">Period</div>
-            {weekdays.map((day) => <div key={day.value} className="border-l border-border px-3 py-3 text-center">{day.label}</div>)}
+            <div className="px-3 py-3">{t.timetable.periodHeader}</div>
+            {weekdays.map((day) => <div key={day.value} className="border-l border-border px-3 py-3 text-center">{t.weekday[day.key]}</div>)}
           </div>
           {periodBlocks.map((block) => (
             <div key={block.start} className="grid min-h-36 grid-cols-[8.5rem_repeat(7,minmax(0,1fr))] border-b border-border last:border-b-0">
               <div className="bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
-                <p className="font-semibold text-foreground">Period {block.start}-{block.end}</p>
+                <p className="font-semibold text-foreground">{t.timetable.periodRange(block.start, block.end)}</p>
                 <p>{block.label}</p>
               </div>
               {weekdays.map((day) => {
@@ -623,31 +637,34 @@ function TimetableList({ items }: { items: ClassSession[] }) {
 }
 
 function CalendarSessionCard({ item }: { item: ClassSession }) {
+  const { t } = useLocale();
   return (
     <div className="motion-surface rounded-lg border border-border bg-background p-2 text-xs">
       <p className="line-clamp-2 font-medium text-foreground">{item.courseName}</p>
-      <p className="mt-1 text-muted-foreground">{item.courseCode} · {item.type ?? "Class session"}</p>
-      <p className="text-muted-foreground">{item.room ?? "Room not listed"}</p>
+      <p className="mt-1 text-muted-foreground">{item.courseCode} · {item.type ?? t.timetable.classSession}</p>
+      <p className="text-muted-foreground">{item.room ?? t.timetable.roomNotListed}</p>
       {item.instructor ? <p className="truncate text-muted-foreground">{item.instructor}</p> : null}
-      {safeExternalUrl(item.url) ? <a className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline" href={safeExternalUrl(item.url)} target="_blank" rel="noreferrer"><ExternalLink size={11} /> Open class page</a> : null}
+      {safeExternalUrl(item.url) ? <a className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline" href={safeExternalUrl(item.url)} target="_blank" rel="noreferrer"><ExternalLink size={11} /> {t.timetable.openClassPage}</a> : null}
     </div>
   );
 }
 
 function CoursesPage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const query = useFeatureQuery("courses", () => api.courses(state.universityId));
-  return <FeatureFrame title="Courses" description="Course spaces connected to your university record." query={query}>{(items) => <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{items.map((course) => <CourseCard key={course.id} course={course} />)}</div>}</FeatureFrame>;
+  return <FeatureFrame title={t.courses.title} description={t.courses.description} query={query}>{(items) => <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{items.map((course) => <CourseCard key={course.id} course={course} />)}</div>}</FeatureFrame>;
 }
 
 function AssignmentsPage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const query = useFeatureQuery("assignments", () => api.assignments(state.universityId));
-  return <FeatureFrame title="Assignments" description="Upcoming work and missing submissions from the learning platform." query={query}>{(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <AssignmentItem key={item.id} item={item} />)}</CardContent></Card> : <Empty text="No assignments are due right now." />}</FeatureFrame>;
+  return <FeatureFrame title={t.assignments.title} description={t.assignments.description} query={query}>{(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <AssignmentItem key={item.id} item={item} />)}</CardContent></Card> : <Empty text={t.assignments.noneDue} />}</FeatureFrame>;
 }
 
-function gradeTermKey(grade: Grade, universityId: string) {
-  const code = grade.termCode ?? "Unknown term";
+function gradeTermKey(grade: Grade, universityId: string, unknownTermLabel: string) {
+  const code = grade.termCode ?? unknownTermLabel;
   if (usesUetTermRules(universityId) && /^\d+3$/.test(code)) return `${code.slice(0, -1)}2`;
   return code;
 }
@@ -691,23 +708,24 @@ function sortGrades(grades: Grade[], sort: GradeSortState) {
 
 function GradesPage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const [sort, setSort] = useState<GradeSortState>({ key: "name", direction: "asc" });
   const query = useFeatureQuery("grades", () => api.grades(state.universityId));
   const gpa = state.dashboard.data?.gpa;
   return (
-    <FeatureFrame title="Grades" description="Academic transcript grouped by term, with weighted summaries." query={query}>
+    <FeatureFrame title={t.grades.title} description={t.grades.description} query={query}>
       {(items) => {
         const byTerm = items.reduce<Record<string, Grade[]>>((acc, g) => {
-          const key = gradeTermKey(g, state.universityId);
+          const key = gradeTermKey(g, state.universityId, t.grades.unknownTerm);
           (acc[key] ??= []).push(g);
           return acc;
         }, {});
         return (
           <div className="space-y-6">
             <div className="grid gap-3 md:grid-cols-3">
-              <Metric title="GPA" value={gpa?.gpa?.toFixed(2) ?? "-"} detail="as reported by the university portal" />
-              <Metric title="CPA" value={gpa?.cpa?.toFixed(2) ?? "-"} detail={state.universityId === "vnu" ? "most recent term average" : "secondary figure, if reported"} />
-              <Metric title="Credits" value={String(gpa?.totalAccumulatedCredits ?? "-")} detail="credits completed" />
+              <Metric title={t.dashboard.gpa} value={gpa?.gpa?.toFixed(2) ?? "-"} detail={t.grades.gpaDetail} />
+              <Metric title={t.grades.cpa} value={gpa?.cpa?.toFixed(2) ?? "-"} detail={state.universityId === "vnu" ? t.grades.cpaDetailVnu : t.grades.cpaDetailOther} />
+              <Metric title={t.grades.credits} value={String(gpa?.totalAccumulatedCredits ?? "-")} detail={t.grades.creditsCompleted} />
             </div>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, grades]) => {
               const summary = summarizeGrades(grades);
@@ -717,12 +735,12 @@ function GradesPage() {
               <div key={term} className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{term}</h2>
-                  {includesSummer ? <Badge className="border border-border bg-background text-foreground">Includes summer term</Badge> : null}
+                  {includesSummer ? <Badge className="border border-border bg-background text-foreground">{t.grades.includesSummer}</Badge> : null}
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
-                  <Metric title="Term GPA" value={summary.point4?.toFixed(2) ?? "-"} detail="weighted 4.0 scale" />
-                  <Metric title="Average 10" value={summary.point10?.toFixed(2) ?? "-"} detail="weighted 10-point scale" />
-                  <Metric title="Credits" value={String(summary.credits || "-")} detail="included in this term" />
+                  <Metric title={t.grades.termGpa} value={summary.point4?.toFixed(2) ?? "-"} detail={t.grades.termGpaDetail} />
+                  <Metric title={t.grades.average10} value={summary.point10?.toFixed(2) ?? "-"} detail={t.grades.average10Detail} />
+                  <Metric title={t.grades.credits} value={String(summary.credits || "-")} detail={t.grades.creditsIncludedDetail} />
                 </div>
                 <GradeTable grades={sortedGrades} sort={sort} onSortChange={setSort} universityId={state.universityId} />
               </div>
@@ -735,17 +753,18 @@ function GradesPage() {
 }
 
 function GradeTable({ grades, sort, onSortChange, universityId }: { grades: Grade[]; sort: GradeSortState; onSortChange: (sort: GradeSortState) => void; universityId: string }) {
+  const { t } = useLocale();
   const headers: Array<{ key: GradeSortKey; label: string; align?: "right" }> = [
-    { key: "name", label: "Course" },
-    { key: "credits", label: "Credits", align: "right" },
-    { key: "point10", label: "Point 10", align: "right" },
-    { key: "point4", label: "Point 4", align: "right" },
+    { key: "name", label: t.grades.course },
+    { key: "credits", label: t.grades.credits, align: "right" },
+    { key: "point10", label: t.grades.point10, align: "right" },
+    { key: "point4", label: t.grades.point4, align: "right" },
   ];
   const changeSort = (key: GradeSortKey) => {
     const direction = sort.key === key && sort.direction === "asc" ? "desc" : "asc";
     onSortChange({ key, direction });
   };
-  if (!grades.length) return <Empty text="No grades are available for this term." />;
+  if (!grades.length) return <Empty text={t.grades.noGrades} />;
   return (
     <div className="overflow-hidden rounded-xl border border-border">
       <table className="w-full border-collapse text-sm">
@@ -763,7 +782,7 @@ function GradeTable({ grades, sort, onSortChange, universityId }: { grades: Grad
                 </button>
               </th>
             ))}
-            <th className="px-3 py-2 text-left font-medium">Note</th>
+            <th className="px-3 py-2 text-left font-medium">{t.grades.note}</th>
           </tr>
         </thead>
         <tbody>
@@ -773,7 +792,7 @@ function GradeTable({ grades, sort, onSortChange, universityId }: { grades: Grad
               <td className="px-3 py-2 text-right tabular-nums">{grade.credits ?? "-"}</td>
               <td className="px-3 py-2 text-right tabular-nums">{grade.point10 ?? "-"}</td>
               <td className="px-3 py-2 text-right tabular-nums">{grade.point4 ?? "-"}</td>
-              <td className="px-3 py-2">{usesUetTermRules(universityId) && grade.termCode?.endsWith("3") ? <Badge className="border border-border bg-background text-foreground">Summer term</Badge> : null}</td>
+              <td className="px-3 py-2">{usesUetTermRules(universityId) && grade.termCode?.endsWith("3") ? <Badge className="border border-border bg-background text-foreground">{t.grades.summerTerm}</Badge> : null}</td>
             </tr>
           ))}
         </tbody>
@@ -784,6 +803,7 @@ function GradeTable({ grades, sort, onSortChange, universityId }: { grades: Grad
 
 function ExamsPage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const [view, setView] = useState<"list" | "calendar">("list");
   const [selectedTerm, setSelectedTerm] = useState<string | undefined>(undefined);
   const terms = useQuery({
@@ -796,24 +816,24 @@ function ExamsPage() {
     queryFn: async () => { await state.ensureSession(); return api.exams(state.universityId, effectiveTerm); },
   });
   return (
-    <FeatureFrame title="Exams" description="Exam schedule with method, room, session, and seat number." query={query}>
+    <FeatureFrame title={t.exams.title} description={t.exams.description} query={query}>
       {(items) => (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             {terms.data?.length ? (
               <Select value={effectiveTerm ?? ""} onValueChange={(value) => setSelectedTerm(value)}>
-                <SelectTrigger className="h-9 w-[220px]" aria-label="Term"><SelectValue placeholder="Term" /></SelectTrigger>
+                <SelectTrigger className="h-9 w-[220px]" aria-label={t.exams.term}><SelectValue placeholder={t.exams.term} /></SelectTrigger>
                 <SelectContent>
                   {terms.data.map((term) => <SelectItem key={term.code} value={term.code}>{term.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             ) : <span />}
             <div className="flex gap-2">
-              <Button variant={view === "list" ? "default" : "outline"} size="sm" onClick={() => setView("list")}>List</Button>
-              <Button variant={view === "calendar" ? "default" : "outline"} size="sm" onClick={() => setView("calendar")}>Calendar</Button>
+              <Button variant={view === "list" ? "default" : "outline"} size="sm" onClick={() => setView("list")}>{t.common.list}</Button>
+              <Button variant={view === "calendar" ? "default" : "outline"} size="sm" onClick={() => setView("calendar")}>{t.common.calendar}</Button>
             </div>
           </div>
-          <div key={view} className="view-panel">{items.length ? (view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />) : <Empty text="No exams scheduled for this term yet." />}</div>
+          <div key={view} className="view-panel">{items.length ? (view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />) : <Empty text={t.exams.noExams} />}</div>
         </div>
       )}
     </FeatureFrame>
@@ -834,11 +854,13 @@ function formatDateOnly(value: string) {
 }
 
 function ExamList({ items }: { items: ExamSession[] }) {
+  const { t } = useLocale();
   const sorted = [...items].sort((a, b) => (a.startTime ?? a.examDate).localeCompare(b.startTime ?? b.examDate));
-  return <DataTable headers={["Course", "Type", "Method", "Date", "Time", "Session", "Room", "No."]} rows={sorted.map((exam) => [exam.courseName, exam.examType ?? "Exam", exam.examMethod ?? "-", formatDateOnly(exam.examDate), examTime(exam), exam.examSession ? String(exam.examSession) : "-", exam.room ?? "-", exam.examNumber ?? "-"])} />;
+  return <DataTable headers={t.exams.headers} rows={sorted.map((exam) => [exam.courseName, exam.examType ?? t.exams.examType, exam.examMethod ?? "-", formatDateOnly(exam.examDate), examTime(exam), exam.examSession ? String(exam.examSession) : "-", exam.room ?? "-", exam.examNumber ?? "-"])} />;
 }
 
 function ExamCalendar({ items }: { items: ExamSession[] }) {
+  const { t } = useLocale();
   const groups = items.reduce<Record<string, ExamSession[]>>((acc, exam) => {
     const key = examDateKey(exam);
     (acc[key] ??= []).push(exam);
@@ -849,13 +871,13 @@ function ExamCalendar({ items }: { items: ExamSession[] }) {
     <div className="grid gap-3 lg:grid-cols-2">
       {days.map(([day, exams]) => (
         <Card key={day}>
-          <CardHeader className="pb-3"><CardTitle className="text-base">{formatDateOnly(day)}</CardTitle><CardDescription>{exams.length} scheduled exam{exams.length > 1 ? "s" : ""}</CardDescription></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base">{formatDateOnly(day)}</CardTitle><CardDescription>{t.exams.scheduledExams(exams.length)}</CardDescription></CardHeader>
           <CardContent className="divide-y divide-border pt-0">
             {exams.sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? "")).map((exam) => (
               <div key={exam.id} className="list-row">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{exam.courseName}</p>
-                  <p className="truncate text-xs text-muted-foreground">{exam.courseCode} · {exam.examMethod ?? exam.examType ?? "Exam"} · {exam.room ?? "Room not listed"}</p>
+                  <p className="truncate text-xs text-muted-foreground">{exam.courseCode} · {exam.examMethod ?? exam.examType ?? t.exams.examType} · {exam.room ?? t.timetable.roomNotListed}</p>
                 </div>
                 <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{examTime(exam)}</Badge>
               </div>
@@ -869,26 +891,27 @@ function ExamCalendar({ items }: { items: ExamSession[] }) {
 
 function TuitionPage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const query = useFeatureQuery("tuition", () => api.tuition(state.universityId));
   return (
-    <FeatureFrame title="Tuition" description="University billing, payments, adjustments, and remaining balance." query={query}>
+    <FeatureFrame title={t.tuition.title} description={t.tuition.description} query={query}>
       {(tuition) => {
         const byTerm = tuition.bills.reduce<Record<string, Bill[]>>((acc, b) => {
-          const key = b.termCode ?? (b.status === "credit" ? "Credits / adjustments" : "Other");
+          const key = b.termCode ?? (b.status === "credit" ? t.tuition.creditsAdjustments : t.tuition.other);
           (acc[key] ??= []).push(b);
           return acc;
         }, {});
         return (
           <div className="space-y-6">
             <div className="grid gap-3 md:grid-cols-3">
-              <Metric title="Total" value={formatCurrency(tuition.totalAmount)} detail="charges posted" />
-              <Metric title="Paid" value={formatCurrency(tuition.paidAmount)} detail="payments received" />
-              <Metric title="Remaining" value={formatCurrency(tuition.remainingAmount)} detail="amount due" />
+              <Metric title={t.tuition.total} value={formatCurrency(tuition.totalAmount)} detail={t.tuition.chargesPosted} />
+              <Metric title={t.tuition.paid} value={formatCurrency(tuition.paidAmount)} detail={t.tuition.paymentsReceived} />
+              <Metric title={t.tuition.remaining} value={formatCurrency(tuition.remainingAmount)} detail={t.tuition.amountDue} />
             </div>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, bills]) => (
               <div key={term} className="space-y-2">
                 <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{term}</h2>
-                <DataTable headers={["Bill", "Status", "Paid at", "Total", "Paid", "Remaining"]} rows={bills.map((b) => [b.title, b.status ?? "-", b.paidAt ? formatDateTime(b.paidAt) : "-", formatCurrency(b.totalAmount), formatCurrency(b.paidAmount), formatCurrency(b.remainingAmount)])} />
+                <DataTable headers={t.tuition.headers} rows={bills.map((b) => [b.title, b.status ?? "-", b.paidAt ? formatDateTime(b.paidAt) : "-", formatCurrency(b.totalAmount), formatCurrency(b.paidAmount), formatCurrency(b.remainingAmount)])} />
               </div>
             ))}
           </div>
@@ -900,6 +923,7 @@ function TuitionPage() {
 
 function DocumentsPage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
   const showDocuments = capabilities?.documents ?? true;
   const showNews = capabilities?.news ?? true;
@@ -915,16 +939,16 @@ function DocumentsPage() {
 
   return (
     <div className="space-y-4">
-      <FeatureHeader title="Documents & Services" description="University files, announcements, and service requests." />
+      <FeatureHeader title={t.documents.title} description={t.documents.description} />
       <div className="grid gap-4 xl:grid-cols-2">
         {showDocuments ? (
           <div className="space-y-2">
-            <Input value={docSearch} onChange={(event) => setDocSearch(event.target.value)} placeholder="Search documents..." aria-label="Search documents" />
-            <MiniPanel title="Documents" query={{ ...docs, data: filteredDocs }}>{(items) => items.map((item) => <DocumentRow key={item.id} item={item} />)}</MiniPanel>
+            <Input value={docSearch} onChange={(event) => setDocSearch(event.target.value)} placeholder={t.documents.searchPlaceholder} aria-label={t.documents.searchAriaLabel} />
+            <MiniPanel title={t.documents.documentsTitle} query={{ ...docs, data: filteredDocs }}>{(items) => items.map((item) => <DocumentRow key={item.id} item={item} />)}</MiniPanel>
           </div>
-        ) : <UnsupportedPanel title="Documents" />}
-        {showNews ? <MiniPanel title="News" query={news}>{(items) => items.map((item) => <FeedItem key={item.id} title={item.title} detail={item.category ?? item.date ?? "News"} url={item.url} />)}</MiniPanel> : <UnsupportedPanel title="News" />}
-        {showRequests ? <MiniPanel title="Requests" query={requests}>{(items) => items.map((item) => <RequestRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title="Requests" />}
+        ) : <UnsupportedPanel title={t.documents.documentsTitle} />}
+        {showNews ? <MiniPanel title={t.documents.news} query={news}>{(items) => items.map((item) => <FeedItem key={item.id} title={item.title} detail={item.category ?? item.date ?? t.common.news} url={item.url} />)}</MiniPanel> : <UnsupportedPanel title={t.documents.news} />}
+        {showRequests ? <MiniPanel title={t.documents.requests} query={requests}>{(items) => items.map((item) => <RequestRow key={item.id} item={item} />)}</MiniPanel> : <UnsupportedPanel title={t.documents.requests} />}
       </div>
     </div>
   );
@@ -932,19 +956,21 @@ function DocumentsPage() {
 
 function TrainingPointsPage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const query = useFeatureQuery("training-points", () => api.trainingPoints(state.universityId));
   return (
-    <FeatureFrame title="Training Points" description="Conduct-score criteria and recorded totals from the university portal." query={query}>
-      {(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <TrainingPointRow key={item.id} item={item} />)}</CardContent></Card> : <Empty text="No training-point records are available yet." />}
+    <FeatureFrame title={t.trainingPoints.title} description={t.trainingPoints.description} query={query}>
+      {(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <TrainingPointRow key={item.id} item={item} />)}</CardContent></Card> : <Empty text={t.trainingPoints.none} />}
     </FeatureFrame>
   );
 }
 
 function UnsupportedPanel({ title }: { title: string }) {
+  const { t } = useLocale();
   return (
     <Card className="animate-card">
       <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
-      <CardContent><p className="text-sm text-muted-foreground">This section is not supported for the selected university.</p></CardContent>
+      <CardContent><p className="text-sm text-muted-foreground">{t.documents.notSupported}</p></CardContent>
     </Card>
   );
 }
@@ -960,30 +986,30 @@ const AUTOMATION_FAILURE_CODES = new Set(["GOOGLE_CHALLENGE_REQUIRED", "GOOGLE_2
 // translation layer: known codes get a clear, friendly message; anything
 // unrecognized falls back to the caller-supplied default rather than
 // leaking a raw stack/exception string into a toast.
-function humanizeUetLoginError(code: string | undefined, fallback: string): string {
+function humanizeUetLoginError(code: string | undefined, fallback: string, t: Translations): string {
   switch (code) {
     case "STUDENTHUB_MAINTENANCE":
-      return "StudentHub is currently under maintenance. Please try again later.";
+      return t.loginErrors.studenthubMaintenance;
     case "GOOGLE_2FA_REQUIRED":
-      return "Your Google account has two-factor verification enabled, which can't be completed automatically. Use the manual token option below.";
+      return t.loginErrors.google2fa;
     case "GOOGLE_CHALLENGE_REQUIRED":
-      return "Google is asking for extra verification that can't be completed automatically. Use the manual token option below.";
+      return t.loginErrors.googleChallenge;
     case "GOOGLE_AUTOMATION_BLOCKED":
-      return "Google blocked this sign-in as unusual activity. Use the manual token option below.";
+      return t.loginErrors.googleBlocked;
     case "GOOGLE_SIGNIN_FAILURE":
-      return "Google sign-in couldn't complete. Try again, or use the manual token option below.";
+      return t.loginErrors.googleSigninFailure;
     case "GOOGLE_AUTOMATION_TIMEOUT":
-      return "Sign-in took too long and was cancelled. Try again, or use the manual token option below.";
+      return t.loginErrors.googleTimeout;
     case "GOOGLE_KEYCLOAK_REDIRECT_MISSING":
-      return "Google didn't redirect to the VNU sign-in page as expected. Try again, or use the manual token option below.";
+      return t.loginErrors.googleKeycloakMissing;
     case "GOOGLE_LOGIN_RATE_LIMITED":
-      return "Too many sign-in attempts. Wait 15 minutes and try again.";
+      return t.loginErrors.googleRateLimited;
     case "INVALID_STUDENTHUB_CREDENTIAL":
-      return "Incorrect username or password.";
+      return t.loginErrors.invalidCredential;
     case "MISSING_UPSTREAM_CREDENTIAL":
-      return "Enter both your username/email and password.";
+      return t.loginErrors.missingCredential;
     case "SERVER_CONFIG_ERROR":
-      return "Automated sign-in isn't available on this server right now.";
+      return t.loginErrors.serverConfigError;
     default:
       return fallback;
   }
@@ -991,6 +1017,7 @@ function humanizeUetLoginError(code: string | undefined, fallback: string): stri
 
 function LoginPage() {
   const state = useHyeboard();
+  const { t } = useLocale();
   const navigate = useNavigate();
   const [selectedUniversity, setSelectedUniversity] = useState<"mock" | "uet" | "vnu">(() => (getSessionToken() && (state.universityId === "mock" || state.universityId === "vnu") ? (state.universityId as "mock" | "vnu") : "uet"));
   const [studenthubToken, setStudenthubToken] = useState("");
@@ -1037,15 +1064,15 @@ function LoginPage() {
 
   const useDemo = async () => {
     setBusy(true);
-    setStatus("Preparing demo workspace...");
+    setStatus(t.login.preparingDemo);
     try {
       await api.importSession("mock", {});
       state.selectUniversity("mock", { clearSession: false });
       state.refreshSession();
-      setStatus("Demo workspace ready.");
+      setStatus(t.login.demoReady);
       await navigate({ to: "/" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Demo workspace could not be prepared.";
+      const message = error instanceof Error ? error.message : t.login.demoFailed;
       setStatus(undefined);
       toast.error(message);
     } finally {
@@ -1061,7 +1088,7 @@ function LoginPage() {
 
   const importUetSession = async () => {
     setBusy(true);
-    setStatus("Securing your university session...");
+    setStatus(t.login.securingSession);
     try {
       await api.importSession("uet", {
         studenthubToken: studenthubToken || undefined,
@@ -1072,10 +1099,10 @@ function LoginPage() {
       });
       state.selectUniversity("uet", { clearSession: false });
       state.refreshSession();
-      setStatus("University session ready. Opening dashboard...");
+      setStatus(t.login.sessionReadyOpening);
       await navigate({ to: "/" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "University session could not be imported.";
+      const message = error instanceof Error ? error.message : t.login.sessionImportFailed;
       setStatus(undefined);
       toast.error(message);
     } finally {
@@ -1098,7 +1125,7 @@ function LoginPage() {
     // CAPTCHA and login APIs instead of Google OAuth. They stay on the SSE
     // path so onCaptchaNeeded can relay an image when server-side OCR fails.
     const isParentLogin = /^ph/i.test(studentCodeInput);
-    setStatus(isParentLogin ? "Signing in with your parent/guardian account..." : "Signing in with your VNU Google account...");
+    setStatus(isParentLogin ? t.login.signingInParent : t.login.signingInGoogle);
     try {
       // Google automation can take 90s+; parent login may pause for a human
       // CAPTCHA answer. Both use the same SSE transport.
@@ -1118,7 +1145,7 @@ function LoginPage() {
           const onAbort = () => {
             setCaptchaChallenge((current) => current === challenge ? undefined : current);
             setCaptchaAnswer("");
-            reject(signal.reason ?? new DOMException("Verification request cancelled.", "AbortError"));
+            reject(signal.reason ?? new DOMException(t.login.verificationCancelled, "AbortError"));
           };
           if (signal.aborted) onAbort();
           else {
@@ -1130,16 +1157,16 @@ function LoginPage() {
       );
       state.selectUniversity("uet", { clearSession: false });
       state.refreshSession();
-      setStatus("University session ready. Opening dashboard...");
+      setStatus(t.login.sessionReadyOpening);
       await navigate({ to: "/" });
     } catch (error) {
       if (loginController.signal.aborted) return;
       const code = error instanceof ApiError ? error.code : undefined;
       if (isParentLogin) {
-        toast.error(humanizeUetLoginError(code, error instanceof Error ? error.message : "Sign-in failed. Check your username and password."));
+        toast.error(humanizeUetLoginError(code, error instanceof Error ? error.message : t.login.signInFailedGeneric, t));
       } else {
         if (code && AUTOMATION_FAILURE_CODES.has(code)) setShowManualFallback(true);
-        toast.error(humanizeUetLoginError(code, error instanceof Error ? error.message : "Google sign-in did not complete. Try the manual option below."));
+        toast.error(humanizeUetLoginError(code, error instanceof Error ? error.message : t.login.googleSignInIncomplete, t));
       }
       setStatus(undefined);
     } finally {
@@ -1159,15 +1186,15 @@ function LoginPage() {
 
   const importVnuSession = async () => {
     setBusy(true);
-    setStatus("Securing your university session...");
+    setStatus(t.login.securingSession);
     try {
       await api.importSession("vnu", { vnuUsername: vnuUsername || undefined, vnuPassword: vnuPassword || undefined });
       state.selectUniversity("vnu", { clearSession: false });
       state.refreshSession();
-      setStatus("University session ready. Opening dashboard...");
+      setStatus(t.login.sessionReadyOpening);
       await navigate({ to: "/" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "University session could not be imported.";
+      const message = error instanceof Error ? error.message : t.login.sessionImportFailed;
       setStatus(undefined);
       toast.error(message);
     } finally {
@@ -1190,33 +1217,33 @@ function LoginPage() {
               ? <img className="h-full w-full object-contain" src={universityLogoUrl(selectedUniversity)} alt="" draggable={false} />
               : <GraduationCap size={21} aria-hidden="true" />}
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Sign in to Hyeboard</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Connect a university session to open your dashboard.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.login.signInTitle}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{t.login.signInSubtitle}</p>
         </div>
 
         <Card className="login-card animate-card">
           <CardHeader className="space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle>{selectedUniversity === "uet" ? "Connect university account" : selectedUniversity === "vnu" ? "Connect VNU (daotao) account" : "Use Demo Data"}</CardTitle>
+                <CardTitle>{selectedUniversity === "uet" ? t.login.connectUniversityAccount : selectedUniversity === "vnu" ? t.login.connectVnuAccount : t.login.useDemoData}</CardTitle>
                 {selectedUniversity === "uet" && showManualFallback ? (
-                  <CardDescription>Import a university portal session. Learning-platform access can be added later for courses and assignments.</CardDescription>
+                  <CardDescription>{t.login.importPortalDesc}</CardDescription>
                 ) : selectedUniversity === "uet" && isUetParentLogin ? (
-                  <CardDescription>Sign in with your parent/guardian account username and password.</CardDescription>
+                  <CardDescription>{t.login.parentLoginDesc}</CardDescription>
                 ) : selectedUniversity === "uet" ? (
-                  <CardDescription>Sign in with your VNU Google account and password.</CardDescription>
+                  <CardDescription>{t.login.googleLoginDesc}</CardDescription>
                 ) : selectedUniversity === "vnu" ? (
-                  <CardDescription>Sign in with your daotao.vnu.edu.vn username and password.</CardDescription>
+                  <CardDescription>{t.login.vnuLoginDesc}</CardDescription>
                 ) : selectedUniversity === "mock" ? (
-                  <CardDescription>Open Hyeboard with safe sample data.</CardDescription>
+                  <CardDescription>{t.login.demoDesc}</CardDescription>
                 ) : null}
               </div>
               <Select value={selectedUniversity} onValueChange={(value) => chooseUniversity(value as "mock" | "uet" | "vnu")}>
-                <SelectTrigger className="h-9 w-[128px] shrink-0" aria-label="School"><SelectValue placeholder="School" /></SelectTrigger>
+                <SelectTrigger className="h-9 w-[128px] shrink-0" aria-label={t.login.schoolLabel}><SelectValue placeholder={t.login.schoolLabel} /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="uet">VNU-UET</SelectItem>
-                  <SelectItem value="vnu">VNU (daotao)</SelectItem>
-                  <SelectItem value="mock">Mock</SelectItem>
+                  <SelectItem value="uet">{t.login.uetOption}</SelectItem>
+                  <SelectItem value="vnu">{t.login.vnuOption}</SelectItem>
+                  <SelectItem value="mock">{t.login.mockOption}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1224,62 +1251,62 @@ function LoginPage() {
           <CardContent className="space-y-3">
             {selectedUniversity === "uet" ? (
               <>
-                <Input type="text" autoComplete="username" placeholder="Student code, or parent/guardian code (PH...)" value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
-                <Input type="password" autoComplete="current-password" placeholder={isUetParentLogin ? "Password" : "Google account password"} value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
-                <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{isUetParentLogin ? "Sign in" : "Sign in with Google"}</Button>
+                <Input type="text" autoComplete="username" placeholder={t.login.studentCodePlaceholder} value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                <Input type="password" autoComplete="current-password" placeholder={isUetParentLogin ? t.login.passwordPlaceholder : t.login.googlePasswordPlaceholder} value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{isUetParentLogin ? t.login.signIn : t.login.signInWithGoogle}</Button>
 
                 {!showManualFallback ? (
                   <button type="button" className="w-full text-center text-xs text-muted-foreground underline underline-offset-2" onClick={() => setShowManualFallback(true)}>
-                    Having trouble? Use a manual token instead
+                    {t.login.troubleSigningIn}
                   </button>
                 ) : (
                   <>
                     <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                      <p className="font-medium text-foreground">Connect your university portal</p>
-                      <p className="mt-1">Direct Google sign-in is not available yet because this university has not authorized Hyeboard's web origin (`origin_mismatch`). Import the portal token from your signed-in browser session instead.</p>
+                      <p className="font-medium text-foreground">{t.login.connectPortalTitle}</p>
+                      <p className="mt-1">{t.login.connectPortalDesc}</p>
                       <ol className="mt-2 list-decimal space-y-1 pl-4">
-                        <li>Open the university portal and sign in with your university account.</li>
-                        <li>Open the browser console on the portal.</li>
-                        <li>Run <code className="select-all rounded bg-background px-1 text-foreground">copy(localStorage.getItem(&apos;accessToken&apos;))</code>.</li>
-                        <li>Paste the copied token below.</li>
+                        <li>{t.login.step1PortalOpen}</li>
+                        <li>{t.login.step2Console}</li>
+                        <li>{t.login.step3RunPrefix} <code className="select-all rounded bg-background px-1 text-foreground">copy(localStorage.getItem(&apos;accessToken&apos;))</code>.</li>
+                        <li>{t.login.step4Paste}</li>
                       </ol>
-                      <p className="mt-2 text-foreground">Portal tokens usually expire quickly. Hyeboard will return you here when a fresh token is needed.</p>
+                      <p className="mt-2 text-foreground">{t.login.tokensExpireNote}</p>
                     </div>
-                    <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://studenthub.uet.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open university portal</Button>
-                    <Input type="password" autoComplete="off" placeholder="University portal access token" value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                    <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://portal.uet.vnu.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> Open learning platform</Button>
+                    <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://studenthub.uet.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> {t.login.openUniversityPortal}</Button>
+                    <Input type="password" autoComplete="off" placeholder={t.login.portalTokenPlaceholder} value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://portal.uet.vnu.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> {t.login.openLearningPlatform}</Button>
                     <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                      <p className="font-medium text-foreground">Optional: connect the learning platform</p>
-                      <p className="mt-1">The learning platform powers course and assignment features. It usually opens with the same university account.</p>
+                      <p className="font-medium text-foreground">{t.login.optionalConnectLearning}</p>
+                      <p className="mt-1">{t.login.learningPlatformDesc}</p>
                       <ol className="mt-2 list-decimal space-y-1 pl-4">
-                        <li>Open the learning platform. It should sign in with your existing university account.</li>
-                        <li>Open <strong className="text-foreground">Account</strong> (bottom-left) → <strong className="text-foreground">Settings</strong>.</li>
-                        <li>Scroll to <strong className="text-foreground">Approved Integrations</strong> → click <strong className="text-foreground">+ New Access Token</strong> → Generate Token.</li>
-                        <li>Copy the token shown once and paste it below.</li>
+                        <li>{t.login.step1Learning}</li>
+                        <li>{t.login.step2LearningPrefix} <strong className="text-foreground">{t.login.accountLabel}</strong> {t.login.step2LearningMid} <strong className="text-foreground">{t.login.settingsLabel}</strong>.</li>
+                        <li>{t.login.step3LearningPrefix} <strong className="text-foreground">{t.login.approvedIntegrations}</strong> {t.login.step3LearningMid} <strong className="text-foreground">{t.login.newAccessToken}</strong> {t.login.step3LearningSuffix}</li>
+                        <li>{t.login.step4Learning}</li>
                       </ol>
                     </div>
-                    <Input type="password" autoComplete="off" placeholder="Learning platform access token" value={canvasToken} onChange={(event) => { setCanvasToken(event.target.value); setSessionStored(RELOGIN_KEYS.uetCanvasToken, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    <Input type="password" autoComplete="off" placeholder={t.login.learningTokenPlaceholder} value={canvasToken} onChange={(event) => { setCanvasToken(event.target.value); setSessionStored(RELOGIN_KEYS.uetCanvasToken, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
                     <details className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-                      <summary className="cursor-pointer font-medium text-foreground">Advanced cookie options</summary>
+                      <summary className="cursor-pointer font-medium text-foreground">{t.login.advancedCookieOptions}</summary>
                       <div className="mt-3 space-y-3">
-                        <Input type="password" autoComplete="off" placeholder="University portal cookie, if token import is unavailable" value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                        <Input type="password" autoComplete="off" placeholder="Learning platform cookie, if access tokens are disabled" value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                        <Input type="password" autoComplete="off" placeholder="Learning platform CSRF token, only when using cookie mode" value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        <Input type="password" autoComplete="off" placeholder={t.login.portalCookiePlaceholder} value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        <Input type="password" autoComplete="off" placeholder={t.login.learningCookiePlaceholder} value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        <Input type="password" autoComplete="off" placeholder={t.login.learningCsrfPlaceholder} value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
                       </div>
                     </details>
-                    <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}Import university session</Button>
+                    <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{t.login.importUniversitySession}</Button>
                   </>
                 )}
               </>
             ) : selectedUniversity === "vnu" ? (
               <>
-                <Input placeholder="Student code / username" autoComplete="username" value={vnuUsername} onChange={(event) => { setVnuUsername(event.target.value); setSessionStored(RELOGIN_KEYS.vnuUsername, event.target.value); }} />
-                <Input type="password" autoComplete="current-password" placeholder="Password" value={vnuPassword} onChange={(event) => { setVnuPassword(event.target.value); setSessionStored(RELOGIN_KEYS.vnuPassword, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importVnuSession)} />
-                <Button onClick={importVnuSession} disabled={busy} variant="outline" className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}Import university session</Button>
+                <Input placeholder={t.login.studentUsernamePlaceholder} autoComplete="username" value={vnuUsername} onChange={(event) => { setVnuUsername(event.target.value); setSessionStored(RELOGIN_KEYS.vnuUsername, event.target.value); }} />
+                <Input type="password" autoComplete="current-password" placeholder={t.login.passwordPlaceholder} value={vnuPassword} onChange={(event) => { setVnuPassword(event.target.value); setSessionStored(RELOGIN_KEYS.vnuPassword, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importVnuSession)} />
+                <Button onClick={importVnuSession} disabled={busy} variant="outline" className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{t.login.importUniversitySession}</Button>
               </>
             ) : (
               <>
-                <Button onClick={useDemo} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}Open Demo Workspace</Button>
+                <Button onClick={useDemo} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{t.login.openDemoWorkspace}</Button>
               </>
             )}
             {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
@@ -1290,19 +1317,19 @@ function LoginPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <Card className="w-full max-w-sm">
             <CardHeader>
-              <CardTitle>Enter verification code</CardTitle>
-              <CardDescription>StudentHub is asking for the code shown in the image below to finish signing in.</CardDescription>
+              <CardTitle>{t.login.enterVerificationCode}</CardTitle>
+              <CardDescription>{t.login.verificationCodeDesc}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <img src={captchaChallenge.image} alt="Verification code" className="w-full rounded-lg border border-border" />
+              <img src={captchaChallenge.image} alt={t.login.verificationImageAlt} className="w-full rounded-lg border border-border" />
               <Input
                 autoFocus
                 value={captchaAnswer}
                 onChange={(event) => setCaptchaAnswer(event.target.value)}
-                placeholder="Enter the code shown above"
+                placeholder={t.login.enterCodeShown}
                 onKeyDown={(event) => { if (event.key === "Enter") submitCaptchaAnswer(); }}
               />
-              <Button onClick={submitCaptchaAnswer} disabled={!captchaAnswer.trim()} className="w-full">Submit</Button>
+              <Button onClick={submitCaptchaAnswer} disabled={!captchaAnswer.trim()} className="w-full">{t.common.submit}</Button>
             </CardContent>
           </Card>
         </div>
@@ -1313,42 +1340,43 @@ function LoginPage() {
 
 function SettingsPage() {
   const state = useHyeboard();
+  const { t, locale, setLocale } = useLocale();
   const navigate = useNavigate();
   const data = state.dashboard.data;
   const signOut = () => { state.logout(); void navigate({ to: "/login" }); };
   return (
     <div className="space-y-6">
-      <FeatureHeader title="Settings" description="Manage display preferences and your current session." />
+      <FeatureHeader title={t.settings.title} description={t.settings.description} />
       <div className="grid max-w-lg gap-4">
         <Card>
           <CardHeader>
-            <CardTitle>Display</CardTitle>
-            <CardDescription>Choose the interface style that works best for you.</CardDescription>
+            <CardTitle>{t.settings.display}</CardTitle>
+            <CardDescription>{t.settings.displayDesc}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm">Color mode</span>
-              <Button variant="outline" size="sm" onClick={() => state.setMode(state.mode === "dark" ? "light" : "dark")} aria-label="Toggle light and dark mode">
-                {state.mode === "dark" ? <><Sun size={14} className="mr-1" />Light</> : <><Moon size={14} className="mr-1" />Dark</>}
+              <span className="text-sm">{t.settings.colorMode}</span>
+              <Button variant="outline" size="sm" onClick={() => state.setMode(state.mode === "dark" ? "light" : "dark")} aria-label={t.common.toggleLightDark}>
+                {state.mode === "dark" ? <><Sun size={14} className="mr-1" />{t.common.light}</> : <><Moon size={14} className="mr-1" />{t.common.dark}</>}
               </Button>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-sm">Theme style</span>
-              <div className="flex rounded-lg border border-border p-1" role="group" aria-label="Theme style">
-                <Button type="button" variant={state.palette === "geist" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("geist")}>Neutral</Button>
-                <Button type="button" variant={state.palette !== "geist" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette(state.universityId === "uet" || state.universityId === "vnu" ? state.universityId : "uet")}>Colored</Button>
+              <span className="text-sm">{t.settings.themeStyle}</span>
+              <div className="flex rounded-lg border border-border p-1" role="group" aria-label={t.settings.themeStyle}>
+                <Button type="button" variant={state.palette === "geist" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette("geist")}>{t.settings.neutral}</Button>
+                <Button type="button" variant={state.palette !== "geist" ? "default" : "ghost"} size="sm" onClick={() => state.setPalette(state.universityId === "uet" || state.universityId === "vnu" ? state.universityId : "uet")}>{t.settings.colored}</Button>
               </div>
             </div>
             {state.palette === "uet" || state.palette === "vnu" ? (
               <div className="flex items-center justify-between">
-                <span className="text-sm">Theme color</span>
-                <div className="flex items-center gap-1.5" role="group" aria-label="Theme color">
+                <span className="text-sm">{t.settings.themeColor}</span>
+                <div className="flex items-center gap-1.5" role="group" aria-label={t.settings.themeColor}>
                   {THEME_HUE_PRESETS.map((preset) => (
                     <button
                       key={preset.hue}
                       type="button"
-                      title={preset.label}
-                      aria-label={preset.label}
+                      title={t.colors[preset.key]}
+                      aria-label={t.colors[preset.key]}
                       aria-pressed={state.themeHue === preset.hue}
                       onClick={() => state.setThemeHue(preset.hue)}
                       className={cn(
@@ -1361,15 +1389,24 @@ function SettingsPage() {
                 </div>
               </div>
             ) : null}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm">{t.settings.language}</span>
+              <Select value={locale} onValueChange={(value) => setLocale(value as Locale)}>
+                <SelectTrigger className="h-9 w-[160px]" aria-label={t.settings.language}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {LOCALES.map((option) => <SelectItem key={option.id} value={option.id}>{option.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Account</CardTitle>
-            <CardDescription>{data?.student?.fullName ? `Signed in as ${data.student.fullName}${data.student.studentCode ? ` (${data.student.studentCode})` : ""}.` : "Session details are available after the dashboard loads."}</CardDescription>
+            <CardTitle>{t.settings.account}</CardTitle>
+            <CardDescription>{data?.student?.fullName ? t.settings.signedInAs(data.student.fullName, data.student.studentCode) : t.settings.sessionUnavailable}</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button variant="destructive" className="w-full" onClick={signOut}><LogOut size={15} className="mr-2" />Sign out</Button>
+            <Button variant="destructive" className="w-full" onClick={signOut}><LogOut size={15} className="mr-2" />{t.settings.signOut}</Button>
           </CardContent>
         </Card>
       </div>
@@ -1378,9 +1415,10 @@ function SettingsPage() {
 }
 
 function FeatureFrame<T>({ title, description, query, children }: { title: string; description: string; query: { data?: T; error: Error | null; isLoading: boolean }; children: (data: T) => ReactNode }) {
+  const { t } = useLocale();
   if (query.isLoading) return <PageSkeleton />;
   if (query.error) return <QueryErrorPanel error={query.error} />;
-  return <div className="animate-page space-y-4"><FeatureHeader title={title} description={description} />{query.data ? children(query.data) : <Empty text="No data available." />}</div>;
+  return <div className="animate-page space-y-4"><FeatureHeader title={title} description={description} />{query.data ? children(query.data) : <Empty text={t.common.noData} />}</div>;
 }
 
 function FeatureHeader({ title, description }: { title: string; description: string }) {
@@ -1388,18 +1426,19 @@ function FeatureHeader({ title, description }: { title: string; description: str
 }
 
 function MiniPanel<T>({ title, query, children }: { title: string; query: { data?: T[]; error: Error | null; isLoading: boolean }; children: (data: T[]) => ReactNode }) {
+  const { t } = useLocale();
   const [open, setOpen] = useState(true);
   return (
     <Card className="animate-card">
       <CardHeader className="pb-3">
-        <button type="button" className="flex w-full items-center justify-between gap-3 text-left" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={`Toggle ${title}`}>
+        <button type="button" className="flex w-full items-center justify-between gap-3 text-left" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={t.documents.toggle(title)}>
           <CardTitle className="text-base">{title}</CardTitle>
           <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
         </button>
       </CardHeader>
       <div className="collapsible-panel" data-open={open}>
         <div>
-          <CardContent className="divide-y divide-border pt-0">{query.isLoading ? <Skeleton className="h-24" /> : query.error ? <p className="py-2 text-sm text-muted-foreground">{query.error.message}</p> : query.data?.length ? children(query.data) : <Empty text="No items yet." />}</CardContent>
+          <CardContent className="divide-y divide-border pt-0">{query.isLoading ? <Skeleton className="h-24" /> : query.error ? <p className="py-2 text-sm text-muted-foreground">{query.error.message}</p> : query.data?.length ? children(query.data) : <Empty text={t.common.noItemsYet} />}</CardContent>
         </div>
       </div>
     </Card>
@@ -1420,15 +1459,16 @@ function Metric({ title, value, detail, icon: Icon, tone = "default" }: { title:
 }
 
 function ScheduleItem({ item }: { item: ClassSession }) {
+  const { t } = useLocale();
   const label = item.timeLabel ?? (item.periodStart != null
-    ? `Period ${item.periodStart}${item.periodEnd && item.periodEnd !== item.periodStart ? `–${item.periodEnd}` : ""}`
+    ? `${t.timetable.periodHeader} ${item.periodStart}${item.periodEnd && item.periodEnd !== item.periodStart ? `–${item.periodEnd}` : ""}`
     : formatDateTime(item.startTime));
   return (
     <div className="list-row">
       <div className="min-w-0">
         <p className="truncate font-medium">{item.courseName}</p>
-        <p className="truncate text-xs text-muted-foreground">{item.courseCode} · {item.room ?? "No room"} · {item.instructor ?? "Instructor TBD"}</p>
-        {safeExternalUrl(item.url) ? <a className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" href={safeExternalUrl(item.url)} target="_blank" rel="noreferrer"><ExternalLink size={12} /> Open class page</a> : null}
+        <p className="truncate text-xs text-muted-foreground">{item.courseCode} · {item.room ?? t.timetable.noRoom} · {item.instructor ?? t.timetable.instructorTbd}</p>
+        {safeExternalUrl(item.url) ? <a className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" href={safeExternalUrl(item.url)} target="_blank" rel="noreferrer"><ExternalLink size={12} /> {t.timetable.openClassPage}</a> : null}
       </div>
       <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{label}</Badge>
     </div>
@@ -1436,11 +1476,12 @@ function ScheduleItem({ item }: { item: ClassSession }) {
 }
 
 function AssignmentItem({ item }: { item: Assignment }) {
+  const { t } = useLocale();
   return (
     <div className="list-row">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium">{item.title}</p>
-        <p className="truncate text-xs text-muted-foreground">{item.courseName ?? item.courseCode ?? "Learning platform"} · {formatDateTime(item.dueAt)}</p>
+        <p className="truncate text-xs text-muted-foreground">{item.courseName ?? item.courseCode ?? t.assignments.learningPlatform} · {formatDateTime(item.dueAt)}</p>
       </div>
       <Badge className={cn("shrink-0", item.status === "missing" ? "bg-destructive text-destructive-foreground" : "border border-border bg-background font-normal text-foreground")}>{item.status}</Badge>
     </div>
@@ -1448,16 +1489,17 @@ function AssignmentItem({ item }: { item: Assignment }) {
 }
 
 function CourseCard({ course }: { course: Course }) {
+  const { t } = useLocale();
   const className = "motion-surface block rounded-lg border border-border p-4 hover:bg-muted/40";
   const url = safeExternalUrl(course.url);
   const content = (
     <>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0"><p className="truncate text-sm font-semibold">{course.code}</p><p className="truncate text-sm text-muted-foreground">{course.name}</p></div>
-        <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{course.status ?? "active"}</Badge>
+        <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{course.status ?? t.courses.statusActive}</Badge>
       </div>
-      {course.nextDeadline ? <p className="mt-2 text-xs text-muted-foreground">Next: {formatDateTime(course.nextDeadline)}</p> : null}
-      {url ? <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary"><ExternalLink size={12} /> Open course page</p> : null}
+      {course.nextDeadline ? <p className="mt-2 text-xs text-muted-foreground">{t.courses.nextDeadline(formatDateTime(course.nextDeadline))}</p> : null}
+      {url ? <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary"><ExternalLink size={12} /> {t.courses.openCoursePage}</p> : null}
     </>
   );
   return url ? (
@@ -1468,16 +1510,19 @@ function CourseCard({ course }: { course: Course }) {
 }
 
 function DocumentRow({ item }: { item: DocumentItem }) {
-  return <FeedItem title={item.name} detail={`${item.courseCode ?? "Document"}${item.updatedAt ? ` · ${formatDateTime(item.updatedAt)}` : ""}`} url={item.url} />;
+  const { t } = useLocale();
+  return <FeedItem title={item.name} detail={`${item.courseCode ?? t.common.document}${item.updatedAt ? ` · ${formatDateTime(item.updatedAt)}` : ""}`} url={item.url} />;
 }
 
 function TrainingPointRow({ item }: { item: TrainingPoint }) {
-  const score = item.score == null ? "Pending" : `${item.score}/${item.maxScore ?? 100}`;
+  const { t } = useLocale();
+  const score = item.score == null ? t.common.pending : `${item.score}/${item.maxScore ?? 100}`;
   return <FeedItem title={item.title} detail={score} />;
 }
 
 function RequestRow({ item }: { item: ServiceRequest }) {
-  return <FeedItem title={item.title} detail={item.status ?? item.type ?? "request"} />;
+  const { t } = useLocale();
+  return <FeedItem title={item.title} detail={item.status ?? item.type ?? t.common.request} />;
 }
 
 function FeedItem({ title, detail, url }: { title: string; detail: string; url?: string }) {
@@ -1494,28 +1539,32 @@ function FeedItem({ title, detail, url }: { title: string; detail: string; url?:
 }
 
 function DataTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
-  if (!rows.length) return <Empty text="No rows available." />;
+  const { t } = useLocale();
+  if (!rows.length) return <Empty text={t.common.noRows} />;
   return <div className="overflow-hidden rounded-xl border border-border"><table className="w-full border-collapse text-sm"><thead className="bg-muted text-muted-foreground"><tr>{headers.map((header) => <th key={header} className="px-3 py-2 text-left font-medium">{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index} className="border-t border-border">{row.map((cell, cellIndex) => <td key={cellIndex} className="px-3 py-2">{cell}</td>)}</tr>)}</tbody></table></div>;
 }
 
 function LoginNeeded({ message }: { message: string }) {
-  return <Card><CardHeader><CardTitle>Login needed</CardTitle><CardDescription>{message}</CardDescription></CardHeader><CardContent className="flex flex-wrap gap-2"><Link to="/login"><Button>Open Login</Button></Link></CardContent></Card>;
+  const { t } = useLocale();
+  return <Card><CardHeader><CardTitle>{t.common.loginNeeded}</CardTitle><CardDescription>{message}</CardDescription></CardHeader><CardContent className="flex flex-wrap gap-2"><Link to="/login"><Button>{t.common.openLogin}</Button></Link></CardContent></Card>;
 }
 
 function CanvasRequired({ message }: { message: string }) {
+  const { t } = useLocale();
   return (
     <Card>
-      <CardHeader><CardTitle>Learning-platform login required</CardTitle><CardDescription>{message}</CardDescription></CardHeader>
+      <CardHeader><CardTitle>{t.canvasRequired.title}</CardTitle><CardDescription>{message}</CardDescription></CardHeader>
       <CardContent className="flex flex-wrap items-center gap-2">
-        <Link to="/login"><Button variant="outline">Add learning-platform token</Button></Link>
-        <p className="text-xs text-muted-foreground">Your university portal session stays signed in. Add the learning-platform token to enable course and assignment data.</p>
+        <Link to="/login"><Button variant="outline">{t.canvasRequired.addToken}</Button></Link>
+        <p className="text-xs text-muted-foreground">{t.canvasRequired.note}</p>
       </CardContent>
     </Card>
   );
 }
 
 function NotSupported({ message }: { message: string }) {
-  return <Card><CardHeader><CardTitle>Not available</CardTitle><CardDescription>{message}</CardDescription></CardHeader><CardContent className="flex flex-wrap gap-2"><Link to="/"><Button variant="outline">Return</Button></Link></CardContent></Card>;
+  const { t } = useLocale();
+  return <Card><CardHeader><CardTitle>{t.notSupported.title}</CardTitle><CardDescription>{message}</CardDescription></CardHeader><CardContent className="flex flex-wrap gap-2"><Link to="/"><Button variant="outline">{t.common.return}</Button></Link></CardContent></Card>;
 }
 
 function QueryErrorPanel({ error }: { error: Error }) {
@@ -1563,10 +1612,12 @@ declare module "@tanstack/react-router" { interface Register { router: typeof ro
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <HyeboardProvider>
-        <RouterProvider router={router} />
-        <Toaster />
-      </HyeboardProvider>
+      <LocaleProvider>
+        <HyeboardProvider>
+          <RouterProvider router={router} />
+          <Toaster />
+        </HyeboardProvider>
+      </LocaleProvider>
     </QueryClientProvider>
   </StrictMode>,
 );
