@@ -1,4 +1,4 @@
-import { setPatchrightCloseHandler, setPatchrightLauncher } from "@hyeboard/university-adapters";
+import { setCaptchaOcrSolver, setPatchrightCloseHandler, setPatchrightLauncher } from "@hyeboard/university-adapters";
 import { start } from "./start";
 
 // Node/Bun-only entry point. Identical to index.ts except it additionally
@@ -31,6 +31,27 @@ if (process.env.HYEB_BROWSER_PATCHRIGHT === "true") {
   const patchrightModule = await import("@hyeboard/university-adapters/src/uet/google-login-automation-patchright");
   setPatchrightLauncher(patchrightModule.automateVnuGoogleLoginPatchright);
   setPatchrightCloseHandler(patchrightModule.closeCachedPatchrightSessions);
+}
+
+// OCR-based CAPTCHA solving for the parent/guardian direct-login flow (see
+// captcha-ocr.ts) — on by default (best-effort, first attempt before
+// falling back to relaying the CAPTCHA image to the end user during an
+// interactive login), opt-out via
+// HYEB_CAPTCHA_OCR=false for deployments that don't want the extra
+// tesseract.js dependency loaded at all. Dynamic import for the same
+// reason as patchright above: tesseract.js is only an optional dependency
+// of @hyeboard/university-adapters (large — WASM + language data), and
+// build-node.mjs marks it external so it stays resolvable from
+// node_modules only when actually loaded here. Wrapped in try/catch so a
+// failure to load it (e.g. missing package in a minimal deployment) falls
+// back to the human-relay path instead of crashing startup.
+if (process.env.HYEB_CAPTCHA_OCR !== "false") {
+  try {
+    const captchaOcrModule = await import("@hyeboard/university-adapters/src/uet/captcha-ocr");
+    setCaptchaOcrSolver(captchaOcrModule.solveCaptchaImage);
+  } catch {
+    // Interactive direct login falls back to its human relay automatically.
+  }
 }
 
 await start();

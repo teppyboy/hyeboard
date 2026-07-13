@@ -1,6 +1,7 @@
 import { addHours, assertSupported, HyeboardError, type EncryptedSessionPayload } from "@hyeboard/core";
 import type { ClassSession, DashboardSummary, University } from "@hyeboard/schemas";
 import { CanvasClient } from "./canvas-client";
+import { resolveCaptchaAnswer } from "./captcha";
 import { mapCanvasCourse, mapCanvasMissingSubmission, mapCanvasPlannerItem, mapStudent, mapStudentHubBill, mapStudentHubClass, mapStudentHubExam, mapStudentHubGpa, mapStudentHubGrade, mapStudentHubNews, mapStudentHubNotifications, mapStudentHubRequest, mapStudentHubScheduleAlert, mapTerm, mapTrainingPoints, mapTuition } from "./mapper";
 import { automateVnuGoogleLogin } from "./google-login-automation";
 import { StudentHubClient } from "./studenthub-client";
@@ -114,37 +115,40 @@ export function createUetAdapter(): UniversityAdapter {
         }
         const rawInput = input.uetGoogleEmail.trim();
 
-        // Parent/guardian accounts authenticate directly against
-        // StudentHub's own POST /api/auth/login with a plain
-        // username/password — no Google OAuth, no browser automation,
-        // resolves near-instantly. Detected by the "PH" account-code
-        // prefix observed live in a parent/guardian HAR capture (see
+        // Parent/guardian accounts authenticate through StudentHub's own
+        // CAPTCHA and login APIs. Detected by the "PH" account-code prefix
+        // observed live in a parent/guardian HAR capture (see
         // har-notes.md's "parent/guardian account" section) — a
         // StudentHub account-code convention (likely short for "Phụ
         // huynh", Vietnamese for parent/guardian), not something Hyeboard
         // invented. Falls through to the interactive Google-automation
         // flow below for every other (student) account.
         if (/^ph/i.test(rawInput)) {
-          const result = await new StudentHubClient().authenticateDirect(rawInput, input.uetGooglePassword);
-          // A wrong username/password does NOT necessarily come back as a
-          // non-2xx HTTP status here — StudentHub can respond 200 with
-          // { code, msgCode, data: null } for a failed login, which
-          // unwrapStudentHubEnvelope correctly unwraps to a bare `null`
-          // (confirmed live: crashed with "Cannot read properties of null"
-          // before this null-check was added).
-          if (!result || !result.accessToken) {
-            throw new HyeboardError("INVALID_STUDENTHUB_CREDENTIAL", "Incorrect username or password.", 401);
+          const client = new StudentHubClient();
+          let firstAnswerSource: "ocr" | "human" | undefined;
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            const challenge = await client.getCaptchaChallenge();
+            const skipOcr = attempt === 1 && firstAnswerSource === "ocr" && Boolean(context?.onCaptchaNeeded);
+            const answer = await resolveCaptchaAnswer(challenge.image, context?.onCaptchaNeeded, { skipOcr });
+            if (attempt === 0) firstAnswerSource = answer.source;
+            const result = await client.authenticateDirect(rawInput, input.uetGooglePassword, challenge.captchaId, answer.answer);
+            if (result.login) {
+              const expiresAt = addDays(30);
+              const session: EncryptedSessionPayload = {
+                version: 1,
+                universityId: "uet",
+                studentCode: result.login.accountCode ?? rawInput,
+                expiresAt,
+                uetParentCredential: { username: rawInput, password: input.uetGooglePassword },
+                studenthub: { kind: "bearer", value: result.login.accessToken, expiresAt: jwtExpiry(result.login.accessToken) ?? expiresAt },
+              };
+              return { universityId: "uet", studentCode: session.studentCode, expiresAt, session };
+            }
+            if (result.code !== "EX102") {
+              throw new HyeboardError("INVALID_STUDENTHUB_CREDENTIAL", "Incorrect username or password.", 401);
+            }
           }
-          const expiresAt = addDays(30);
-          const session: EncryptedSessionPayload = {
-            version: 1,
-            universityId: "uet",
-            studentCode: result.accountCode ?? rawInput,
-            expiresAt,
-            uetParentCredential: { username: rawInput, password: input.uetGooglePassword },
-            studenthub: { kind: "bearer", value: result.accessToken, expiresAt: jwtExpiry(result.accessToken) ?? expiresAt },
-          };
-          return { universityId: "uet", studentCode: session.studentCode, expiresAt, session };
+          throw new HyeboardError("STUDENTHUB_CAPTCHA_REJECTED", "The verification code was rejected twice. Try signing in again.", 422);
         }
 
         if (!context?.browserConnection) {

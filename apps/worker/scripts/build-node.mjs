@@ -11,7 +11,7 @@ const bundle = await rolldown({
     "elysia/adapter/cloudflare-worker",
     "@elysiajs/node",
     "elysia/adapter/bun",
-    // Only ever dynamically imported in index.ts's Node-dev branch; keep it
+    // Only ever dynamically imported in the Node-only startup path; keep it
     // out of the bundle entirely so it's resolved from node_modules only
     // when that branch actually runs (never in production/Bun).
     "pino-pretty",
@@ -33,6 +33,9 @@ const bundle = await rolldown({
     // any deployment that hasn't installed it).
     "patchright",
     "@hyeboard/university-adapters/src/uet/google-login-automation-patchright",
+    // Large WASM/language-data dependency. captcha-ocr.ts is bundled, but
+    // imports this package dynamically only when OCR first runs.
+    "tesseract.js",
   ],
 });
 

@@ -6,4 +6,10 @@ export { DaotaoClient } from "./vnu/daotao-client";
 // comment in google-login-automation.ts for why (keeping the large
 // Node-only patchright dependency out of this barrel file matters: apps/worker's
 // Cloudflare entry point imports this whole module).
-export { setPatchrightLauncher, setPatchrightCloseHandler, type PatchrightLauncher, closeCachedBrowserSessions } from "./uet/google-login-automation";
+export {
+  setPatchrightLauncher,
+  setPatchrightCloseHandler,
+  type PatchrightLauncher,
+  closeCachedBrowserSessions,
+} from "./uet/google-login-automation";
+export { setCaptchaOcrSolver, type CaptchaOcrSolver } from "./uet/captcha";

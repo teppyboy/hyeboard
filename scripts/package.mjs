@@ -58,14 +58,19 @@ async function main() {
   pkgJson.optionalDependencies ??= {};
   for (const [dep, version] of Object.entries({ ...corePkgJson.dependencies, ...universityAdaptersPkgJson.dependencies })) {
     if (dep.includes("@hyeboard/") || dep.includes("@cloudflare") || dep.includes("@sinclair")) continue; // Skip unnecessary dependencies
-    // patchright is a large, Node-only, opt-in-only dependency (HYEB_BROWSER_PATCHRIGHT=true) —
-    // keep it optional so `npm install` doesn't fail/balloon for deployments that never use it.
-    if (dep === "patchright") {
+    // Large Node-only opt-in dependencies remain optional. Their local
+    // registration modules are bundled; packages resolve only when enabled.
+    if (dep === "patchright" || dep === "tesseract.js") {
       if (!pkgJson.optionalDependencies[dep]) pkgJson.optionalDependencies[dep] = version;
       continue;
     }
     if (!pkgJson.dependencies[dep]) {
       pkgJson.dependencies[dep] = version;
+    }
+  }
+  for (const [dep, version] of Object.entries(universityAdaptersPkgJson.optionalDependencies ?? {})) {
+    if (!dep.includes("@hyeboard/") && !dep.includes("@cloudflare") && !dep.includes("@sinclair")) {
+      pkgJson.optionalDependencies[dep] ??= version;
     }
   }
   await writeFile(pkgJsonPath, JSON.stringify(pkgJson, null, 2));

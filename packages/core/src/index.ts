@@ -53,14 +53,11 @@ export type EncryptedSessionPayload = {
   // be stale/expired/revoked.
   uetGoogleCredential?: { email: string; password: string; googleCookies?: GoogleSessionCookie[] };
   // Present only for uet sessions created via a parent/guardian account
-  // direct login (StudentHub's own POST /api/auth/login with a plain
-  // username/password — no Google OAuth or browser automation involved,
-  // see packages/university-adapters/src/uet/studenthub-client.ts's
-  // authenticateDirect() and har-notes.md's "parent/guardian account"
-  // section). Persisted for the same reason as uetGoogleCredential above —
-  // lets resolveSession() silently re-authenticate on expiry — but the
-  // refresh itself is a single fast JSON POST, not a ~90s browser
-  // automation, since parent accounts never touch Google/Canvas SSO at all.
+  // direct login. StudentHub's CAPTCHA challenge and login APIs need no
+  // Google OAuth or browser automation. Persisted for the same reason as
+  // uetGoogleCredential above: resolveSession() can silently re-authenticate
+  // on expiry when Node-only OCR solves the fresh challenge. A deployment
+  // without OCR returns STUDENTHUB_CAPTCHA_REQUIRED during silent refresh.
   uetParentCredential?: { username: string; password: string };
   expiresAt: string;
 };

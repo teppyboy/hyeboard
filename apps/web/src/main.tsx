@@ -1011,6 +1011,14 @@ function LoginPage() {
   // importUetGoogleSession and har-notes.md's "parent/guardian account"
   // section).
   const isUetParentLogin = /^ph/i.test(uetGoogleEmail.trim());
+  // Set only while a parent/guardian direct-login is waiting on a CAPTCHA
+  // the server's own OCR couldn't confidently solve (see
+  // api.importUetGoogleSession's onCaptchaNeeded and app.ts's
+  // "captcha_required" SSE event). The stream aborts and clears this prompt
+  // if the relay fails or disconnects before the user submits an answer.
+  const [captchaChallenge, setCaptchaChallenge] = useState<{ image: string; resolve: (answer: string) => void }>();
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const uetLoginControllerRef = useRef<AbortController | null>(null);
 
   // The global palette can be left over from a previous session (e.g. still
   // "geist" after signing out of a mock session). Force it to match whichever
@@ -1019,6 +1027,12 @@ function LoginPage() {
   useEffect(() => {
     state.setPalette(selectedUniversity === "uet" || selectedUniversity === "vnu" ? selectedUniversity : "geist");
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => () => {
+    const active = uetLoginControllerRef.current;
+    uetLoginControllerRef.current = null;
+    active?.abort();
   }, []);
 
   const useDemo = async () => {
@@ -1070,6 +1084,9 @@ function LoginPage() {
   };
 
   const importUetGoogleSession = async () => {
+    uetLoginControllerRef.current?.abort();
+    const loginController = new AbortController();
+    uetLoginControllerRef.current = loginController;
     setBusy(true);
     // The login box only ever needs the student code (MSV) or a
     // parent/guardian account code — the server always derives the
@@ -1077,31 +1094,46 @@ function LoginPage() {
     // domain a caller might supply, so no client-side email construction
     // happens here (see MISSING_UPSTREAM_CREDENTIAL / adapter.ts normalization).
     const studentCodeInput = uetGoogleEmail.trim();
-    // Parent/guardian accounts ("PH..." prefix) authenticate directly with
-    // their StudentHub username/password — no Google OAuth automation, no
-    // SSE progress stream needed, resolves near-instantly (see adapter.ts's
-    // importSession() and har-notes.md's "parent/guardian account" section).
+    // Parent/guardian accounts ("PH..." prefix) use StudentHub's direct
+    // CAPTCHA and login APIs instead of Google OAuth. They stay on the SSE
+    // path so onCaptchaNeeded can relay an image when server-side OCR fails.
     const isParentLogin = /^ph/i.test(studentCodeInput);
     setStatus(isParentLogin ? "Signing in with your parent/guardian account..." : "Signing in with your VNU Google account...");
     try {
-      if (isParentLogin) {
-        await api.importSession("uet", { uetGoogleEmail: studentCodeInput, uetGooglePassword });
-      } else {
-        // This login mode alone streams interim progress (Opening StudentHub...,
-        // Signing in with Google..., etc.) from the server over SSE, since it's
-        // the one slow (potentially 90s+), multi-step automated flow — every
-        // other login mode on this page resolves near-instantly and doesn't
-        // need this.
-        await api.importUetGoogleSession(
-          { uetGoogleEmail: studentCodeInput, uetGooglePassword },
-          (message) => setStatus(message),
-        );
-      }
+      // Google automation can take 90s+; parent login may pause for a human
+      // CAPTCHA answer. Both use the same SSE transport.
+      await api.importUetGoogleSession(
+        { uetGoogleEmail: studentCodeInput, uetGooglePassword },
+        (message) => setStatus(message),
+        (imageDataUrl, signal) => new Promise<string>((resolve, reject) => {
+          const challenge = {
+            image: imageDataUrl,
+            resolve: (answer: string) => {
+              signal.removeEventListener("abort", onAbort);
+              setCaptchaChallenge((current) => current === challenge ? undefined : current);
+              setCaptchaAnswer("");
+              resolve(answer);
+            },
+          };
+          const onAbort = () => {
+            setCaptchaChallenge((current) => current === challenge ? undefined : current);
+            setCaptchaAnswer("");
+            reject(signal.reason ?? new DOMException("Verification request cancelled.", "AbortError"));
+          };
+          if (signal.aborted) onAbort();
+          else {
+            signal.addEventListener("abort", onAbort, { once: true });
+            setCaptchaChallenge(challenge);
+          }
+        }),
+        loginController.signal,
+      );
       state.selectUniversity("uet", { clearSession: false });
       state.refreshSession();
       setStatus("University session ready. Opening dashboard...");
       await navigate({ to: "/" });
     } catch (error) {
+      if (loginController.signal.aborted) return;
       const code = error instanceof ApiError ? error.code : undefined;
       if (isParentLogin) {
         toast.error(humanizeUetLoginError(code, error instanceof Error ? error.message : "Sign-in failed. Check your username and password."));
@@ -1111,8 +1143,18 @@ function LoginPage() {
       }
       setStatus(undefined);
     } finally {
-      setBusy(false);
+      if (uetLoginControllerRef.current === loginController) {
+        uetLoginControllerRef.current = null;
+        setBusy(false);
+      }
     }
+  };
+
+  const submitCaptchaAnswer = () => {
+    if (!captchaChallenge) return;
+    const answer = captchaAnswer.trim();
+    if (!answer) return;
+    captchaChallenge.resolve(answer);
   };
 
   const importVnuSession = async () => {
@@ -1244,6 +1286,27 @@ function LoginPage() {
           </CardContent>
         </Card>
       </div>
+      {captchaChallenge ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <Card className="w-full max-w-sm">
+            <CardHeader>
+              <CardTitle>Enter verification code</CardTitle>
+              <CardDescription>StudentHub is asking for the code shown in the image below to finish signing in.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <img src={captchaChallenge.image} alt="Verification code" className="w-full rounded-lg border border-border" />
+              <Input
+                autoFocus
+                value={captchaAnswer}
+                onChange={(event) => setCaptchaAnswer(event.target.value)}
+                placeholder="Enter the code shown above"
+                onKeyDown={(event) => { if (event.key === "Enter") submitCaptchaAnswer(); }}
+              />
+              <Button onClick={submitCaptchaAnswer} disabled={!captchaAnswer.trim()} className="w-full">Submit</Button>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
     </main>
   );
 }

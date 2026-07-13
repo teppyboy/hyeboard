@@ -1,13 +1,21 @@
-import { start } from "./start";
+import { configureLogger } from "@hyeboard/core";
+import { env } from "cloudflare:workers";
+import { CloudflareAdapter } from "elysia/adapter/cloudflare-worker";
+import { createApp, setCaptchaRelayCoordinator, setCloudflareBrowserBinding, setRuntimeConfig } from "./app";
+import { DurableObjectCaptchaRelayCoordinator } from "./captcha-relay-cloudflare";
 
-// Default entry point — used by wrangler.jsonc's "main" (Cloudflare
-// Workers) and by direct `tsx`/`bun` invocation of this file. Deliberately
-// tiny and importing nothing beyond ./start: any additional import here
-// (even a dynamic one) gets bundled into the Cloudflare Workers deployment
-// by wrangler, since Workers has no runtime package resolution and
-// wrangler must inline everything reachable from this file regardless of
-// import style. See apps/worker/src/index.node.ts for the Node/Bun-only
-// entry point that additionally wires up optional, large, Node-only
-// dependencies (currently: the Patchright browser automation launcher)
-// without ever being reachable from this file's import graph.
-export default await start();
+export { CaptchaRelayDurableObject } from "./captcha-relay-durable-object";
+
+const cfEnv = env;
+
+configureLogger({ level: cfEnv.HYEB_LOG_LEVEL, mode: "browser" });
+setRuntimeConfig({
+  HYEB_SESSION_SECRET: cfEnv.HYEB_SESSION_SECRET,
+  HYEB_ALLOWED_ORIGINS: cfEnv.HYEB_ALLOWED_ORIGINS,
+  HYEB_BROWSER_WS_ENDPOINT: cfEnv.HYEB_BROWSER_WS_ENDPOINT,
+  HYEB_LOG_LEVEL: cfEnv.HYEB_LOG_LEVEL,
+});
+setCloudflareBrowserBinding(cfEnv.BROWSER);
+setCaptchaRelayCoordinator(new DurableObjectCaptchaRelayCoordinator(cfEnv.CAPTCHA_RELAY));
+
+export default createApp(CloudflareAdapter);

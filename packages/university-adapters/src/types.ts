@@ -82,6 +82,15 @@ export type ImportSessionContext = {
   // don't care about interim progress (e.g. resolveSession()'s silent
   // background refresh) can simply omit it.
   onProgress?: (message: string) => void;
+  // Called when the uet adapter's parent/guardian direct API login receives
+  // a CAPTCHA image that OCR (see packages/university-adapters/src/uet/
+  // captcha-ocr.ts) couldn't confidently solve. Relays the image (a base64
+  // data URL) to the end user and resolves with their
+  // typed answer. Omitting this means a CAPTCHA that OCR can't solve fails
+  // outright (STUDENTHUB_CAPTCHA_REQUIRED) instead of prompting a human —
+  // appropriate for e.g. resolveSession()'s silent background refresh,
+  // which has no interactive user to ask.
+  onCaptchaNeeded?: (imageDataUrl: string) => Promise<string>;
 };
 
 export interface UniversityAdapter {

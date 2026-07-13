@@ -1,11 +1,14 @@
 import type { ApiResponse, Assignment, ClassSession, Course, DashboardSummary, DocumentItem, ExamSession, Grade, NewsItem, ServiceRequest, Term, TrainingPoint, TuitionStatus, University } from "@hyeboard/schemas";
 import { mapExamRow, mapGpaSummary, mapGradeRow, mapProfile, mapSyllabusRow, mapTerms, mapTrainingPoints } from "@hyeboard/university-adapters/src/vnu/mapper";
 import { parseExamTermOptions, parseExamsHtml, parseGradesHtml, parseProfileHtml, parseStudyProgressHtml, parseSyllabusHtml } from "@hyeboard/university-adapters/src/vnu/parser";
+import { createLinkedAbortController } from "./abort-deadline";
+import { readUetSessionStream } from "./uet-session-stream";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const SESSION_KEY = "hyeboard.sessionToken";
 const ACCOUNTS_KEY = "hyeboard.accounts";
 const ACTIVE_ACCOUNT_KEY = "hyeboard.activeAccountId";
+const UET_LOGIN_DEADLINE_MS = 3 * 60_000;
 
 function uuid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -182,11 +185,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (code ? SESSION_INVALID_CODES.has(code) : response.status === 401) clearSessionToken();
     throw new ApiError(payload.error?.message ?? `Request failed: ${response.status}`, code, response.status);
   }
-  // Silent session refresh: for UET sessions created via automated Google login, the
-  // worker's resolveSession() (apps/worker/src/index.ts) may re-run the login automation
-  // mid-request when the upstream credential has expired, then hand back a fresh encrypted
-  // token via meta.refreshedToken. Adopt it transparently so the user never sees a re-login
-  // prompt for routine expiry — only trusted, server-signed tokens ever populate this field.
+  // Silent session refresh: the worker may refresh an expired UET upstream
+  // credential through Google automation or the parent direct CAPTCHA API,
+  // then return a fresh encrypted token via meta.refreshedToken.
   const refreshedToken = payload.meta?.refreshedToken;
   if (typeof refreshedToken === "string" && refreshedToken) setSessionToken(refreshedToken);
   return payload.data as T;
@@ -271,64 +272,71 @@ export const api = {
   news: (universityId: string) => request<NewsItem[]>(`/api/${universityId}/news`),
   trainingPoints: (universityId: string) => universityId === "vnu" ? vnuTrainingPoints() : request<TrainingPoint[]>(`/api/${universityId}/training-points`),
   requests: (universityId: string) => request<ServiceRequest[]>(`/api/${universityId}/requests`),
-  importSession: async (universityId: string, body: { studentCode?: string; studenthubGoogleCredential?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string; vnuUsername?: string; vnuPassword?: string; uetGoogleEmail?: string; uetGooglePassword?: string }) => {
+  importSession: async (universityId: string, body: { studentCode?: string; studenthubGoogleCredential?: string; studenthubToken?: string; studenthubCookie?: string; canvasToken?: string; canvasCookie?: string; canvasCsrfToken?: string; vnuUsername?: string; vnuPassword?: string }) => {
     const data = await request<{ token: string; session?: { studentCode?: string } }>(`/api/${universityId}/auth/import-session`, { method: "POST", body: JSON.stringify(body) });
     upsertAccount(universityId, data.token, data.session?.studentCode);
     return data;
   },
-  // The uet Google-login automation is the one slow (potentially 90s+),
-  // multi-step login path — the worker streams interim progress as
-  // Server-Sent Events instead of one opaque blocking response (see
-  // apps/worker/src/app.ts's import-session route). Every other login mode
-  // (vnu, manual token/cookie paste, mock demo) uses the plain importSession
-  // above since those resolve almost instantly.
-  importUetGoogleSession: async (body: { uetGoogleEmail: string; uetGooglePassword: string; uetGoogleCookies?: unknown }, onProgress?: (message: string) => void) => {
-    const token = getSessionToken();
-    const response = await fetch(`${API_BASE_URL}/api/uet/auth/import-session`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok || !response.body) {
-      // Errors thrown before the stream starts (rate limiting, missing
-      // server config) still come back as plain JSON, not SSE.
-      let payload: ApiResponse<unknown> | undefined;
-      try {
-        payload = (await response.json()) as ApiResponse<unknown>;
-      } catch {
-        // Body wasn't JSON either — fall through to the generic error below.
-      }
-      throw new ApiError(payload?.error?.message ?? `Request failed: ${response.status}`, payload?.error?.code, response.status);
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let separatorIndex: number;
-      while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
-        const rawEvent = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + 2);
-        const eventMatch = /^event: (.+)$/m.exec(rawEvent);
-        const dataMatch = /^data: (.+)$/m.exec(rawEvent);
-        if (!eventMatch || !dataMatch) continue;
-        const data = JSON.parse(dataMatch[1]) as { message?: string; token?: string; session?: { studentCode?: string }; code?: string; status?: number };
-        if (eventMatch[1] === "progress" && data.message) {
-          onProgress?.(data.message);
-        } else if (eventMatch[1] === "done" && data.token) {
-          upsertAccount("uet", data.token, data.session?.studentCode);
-          return { token: data.token };
-        } else if (eventMatch[1] === "error") {
-          throw new ApiError(data.message ?? "Google sign-in failed.", data.code, data.status);
+  // UET Google automation can take 90s+; parent direct login may pause for a
+  // human CAPTCHA answer. Both use the Worker's SSE route. VNU, manual
+  // token/cookie, and mock imports use the plain JSON request above.
+  importUetGoogleSession: async (
+    body: { uetGoogleEmail: string; uetGooglePassword: string; uetGoogleCookies?: unknown },
+    onProgress?: (message: string) => void,
+    // Called when the parent/guardian direct-login flow hits a CAPTCHA that
+    // server-side OCR couldn't confidently solve (see the adapter's
+    // Worker-safe CAPTCHA resolver). Resolve with the user's typed answer.
+    // The signal aborts if the stream fails or closes before submission.
+    onCaptchaNeeded?: (imageDataUrl: string, signal: AbortSignal) => Promise<string>,
+    callerSignal?: AbortSignal,
+  ) => {
+    const linkedAbort = createLinkedAbortController(
+      callerSignal,
+      UET_LOGIN_DEADLINE_MS,
+      new ApiError("Sign-in was cancelled.", "UET_LOGIN_CANCELLED", 499),
+      new ApiError("Sign-in took longer than three minutes and was cancelled.", "GOOGLE_AUTOMATION_TIMEOUT", 408),
+    );
+    try {
+      const token = getSessionToken();
+      const response = await fetch(`${API_BASE_URL}/api/uet/auth/import-session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: linkedAbort.signal,
+      });
+      if (!response.ok || !response.body) {
+        // Errors thrown before the stream starts (rate limiting, missing
+        // server config) still come back as plain JSON, not SSE.
+        let payload: ApiResponse<unknown> | undefined;
+        try {
+          payload = (await response.json()) as ApiResponse<unknown>;
+        } catch {
+          // Body wasn't JSON either — fall through to the generic error below.
         }
+        throw new ApiError(payload?.error?.message ?? `Request failed: ${response.status}`, payload?.error?.code, response.status);
       }
+      const reader = response.body.getReader();
+      const data = await readUetSessionStream(reader, {
+        onProgress,
+        onCaptchaNeeded,
+        submitCaptcha: (challengeId, answer) => request("/api/uet/auth/solve-captcha", {
+          method: "POST",
+          body: JSON.stringify({ challengeId, answer }),
+          signal: linkedAbort.signal,
+        }),
+        createError: (message, code, status) => new ApiError(message, code, status),
+      });
+      upsertAccount("uet", data.token, data.session?.studentCode);
+      return { token: data.token };
+    } catch (error) {
+      if (linkedAbort.signal.aborted && linkedAbort.signal.reason instanceof Error) throw linkedAbort.signal.reason;
+      throw error;
+    } finally {
+      linkedAbort.dispose();
     }
-    throw new ApiError("The sign-in stream ended unexpectedly. Try again.", undefined, 502);
   },
   // Best-effort server-side revocation (also invalidates any persisted uetGoogleCredential
   // embedded in the token). Must never throw - logout has to succeed locally even if this

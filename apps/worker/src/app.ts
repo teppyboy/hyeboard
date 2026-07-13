@@ -2,6 +2,7 @@ import { cors } from "@elysiajs/cors";
 import { decryptSession, encryptSession, fail, getLogger, HyeboardError, isExpired, ok, parseBearerToken, type EncryptedSessionPayload } from "@hyeboard/core";
 import { DaotaoClient, getAdapter, listUniversities, type BrowserBinding, type BrowserConnection } from "@hyeboard/university-adapters";
 import { Elysia, t } from "elysia";
+import { LocalCaptchaRelayCoordinator, captchaRelayCancelled, captchaRelayNotFound, type CaptchaRelayCoordinator, type PreparedCaptchaRelay } from "./captcha-relay";
 
 // ─── Runtime config ───────────────────────────────────────────
 // Self-hosted (Node/Bun) loads config from config.json + env var overrides
@@ -139,7 +140,7 @@ type ResolvedSession = { session: EncryptedSessionPayload; refreshedToken?: stri
 // login (uetParentCredential) carry a refreshable credential; every other
 // session (manual paste, vnu, mock) passes straight through the plain
 // decrypt path with the shortcut check below being a cheap no-op.
-async function resolveSession(headers: Headers | Record<string, string | undefined>): Promise<ResolvedSession> {
+export async function resolveSession(headers: Headers | Record<string, string | undefined>): Promise<ResolvedSession> {
   const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
   const token = parseBearerToken(h.get("Authorization"));
   if (!token) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
@@ -152,9 +153,8 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
 
   try {
     const adapter = getAdapter("uet");
-    // Parent/guardian accounts refresh via a single fast JSON POST (no
-    // browser automation, no browserConnection needed at all) — see
-    // adapter.ts's importSession() PH-prefix branch.
+    // Parent/guardian accounts refresh through StudentHub's direct CAPTCHA
+    // APIs. Google accounts still need browser automation below.
     const refreshed = session.uetParentCredential
       ? await adapter.importSession({
           uetGoogleEmail: session.uetParentCredential.username,
@@ -176,11 +176,17 @@ async function resolveSession(headers: Headers | Record<string, string | undefin
     // frontend and logs both need to distinguish e.g. STUDENTHUB_MAINTENANCE
     // (503, transient, not a "sign in again" situation) from a genuine
     // GOOGLE_AUTOMATION_TIMEOUT/GOOGLE_AUTOMATION_BLOCKED/challenge failure.
-    // Always log the full original error server-side first, since the code
-    // above previously discarded it entirely (only the message text
-    // survived into the wrapped error, and even that only reached the
-    // client, never the server logs).
-    getLogger().error({ err: error }, "resolveSession: automatic sign-in refresh failed");
+    if (session.uetParentCredential) {
+      // Parent refresh errors stay sanitized: upstream bodies, credentials,
+      // CAPTCHA values, IDs, images, account data, and tokens must not enter logs.
+      getLogger().error({
+        code: error instanceof HyeboardError ? error.code : "PARENT_REFRESH_FAILED",
+        status: error instanceof HyeboardError ? error.status : 500,
+        errorName: error instanceof Error ? error.name : typeof error,
+      }, "resolveSession: parent sign-in refresh failed");
+    } else {
+      getLogger().error({ err: error }, "resolveSession: automatic sign-in refresh failed");
+    }
     if (error instanceof HyeboardError) throw error;
     throw new HyeboardError("GOOGLE_REFRESH_FAILED", "Automatic sign-in refresh failed. Sign in again.", 401);
   }
@@ -300,6 +306,68 @@ function requestId(): string {
     try { return require("crypto").randomUUID().slice(0, 8); } catch { /* fall through */ }
   }
   return Math.random().toString(36).substring(2, 10);
+}
+
+// ── CAPTCHA human-relay coordination ─────────────────────────────────
+// The uet adapter's parent/guardian direct-login flow (see adapter.ts,
+// captcha.ts) receives an image from StudentHub's CAPTCHA API that OCR
+// couldn't confidently solve. When that happens mid-login, the
+// server needs to pause and wait for the end user (on the OTHER side of
+// the currently-open SSE connection) to look at the image and type an
+// answer. Cloudflare configures a Durable Object coordinator; Node/Bun use
+// an abort-aware process-local coordinator.
+let captchaRelayCoordinator: CaptchaRelayCoordinator = new LocalCaptchaRelayCoordinator();
+
+const CAPTCHA_RELAY_TOKEN_DOMAIN = "hyeboard:captcha-relay:v1\0";
+const CAPTCHA_RELAY_ID_PATTERN = /^[A-Za-z0-9_-]{16,80}$/;
+const CAPTCHA_RELAY_SIGNATURE_PATTERN = /^[0-9a-f]{64}$/;
+
+export function setCaptchaRelayCoordinator(coordinator: CaptchaRelayCoordinator): void {
+  captchaRelayCoordinator = coordinator;
+}
+
+export async function createCaptchaRelayToken(relayId: string): Promise<string> {
+  if (!CAPTCHA_RELAY_ID_PATTERN.test(relayId)) throw new Error("Invalid CAPTCHA relay ID");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(getSessionSecret()),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${CAPTCHA_RELAY_TOKEN_DOMAIN}${relayId}`)));
+  return `${relayId}.${signature}`;
+}
+
+async function verifyCaptchaRelayToken(token: string): Promise<string | undefined> {
+  try {
+    const separator = token.indexOf(".");
+    if (separator === -1 || separator !== token.lastIndexOf(".")) return undefined;
+    const relayId = token.slice(0, separator);
+    const signature = token.slice(separator + 1);
+    if (!CAPTCHA_RELAY_ID_PATTERN.test(relayId) || !CAPTCHA_RELAY_SIGNATURE_PATTERN.test(signature)) return undefined;
+
+    const signatureBytes = new Uint8Array(32);
+    for (let index = 0; index < signatureBytes.length; index += 1) {
+      signatureBytes[index] = Number.parseInt(signature.slice(index * 2, index * 2 + 2), 16);
+    }
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(getSessionSecret()),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    const authentic = await crypto.subtle.verify(
+      "HMAC",
+      key,
+      signatureBytes,
+      new TextEncoder().encode(`${CAPTCHA_RELAY_TOKEN_DOMAIN}${relayId}`),
+    );
+    return authentic ? relayId : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function hex(bytes: ArrayBuffer): string {
@@ -469,49 +537,80 @@ export function createApp(adapter: any) {
     // ── Public — no session required ──
     .get("/api/health", () => ok({ status: "ok", service: "hyeboard" }))
     .get("/api/universities", () => ok(listUniversities()))
-    .post("/api/:universityId/auth/import-session", async ({ params, body }) => {
+    .post("/api/:universityId/auth/import-session", async ({ params, body, request }) => {
       const adapterInstance = getAdapter(params.universityId);
-      // Parent/guardian accounts ("PH..." prefix — see adapter.ts's
-      // importSession() and har-notes.md) authenticate with a single fast
-      // JSON POST, no browser automation involved — they don't need the
-      // SSE progress stream or the Google-automation rate limiter below,
-      // and fall straight through to the plain-response branch at the
-      // bottom of this handler, same as vnu/manual-token/mock logins.
-      const isParentLogin = Boolean(body.uetGoogleEmail && /^ph/i.test(body.uetGoogleEmail.trim()));
-      if (params.universityId === "uet" && body.uetGoogleEmail && !isParentLogin) {
+      // Keep parent/guardian direct API logins on this SSE route so a
+      // server-side OCR miss can relay the CAPTCHA image to the user. The
+      // same rate limit remains shared with Google automation.
+      if (params.universityId === "uet" && body.uetGoogleEmail) {
         await checkAndIncrementGoogleLoginAttempts(body.uetGoogleEmail);
-        // The uet Google-login automation is the one slow (potentially 90s+),
-        // multi-step login path in the app — stream interim progress to the
-        // client as Server-Sent Events instead of one opaque blocking POST.
-        // Every other branch below (vnu, manual-token/cookie paste, mock)
+        // Google automation can take 90s+; parent direct login may pause for
+        // a human CAPTCHA answer. Stream both as Server-Sent Events. Every
+        // other branch below (vnu, manual-token/cookie paste, mock)
         // resolves almost instantly and keeps the plain JSON response.
         const encoder = new TextEncoder();
+        let activeRelay: PreparedCaptchaRelay | undefined;
+        let cancelled = false;
+        let closed = false;
+        const cancelRelay = async () => {
+          if (cancelled) return;
+          cancelled = true;
+          const relay = activeRelay;
+          activeRelay = undefined;
+          await relay?.cancel().catch(() => undefined);
+        };
         const stream = new ReadableStream({
           async start(controller) {
             const send = (event: string, data: unknown) => {
+              if (cancelled || closed) return;
               try {
                 controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
               } catch {
-                // Client disconnected and the controller is already closed —
-                // nothing further to report.
+                void cancelRelay();
               }
             };
+            const close = () => {
+              if (cancelled || closed) return;
+              closed = true;
+              controller.close();
+            };
+            const onAbort = () => void cancelRelay();
+            request.signal.addEventListener("abort", onAbort, { once: true });
             try {
               const imported = await adapterInstance.importSession(body, {
                 browserConnection: browserConnection(),
                 onProgress: (message) => send("progress", { message }),
+                onCaptchaNeeded: async (image) => {
+                  const relay = await captchaRelayCoordinator.prepare(image);
+                  activeRelay = relay;
+                  try {
+                    const relayToken = await createCaptchaRelayToken(relay.challengeId);
+                    if (cancelled || request.signal.aborted) throw captchaRelayCancelled();
+                    send("captcha_required", { challengeId: relayToken, image: relay.image });
+                    return await relay.wait(request.signal);
+                  } catch (error) {
+                    if (activeRelay === relay) await relay.cancel().catch(() => undefined);
+                    throw error;
+                  } finally {
+                    if (activeRelay === relay) activeRelay = undefined;
+                  }
+                },
               });
               const token = await encryptSession(imported.session, getSessionSecret());
               send("done", { token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
             } catch (error) {
-              const { code, message, status } = errorPayload(error);
-              const level = status >= 500 ? "error" : "warn";
-              getLogger()[level]({ code, status }, message);
-              send("error", { code, message, status });
+              if (!cancelled) {
+                const { code, message, status } = errorPayload(error);
+                const level = status >= 500 ? "error" : "warn";
+                getLogger()[level]({ code, status }, message);
+                send("error", { code, message, status });
+              }
             } finally {
-              controller.close();
+              request.signal.removeEventListener("abort", onAbort);
+              close();
             }
           },
+          cancel: cancelRelay,
         });
         return new Response(stream, {
           headers: {
@@ -540,6 +639,22 @@ export function createApp(adapter: any) {
       const token = await encryptSession(imported.session, getSessionSecret());
       return ok({ token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
     }, { body: importSessionBody })
+    // Answers a CAPTCHA challenge raised mid-login by the "captcha_required"
+    // SSE event above. No session token exists
+    // yet at this point in the flow (the whole point is to finish logging
+    // in), so this is deliberately unauthenticated. Verify the signed relay
+    // token before coordinator access so forged IDs cannot instantiate DOs.
+    .post("/api/uet/auth/solve-captcha", async ({ body }) => {
+      const relayId = await verifyCaptchaRelayToken(body.challengeId);
+      if (!relayId) throw captchaRelayNotFound();
+      await captchaRelayCoordinator.answer(relayId, body.answer);
+      return ok({ accepted: true });
+    }, {
+      body: t.Object({
+        challengeId: t.String({ minLength: 1, maxLength: 160 }),
+        answer: t.String({ minLength: 1, maxLength: 64 }),
+      }),
+    })
     .post("/api/:universityId/auth/logout", async ({ headers }) => {
       const h = headers instanceof Headers ? headers : new Headers(headers as Record<string, string>);
       const token = parseBearerToken(h.get("Authorization"));

@@ -1,4 +1,4 @@
-import { getLogger, HyeboardError, unwrapStudentHubEnvelope, type EncryptedSessionPayload } from "@hyeboard/core";
+import { HyeboardError, unwrapStudentHubEnvelope, type EncryptedSessionPayload } from "@hyeboard/core";
 import { BROWSER_USER_AGENT } from "../http";
 import type {
   StudentHubAdmissionInfo,
@@ -10,7 +10,8 @@ import type {
   StudentHubCommitteeCheck,
   StudentHubCourseCount,
   StudentHubDashboardBanner,
-  StudentHubDirectLogin,
+  StudentHubCaptchaChallenge,
+  StudentHubDirectLoginResult,
   StudentHubDistrict,
   StudentHubDktnCourses,
   StudentHubExam,
@@ -40,6 +41,16 @@ import type {
 } from "./types";
 
 const STUDENTHUB_BASE = "https://studenthub.uet.edu.vn";
+const CAPTCHA_IMAGE_PREFIX = "data:image/png;base64,";
+const MAX_CAPTCHA_BASE64_LENGTH = 256 * 1024;
+
+function malformedResponse(): HyeboardError {
+  return new HyeboardError("STUDENTHUB_REQUEST_FAILED", "The university portal returned malformed data.", 502);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
 export class StudentHubClient {
   constructor(private readonly session?: EncryptedSessionPayload) {}
@@ -63,7 +74,7 @@ export class StudentHubClient {
     return headers;
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async requestJson(path: string, init: RequestInit = {}): Promise<unknown> {
     let response: Response;
     try {
       response = await fetch(`${STUDENTHUB_BASE}${path}`, {
@@ -75,69 +86,77 @@ export class StudentHubClient {
     }
     if (!response.ok) throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", `University portal request failed: ${response.status}`, response.status);
     try {
-      const json = (await response.json()) as T;
-      return unwrapStudentHubEnvelope(json);
+      return await response.json();
     } catch {
       throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "The university portal returned a non-JSON response.", 502);
     }
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const json = await this.requestJson(path, init);
+    return unwrapStudentHubEnvelope(json as { code?: unknown; msgCode?: unknown; data?: T } | T);
   }
 
   async exchangeGoogleCredential(credential: string) {
     return this.request<StudentHubGoogleLogin>(`/api/auth/google/callback?code=${encodeURIComponent(credential)}`);
   }
 
-  // Direct username/password login — used by parent/guardian accounts
-  // (see har-notes.md's "parent/guardian account" section). No browser
-  // automation involved: a single JSON POST, resolves near-instantly.
-  // Unlike exchangeGoogleCredential/request's other callers, this response
-  // is NOT wrapped in the {code, msgCode, data} envelope in the captured
-  // HAR, so it's read directly rather than via unwrapStudentHubEnvelope.
-  // Returns null (not a thrown error) when StudentHub responds 200 with
-  // { code, msgCode, data: null } — its way of representing a rejected
-  // login (wrong username/password) without a non-2xx HTTP status.
-  // Confirmed live: a caller that assumed this was always non-null crashed
-  // with "Cannot read properties of null" instead of a clean
-  // INVALID_STUDENTHUB_CREDENTIAL error — see adapter.ts's null-check.
-  async authenticateDirect(username: string, password: string): Promise<StudentHubDirectLogin | null> {
-    let response: Response;
+  async getCaptchaChallenge(): Promise<StudentHubCaptchaChallenge> {
+    const json = await this.requestJson("/api/auth/captcha");
+    if (!isRecord(json) || !isRecord(json.data)) throw malformedResponse();
+
+    const { captchaId, image } = json.data;
+    if (typeof captchaId !== "string" || !captchaId.trim() || typeof image !== "string" || !image.startsWith(CAPTCHA_IMAGE_PREFIX)) {
+      throw malformedResponse();
+    }
+
+    const encoded = image.slice(CAPTCHA_IMAGE_PREFIX.length);
+    const validBase64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+    if (!encoded || encoded.length > MAX_CAPTCHA_BASE64_LENGTH || !validBase64.test(encoded)) throw malformedResponse();
     try {
-      response = await fetch(`${STUDENTHUB_BASE}/api/auth/login`, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "User-Agent": BROWSER_USER_AGENT,
-          Origin: STUDENTHUB_BASE,
-          Referer: `${STUDENTHUB_BASE}/login`,
-        },
-        body: JSON.stringify({ userName: username, password }),
-      });
-    } catch {
-      throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "Could not reach the university portal. Try again later.", 502);
+      if (!atob(encoded)) throw malformedResponse();
+    } catch (error) {
+      if (error instanceof HyeboardError) throw error;
+      throw malformedResponse();
     }
-    if (!response.ok) throw new HyeboardError("INVALID_STUDENTHUB_CREDENTIAL", "Incorrect username or password.", 401);
-    let bodyText: string;
-    try {
-      bodyText = await response.text();
-    } catch {
-      throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "The university portal returned a non-JSON response.", 502);
+
+    return { captchaId, image };
+  }
+
+  async authenticateDirect(
+    username: string,
+    password: string,
+    captchaId: string,
+    captchaValue: string,
+  ): Promise<StudentHubDirectLoginResult> {
+    const json = await this.requestJson("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ userName: username, password, captchaId, captchaValue }),
+    });
+    if (!isRecord(json) || !("data" in json) || (typeof json.code !== "string" && typeof json.code !== "number")) {
+      throw malformedResponse();
     }
-    let json: { data?: StudentHubDirectLogin } | StudentHubDirectLogin;
-    try {
-      json = JSON.parse(bodyText) as { data?: StudentHubDirectLogin } | StudentHubDirectLogin;
-    } catch {
-      throw new HyeboardError("STUDENTHUB_REQUEST_FAILED", "The university portal returned a non-JSON response.", 502);
+
+    const code = String(json.code).trim();
+    if (!code) throw malformedResponse();
+    if (json.data === null) {
+      if (code === "200") throw malformedResponse();
+      return { code };
     }
-    const result = unwrapStudentHubEnvelope(json);
-    if (!result || !result.accessToken) {
-      // Diagnostic-only: log the raw response body shape (never the
-      // password) when a login attempt comes back without a usable token,
-      // so a genuinely-correct-credentials report can be distinguished
-      // from a real wrong-password rejection via HYEB_LOG_LEVEL=debug logs
-      // instead of staying a total black box.
-      getLogger().debug({ username, status: response.status, body: bodyText.slice(0, 500) }, "authenticateDirect: login did not return a usable accessToken");
+    if (!isRecord(json.data) || typeof json.data.accessToken !== "string" || !json.data.accessToken.trim()) {
+      throw malformedResponse();
     }
-    return result;
+    if (json.data.accountCode !== undefined && (typeof json.data.accountCode !== "string" || !json.data.accountCode.trim())) {
+      throw malformedResponse();
+    }
+
+    return {
+      code,
+      login: {
+        accessToken: json.data.accessToken,
+        ...(typeof json.data.accountCode === "string" ? { accountCode: json.data.accountCode } : {}),
+      },
+    };
   }
 
   getProfile() { return this.request<StudentHubStudent>("/api/student/detail"); }

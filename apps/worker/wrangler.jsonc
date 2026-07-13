@@ -2,11 +2,16 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "hyeboard",
   "main": "src/index.ts",
-  "compatibility_date": "2026-06-30",
+  "compatibility_date": "2026-07-02",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 0.1
+  },
+  "vars": {
+    "HYEB_ALLOWED_ORIGINS": "",
+    "HYEB_BROWSER_WS_ENDPOINT": "",
+    "HYEB_LOG_LEVEL": "info"
   },
   "assets": {
     "directory": "../web/dist",
@@ -18,6 +23,20 @@
   "browser": {
     "binding": "BROWSER"
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CAPTCHA_RELAY",
+        "class_name": "CaptchaRelayDurableObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["CaptchaRelayDurableObject"]
+    }
+  ],
   "secrets": {
     "required": ["HYEB_SESSION_SECRET"]
   }

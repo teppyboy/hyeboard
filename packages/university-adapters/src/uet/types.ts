@@ -11,6 +11,13 @@ export type StudentHubGoogleLogin = {
   dependAccountCode?: string;
 };
 
+export type StudentHubCaptchaChallenge = { captchaId: string; image: string };
+
+export type StudentHubDirectLoginResult = {
+  code: string;
+  login?: { accessToken: string; accountCode?: string };
+};
+
 export type StudentHubStudent = {
   id?: string | number;
   personCode?: string;
@@ -159,12 +166,6 @@ export type StudentHubServiceRequest = {
 };
 
 export type StudentHubRequestType = { label?: string; value?: string | number };
-
-// Same response shape as the Google-OAuth callback login — StudentHub's
-// direct username/password login (POST /api/auth/login, used by
-// parent/guardian accounts, see har-notes.md's "parent/guardian account"
-// section) returns identical fields.
-export type StudentHubDirectLogin = StudentHubGoogleLogin;
 
 // Generic Spring Data Page<T> envelope — used by the reference/lookup
 // endpoints (province/district/ward/nation/blood-type search) and shares

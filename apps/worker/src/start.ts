@@ -1,68 +1,18 @@
 import { configureLogger, getLogger } from "@hyeboard/core";
-import { createApp, loadConfigFile, setCloudflareBrowserBinding, setRuntimeConfig } from "./app";
+import { createApp, loadConfigFile, setCaptchaRelayCoordinator, setRuntimeConfig } from "./app";
+import { LocalCaptchaRelayCoordinator } from "./captcha-relay";
 import { registerStaticAssets } from "./serve-static";
 
-// Shared startup logic for all three supported runtimes (Cloudflare
-// Workers, Node.js, Bun). Runtime detection + dynamic imports let one
-// function replace what used to be three near-identical thin wrappers
-// (index.ts/serve-node.ts/serve-bun.ts) without pulling runtime-specific
-// modules into a static import graph that the *other* runtimes' module
-// loaders can't resolve.
-//
-// Exported as a plain async function (not run as a top-level side effect
-// of importing this file) so that index.ts (the Cloudflare/default entry,
-// wired to wrangler.jsonc's "main") and index.node.ts (the Node/Bun-only
-// entry that additionally registers a Patchright browser launcher) can
-// both import and invoke it exactly once, without either one triggering
-// the other's invocation as an unwanted side effect of a plain import.
-//
-// `cloudflare:workers` in particular MUST stay a dynamic import: a static
-// `import ... from "cloudflare:workers"` would make Node/Bun's ESM loader
-// throw "Cannot find module" while resolving this file's imports, before
-// any of the runtime-detection code below ever runs.
+// Node/Bun startup. Cloudflare has a separate entry point in index.ts so
+// Durable Object exports and generated bindings never enter this graph.
 
 declare const Bun: unknown;
 declare const process: { env: Record<string, string | undefined> };
 
 const isBun = typeof Bun !== "undefined";
-const isCloudflareWorkers = typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
 
 export async function start(): Promise<unknown> {
-  if (isCloudflareWorkers) {
-    const { env } = await import("cloudflare:workers");
-    const { CloudflareAdapter } = await import("elysia/adapter/cloudflare-worker");
-    const cfEnv = env as unknown as {
-      HYEB_SESSION_SECRET: string;
-      HYEB_ALLOWED_ORIGINS?: string;
-      HYEB_BROWSER_WS_ENDPOINT?: string;
-      HYEB_LOG_LEVEL?: string;
-      BROWSER: { fetch: typeof fetch };
-    };
-
-    // Workers has no fs/worker_threads, so pino's normal destination
-    // doesn't work here — "browser" mode formats logs and calls
-    // console.<level>() instead, which wrangler tail / the dashboard Logs
-    // tab already captures. Set HYEB_LOG_LEVEL=debug as a var/secret to
-    // see per-request debug logs.
-    configureLogger({ level: cfEnv.HYEB_LOG_LEVEL, mode: "browser" });
-
-    // Cloudflare Workers vars/secrets aren't guaranteed to be mirrored
-    // onto process.env, so pass the real `env` object explicitly rather
-    // than relying on app.ts's process.env default (used by Node/Bun
-    // below).
-    setRuntimeConfig({
-      HYEB_SESSION_SECRET: cfEnv.HYEB_SESSION_SECRET,
-      HYEB_ALLOWED_ORIGINS: cfEnv.HYEB_ALLOWED_ORIGINS,
-      HYEB_BROWSER_WS_ENDPOINT: cfEnv.HYEB_BROWSER_WS_ENDPOINT,
-      HYEB_LOG_LEVEL: cfEnv.HYEB_LOG_LEVEL,
-    });
-    setCloudflareBrowserBinding(cfEnv.BROWSER);
-
-    return createApp(CloudflareAdapter);
-  } else {
-    // Self-hosted (Node or Bun): config from process.env, actively listen
-    // on a port instead of exporting a fetch handler for a runtime to
-    // invoke.
+    // Self-hosted config comes from process.env and config.json.
     //
     // Bun auto-loads .env; Node does not. Load it explicitly via Node's
     // built-in process.loadEnvFile (20.6+) so `tsx src/index.ts` and the
@@ -125,6 +75,8 @@ export async function start(): Promise<unknown> {
       configureLogger({ level });
     }
 
+    setCaptchaRelayCoordinator(new LocalCaptchaRelayCoordinator());
+
     const adapter = isBun
       ? (await import("elysia/adapter/bun")).BunAdapter
       : (await import("@elysiajs/node")).node();
@@ -154,5 +106,4 @@ export async function start(): Promise<unknown> {
     nodeProcess.on("SIGINT", () => void shutdown());
     nodeProcess.on("SIGTERM", () => void shutdown());
     return undefined;
-  }
 }
