@@ -27,7 +27,7 @@ export function TuitionPage() {
             </div>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, bills]) => (
               <div key={term} className="space-y-2">
-                <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{formatTermLabel(term, state.universityId, t.terms)}</h2>
+                <h2 className="text-base font-semibold">{formatTermLabel(term, state.universityId, t.terms)}</h2>
                 <DataTable headers={t.tuition.headers} rows={bills.map((b) => [b.title, <StatusBadge key={b.id} value={b.status} />, b.paidAt ? formatDateTime(b.paidAt) : "-", formatCurrency(b.totalAmount), formatCurrency(b.paidAmount), formatCurrency(b.remainingAmount)])} />
               </div>
             ))}
