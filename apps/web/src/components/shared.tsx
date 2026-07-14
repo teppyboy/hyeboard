@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
+import { formatStatus } from "@/lib/presentation";
 import { cn, formatDateTime } from "@/lib/utils";
 
 const VNU_UET_LOGO_URL = "https://2489013871.e.cdneverest.net/uet.edu.vn/2017/02/cropped-logo2_new-1-180x180.png";
@@ -57,6 +58,40 @@ export function Metric({ title, value, detail, icon: Icon, tone = "default" }: M
   );
 }
 
+export function StatusBadge({ value }: { value?: string | null }) {
+  const { t } = useLocale();
+  const status = formatStatus(value ?? undefined, t.status);
+  return <Badge data-testid="status-badge" data-tone={status.tone}>{status.label}</Badge>;
+}
+
+export function SummaryStrip({ children }: { children: ReactNode }) {
+  return <div data-testid="summary-strip" className="summary-strip">{children}</div>;
+}
+
+export function SummaryStat({ label, value, detail }: { label: string; value: ReactNode; detail?: string }) {
+  return (
+    <div className="summary-stat">
+      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+      {detail ? <div className="mt-1 text-xs text-muted-foreground">{detail}</div> : null}
+    </div>
+  );
+}
+
+type SectionPanelProps = { title: ReactNode; description?: string; children: ReactNode; testId?: string };
+
+export function SectionPanel({ title, description, children, testId }: SectionPanelProps) {
+  return (
+    <section data-testid={testId} className="section-panel">
+      <header className="section-panel-header">
+        <h2 className="text-base font-semibold">{title}</h2>
+        {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
+      </header>
+      <div className="divide-y divide-border">{children}</div>
+    </section>
+  );
+}
+
 export function ScheduleItem({ item }: { item: ClassSession }) {
   const { t } = useLocale();
   const label = item.timeLabel ?? (item.periodStart != null
@@ -82,7 +117,7 @@ export function AssignmentItem({ item }: { item: Assignment }) {
         <p className="truncate text-sm font-medium">{item.title}</p>
         <p className="truncate text-xs text-muted-foreground">{item.courseName ?? item.courseCode ?? t.assignments.learningPlatform} · {formatDateTime(item.dueAt)}</p>
       </div>
-      <Badge className={cn("shrink-0", item.status === "missing" ? "bg-destructive text-destructive-foreground" : "border border-border bg-background font-normal text-foreground")}>{item.status}</Badge>
+      <StatusBadge value={item.status} />
     </div>
   );
 }
@@ -95,7 +130,7 @@ export function CourseRow({ course }: { course: Course }) {
     <>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0"><p className="truncate text-sm font-semibold">{course.code}</p><p className="truncate text-sm text-muted-foreground">{course.name}</p></div>
-        <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{course.status ?? t.courses.statusActive}</Badge>
+        <StatusBadge value={course.status ?? "active"} />
       </div>
       {course.nextDeadline ? <p className="mt-2 text-xs text-muted-foreground">{t.courses.nextDeadline(formatDateTime(course.nextDeadline))}</p> : null}
       {url ? <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary"><ExternalLink size={12} /> {t.courses.openCoursePage}</p> : null}
@@ -108,7 +143,7 @@ export function CourseRow({ course }: { course: Course }) {
   );
 }
 
-type FeedItemProps = { title: string; detail: string; url?: string };
+type FeedItemProps = { title: string; detail: ReactNode; url?: string };
 
 export function FeedItem({ title, detail, url }: FeedItemProps) {
   const safeUrl = safeExternalUrl(url);
@@ -117,7 +152,7 @@ export function FeedItem({ title, detail, url }: FeedItemProps) {
     <div className="list-row">
       <div className="flex min-w-0 items-start gap-3">
         <CheckCircle2 className="mt-0.5 shrink-0 text-primary" size={16} />
-        <div className="min-w-0"><p className="truncate text-sm font-medium">{titleNode}</p><p className="truncate text-xs text-muted-foreground">{detail}</p></div>
+        <div className="min-w-0"><p className="truncate text-sm font-medium">{titleNode}</p><div className="truncate text-xs text-muted-foreground">{detail}</div></div>
       </div>
     </div>
   );

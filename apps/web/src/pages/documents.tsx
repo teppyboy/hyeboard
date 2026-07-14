@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Empty, FeatureHeader, FeedItem } from "@/components/shared";
+import { Empty, FeatureHeader, FeedItem, StatusBadge } from "@/components/shared";
 import { api } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
 import { cn, formatDateTime } from "@/lib/utils";
@@ -47,7 +47,7 @@ function DocumentRow({ item }: { item: DocumentItem }) {
 
 function RequestRow({ item }: { item: ServiceRequest }) {
   const { t } = useLocale();
-  return <FeedItem title={item.title} detail={item.status ?? item.type ?? t.common.request} />;
+  return <FeedItem title={item.title} detail={item.status ? <StatusBadge value={item.status} /> : (item.type ?? t.common.request)} />;
 }
 
 export function DocumentsPage() {

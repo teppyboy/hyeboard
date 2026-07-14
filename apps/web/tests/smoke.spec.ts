@@ -128,6 +128,14 @@ test("friendly demo login opens dashboard", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Open class page" })).toHaveAttribute("href", "https://portal.uet.vnu.edu.vn/courses/5359");
 });
 
+test("status labels render as readable text", async ({ page }) => {
+  await loginDemo(page);
+  await expect(page.getByText("In progress", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not started", { exact: true })).toBeVisible();
+  await expect(page.getByText("in_progress", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("not_started", { exact: true })).toHaveCount(0);
+});
+
 test("light and dark mode toggle changes rendered theme", async ({ page }) => {
   await loginDemo(page);
   await page.goto("/settings");

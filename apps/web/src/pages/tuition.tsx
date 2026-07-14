@@ -1,5 +1,5 @@
 import type { Bill } from "@hyeboard/schemas";
-import { DataTable, FeatureFrame, Metric } from "@/components/shared";
+import { DataTable, FeatureFrame, Metric, StatusBadge } from "@/components/shared";
 import { api } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
@@ -27,7 +27,7 @@ export function TuitionPage() {
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, bills]) => (
               <div key={term} className="space-y-2">
                 <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{term}</h2>
-                <DataTable headers={t.tuition.headers} rows={bills.map((b) => [b.title, b.status ?? "-", b.paidAt ? formatDateTime(b.paidAt) : "-", formatCurrency(b.totalAmount), formatCurrency(b.paidAmount), formatCurrency(b.remainingAmount)])} />
+                <DataTable headers={t.tuition.headers} rows={bills.map((b) => [b.title, <StatusBadge key={b.id} value={b.status} />, b.paidAt ? formatDateTime(b.paidAt) : "-", formatCurrency(b.totalAmount), formatCurrency(b.paidAmount), formatCurrency(b.remainingAmount)])} />
               </div>
             ))}
           </div>
