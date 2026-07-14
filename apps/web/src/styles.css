@@ -176,6 +176,12 @@ textarea.control {
 
 .nav-link.justify-center:hover { transform: none; }
 
+.nav-group-label { font-size: 0.6875rem; font-weight: 600; color: hsl(var(--muted-foreground)); }
+
+.mobile-nav-link { min-height: 2.75rem; }
+
+.app-header { min-height: 3.5rem; border-bottom: 1px solid hsl(var(--border)); }
+
 .login-screen {
   background:
     linear-gradient(hsl(var(--border) / 0.4) 1px, transparent 1px),

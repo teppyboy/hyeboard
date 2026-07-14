@@ -1,6 +1,6 @@
 import type { Notification } from "@hyeboard/schemas";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
-import { Bell, BookOpen, CalendarDays, Check, CheckCircle2, ClipboardList, FileText, GraduationCap, LayoutDashboard, LibraryBig, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Receipt, Search, Settings, UserRound, X } from "lucide-react";
+import { Award, Bell, BookOpen, CalendarDays, Check, ClipboardCheck, Files, GraduationCap, LayoutDashboard, ListChecks, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings, UserRound, WalletCards, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -11,42 +11,60 @@ import { type Translations, useLocale } from "@/lib/i18n";
 import { cn, formatDateTime } from "@/lib/utils";
 import { useHyeboard } from "@/state";
 
-declare const __HYEB_GIT_COMMIT__: string;
+type NavCapability = "timetable" | "courses" | "assignments" | "grades" | "exams" | "tuition" | "documentsHub" | "trainingPoints";
+type NavKey = "dashboard" | "timetable" | "courses" | "assignments" | "grades" | "exams" | "tuition" | "documents" | "trainingPoints" | "settings";
+type NavGroupKey = "overview" | "study" | "services" | "system";
+type NavItem = { key: NavKey; to: string; icon: typeof LayoutDashboard; capability?: NavCapability };
+type NavGroup = { key: NavGroupKey; items: NavItem[] };
 
-const nav = [
-  { to: "/", key: "dashboard", icon: LayoutDashboard },
-  { to: "/timetable", key: "timetable", icon: CalendarDays, capability: "timetable" },
-  { to: "/courses", key: "courses", icon: BookOpen, capability: "courses" },
-  { to: "/assignments", key: "assignments", icon: ClipboardList, capability: "assignments" },
-  { to: "/grades", key: "grades", icon: GraduationCap, capability: "grades" },
-  { to: "/exams", key: "exams", icon: LibraryBig, capability: "exams" },
-  { to: "/tuition", key: "tuition", icon: Receipt, capability: "tuition" },
-  { to: "/documents", key: "documents", icon: FileText, capability: "documentsHub" },
-  { to: "/training-points", key: "trainingPoints", icon: CheckCircle2, capability: "trainingPoints" },
-  { to: "/settings", key: "settings", icon: Settings },
-] as const;
+const navGroups: NavGroup[] = [
+  { key: "overview", items: [{ key: "dashboard", to: "/", icon: LayoutDashboard }] },
+  {
+    key: "study",
+    items: [
+      { key: "timetable", to: "/timetable", icon: CalendarDays, capability: "timetable" },
+      { key: "courses", to: "/courses", icon: BookOpen, capability: "courses" },
+      { key: "assignments", to: "/assignments", icon: ListChecks, capability: "assignments" },
+      { key: "grades", to: "/grades", icon: GraduationCap, capability: "grades" },
+      { key: "exams", to: "/exams", icon: ClipboardCheck, capability: "exams" },
+    ],
+  },
+  {
+    key: "services",
+    items: [
+      { key: "tuition", to: "/tuition", icon: WalletCards, capability: "tuition" },
+      { key: "documents", to: "/documents", icon: Files, capability: "documentsHub" },
+      { key: "trainingPoints", to: "/training-points", icon: Award, capability: "trainingPoints" },
+    ],
+  },
+  { key: "system", items: [{ key: "settings", to: "/settings", icon: Settings }] },
+];
 
-function SidebarNav({ collapsed = false }: { collapsed?: boolean } = {}) {
+function isCapabilityVisible(capability: NavCapability | undefined, capabilities: Record<string, boolean> | undefined): boolean {
+  if (!capability) return true;
+  if (!capabilities) return true;
+  if (capability === "documentsHub") return capabilities.documents || capabilities.requests || capabilities.news;
+  return capabilities[capability] !== false;
+}
+
+function SidebarNav({ collapsed = false, mobile = false }: { collapsed?: boolean; mobile?: boolean } = {}) {
   const state = useHyeboard();
   const { t } = useLocale();
   const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
-  const visibleNav = nav.filter((item) => {
-    if (!("capability" in item)) return true;
-    if (!capabilities) return true;
-    if (item.capability === "documentsHub") return capabilities.documents || capabilities.requests || capabilities.news;
-    return capabilities[item.capability as keyof typeof capabilities] !== false;
-  });
   return (
-    <nav className="space-y-1 px-3 py-4">
-      {visibleNav.map((item) => <NavLink key={item.to} to={item.to} label={t.nav[item.key]} icon={item.icon} collapsed={collapsed} />)}
+    <nav className="space-y-4 px-3 py-4">
+      {navGroups.map((group) => {
+        const visibleItems = group.items.filter((item) => isCapabilityVisible(item.capability, capabilities));
+        if (!visibleItems.length) return null;
+        return (
+          <div key={group.key} className="space-y-1">
+            {!collapsed ? <p className="nav-group-label px-3 pb-1 uppercase tracking-wide">{t.nav.groups[group.key]}</p> : null}
+            {visibleItems.map((item) => <NavLink key={item.to} to={item.to} label={t.nav[item.key]} icon={item.icon} collapsed={collapsed} mobile={mobile} />)}
+          </div>
+        );
+      })}
     </nav>
   );
-}
-
-function SidebarFooter({ collapsed = false }: { collapsed?: boolean } = {}) {
-  const { t } = useLocale();
-  if (collapsed) return <div className="mt-auto" />;
-  return <p className="mt-auto px-5 pb-4 text-xs text-muted-foreground">{t.common.poweredBy(__HYEB_GIT_COMMIT__)}</p>;
 }
 
 function BrandMark({ collapsed = false }: { collapsed?: boolean } = {}) {
@@ -112,20 +130,25 @@ export function RootLayout() {
             </Button>
           </div>
           <SidebarNav collapsed={sidebarCollapsed} />
-          <SidebarFooter collapsed={sidebarCollapsed} />
         </aside>
 
         <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-          <SheetContent className="lg:hidden">
+          <SheetContent
+            className="lg:hidden"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              document.querySelector<HTMLButtonElement>("[data-testid='mobile-nav-trigger']")?.focus();
+            }}
+          >
             <SheetTitle className="sr-only">{t.common.navigation}</SheetTitle>
             <BrandMark />
-            <div onClick={() => setMobileNavOpen(false)}><SidebarNav /></div>
+            <div onClick={() => setMobileNavOpen(false)}><SidebarNav mobile /></div>
           </SheetContent>
         </Sheet>
 
         <main className="min-w-0">
-          <header className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b border-border bg-background/85 px-4 backdrop-blur lg:px-6">
-            <Button variant="ghost" size="sm" className="lg:hidden" onClick={() => setMobileNavOpen(true)} aria-label={t.common.openNavigationMenu}><Menu size={18} /></Button>
+          <header className="app-header sticky top-0 z-10 flex items-center gap-3 bg-background/85 px-4 backdrop-blur lg:px-6">
+            <Button data-testid="mobile-nav-trigger" variant="ghost" size="sm" className="lg:hidden" onClick={() => setMobileNavOpen(true)} aria-label={t.common.openNavigationMenu}><Menu size={18} /></Button>
             <NavSearch />
             <NotificationsMenu />
             <AccountMenu />
@@ -142,11 +165,20 @@ export function RootLayout() {
 function NavSearch() {
   const { t } = useLocale();
   const navigate = useNavigate();
+  const state = useHyeboard();
   const containerRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
 
-  const navWithLabels = useMemo(() => nav.map((item) => ({ ...item, label: t.nav[item.key] })), [t]);
+  const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
+  const navWithLabels = useMemo(
+    () =>
+      navGroups
+        .flatMap((group) => group.items)
+        .filter((item) => isCapabilityVisible(item.capability, capabilities))
+        .map((item) => ({ ...item, label: t.nav[item.key] })),
+    [t, capabilities],
+  );
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -286,9 +318,14 @@ function AccountMenu() {
   );
 }
 
-function NavLink({ to, label, icon: Icon, collapsed = false }: { to: string; label: string; icon: typeof LayoutDashboard; collapsed?: boolean }) {
+function NavLink({ to, label, icon: Icon, collapsed = false, mobile = false }: { to: string; label: string; icon: typeof LayoutDashboard; collapsed?: boolean; mobile?: boolean }) {
   return (
-    <Link to={to} className={cn("nav-link", collapsed && "justify-center gap-0 px-0")} activeProps={{ className: cn("nav-link active", collapsed && "justify-center gap-0 px-0") }} title={collapsed ? label : undefined}>
+    <Link
+      to={to}
+      className={cn("nav-link", mobile && "mobile-nav-link", collapsed && "justify-center gap-0 px-0")}
+      activeProps={{ className: cn("nav-link active", mobile && "mobile-nav-link", collapsed && "justify-center gap-0 px-0"), "aria-current": "page" }}
+      title={collapsed ? label : undefined}
+    >
       <Icon size={16} className="shrink-0" />
       <span
         className={cn(

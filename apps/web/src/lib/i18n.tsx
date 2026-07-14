@@ -22,6 +22,12 @@ function buildDictionary() {
       documents: "Documents",
       trainingPoints: "Training Points",
       settings: "Settings",
+      groups: {
+        overview: "Overview",
+        study: "Study",
+        services: "Services",
+        system: "System",
+      },
     },
     weekday: { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" },
     status: {
@@ -329,6 +335,12 @@ function vi(): typeof en {
       documents: "Tài liệu",
       trainingPoints: "Điểm rèn luyện",
       settings: "Cài đặt",
+      groups: {
+        overview: "Tổng quan",
+        study: "Học tập",
+        services: "Dịch vụ",
+        system: "Hệ thống",
+      },
     },
     weekday: { mon: "T2", tue: "T3", wed: "T4", thu: "T5", fri: "T6", sat: "T7", sun: "CN" },
     status: {

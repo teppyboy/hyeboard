@@ -162,11 +162,16 @@ test("sidebar collapses and expands via toggle button", async ({ page, isMobile 
   test.skip(isMobile, "desktop-only sidebar, hidden below the lg breakpoint on mobile");
   await loginDemo(page);
   await expect(page.getByText("Demo", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText(/Powered by Hyeboard \(/)).toBeVisible();
+  await expect(page.getByText("Overview", { exact: true })).toBeVisible();
+  await expect(page.getByText("Study", { exact: true })).toBeVisible();
+  await expect(page.getByText("Services", { exact: true })).toBeVisible();
+  await expect(page.getByText("System", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Powered by Hyeboard/)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("Student command center")).toHaveCount(0);
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await expect(page.getByText("Demo", { exact: true })).toBeHidden();
-  await expect(page.getByText(/Powered by Hyeboard \(/)).toBeHidden();
+  await expect(page.getByText(/Powered by Hyeboard/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
   await page.waitForTimeout(350);
   const logoBox = await page.locator("aside [data-testid='brand-icon']").boundingBox();
@@ -190,6 +195,33 @@ test("mobile nav drawer opens and closes on navigation", async ({ page }) => {
   await page.getByRole("button", { name: "Open navigation menu" }).click();
   await expect(page.getByRole("heading", { name: "Navigation" })).toBeVisible();
   await expect(page.getByRole("dialog").getByText("Demo", { exact: true })).not.toHaveCSS("color", "rgb(0, 0, 0)");
+  await page.getByRole("link", { name: "Timetable" }).click();
+  await expect(page).toHaveURL(/\/timetable$/);
+  await expect(page.getByRole("heading", { name: "Navigation" })).toBeHidden();
+});
+
+test("mobile nav drawer links meet touch target size and restore focus on escape", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loginDemo(page);
+  const trigger = page.getByRole("button", { name: "Open navigation menu" });
+  await trigger.click();
+  await expect(page.getByRole("heading", { name: "Navigation" })).toBeVisible();
+
+  const links = page.getByRole("dialog").getByRole("link");
+  const count = await links.count();
+  expect(count).toBeGreaterThan(0);
+  for (let i = 0; i < count; i++) {
+    const box = await links.nth(i).boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+  }
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("heading", { name: "Navigation" })).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await expect(page.getByRole("heading", { name: "Navigation" })).toBeVisible();
   await page.getByRole("link", { name: "Timetable" }).click();
   await expect(page).toHaveURL(/\/timetable$/);
   await expect(page.getByRole("heading", { name: "Navigation" })).toBeHidden();
