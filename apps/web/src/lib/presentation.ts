@@ -68,6 +68,18 @@ export function formatStatus(status: string | undefined, labels: StatusLabels): 
   return { label: readable.charAt(0).toUpperCase() + readable.slice(1), tone: "neutral" };
 }
 
+function humanizeUnknown(value: string): string {
+  const readable = value.trim().replace(/[\s_-]+/g, " ");
+  return readable.charAt(0).toUpperCase() + readable.slice(1);
+}
+
+export function formatExamDetail(value: string | undefined, knownMap: Record<string, string>): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const normalized = trimmed.toLowerCase().replace(/[\s-]+/g, "_");
+  return knownMap[normalized] ?? humanizeUnknown(trimmed);
+}
+
 export function formatTermLabel(term: string, universityId: string, labels: TermLabels): string {
   if (universityId !== "uet" && universityId !== "mock") return term;
 

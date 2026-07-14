@@ -358,9 +358,10 @@ test("feature routes render UI instead of JSON dumps", async ({ page }) => {
 
   for (const [path, heading, text] of routes) {
     await page.goto(path);
-    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
     await expect(page.getByText(text).first()).toBeVisible();
     await expect(page.locator("pre")).toHaveCount(0);
+    await expect(page.getByText("active", { exact: true })).toHaveCount(0);
   }
 
   await page.goto("/documents");
@@ -370,12 +371,21 @@ test("feature routes render UI instead of JSON dumps", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Academic calendar update" })).toBeHidden();
 
   await page.goto("/courses");
-  await expect(page.locator(".bg-primary.transition-all")).toHaveCount(0);
+  const coursesSection = page.getByTestId("courses-section");
+  await expect(coursesSection).toBeVisible();
+  await expect(coursesSection.locator(".section-panel")).toHaveCount(0);
+  await expect(page.getByTestId("status-badge").first()).toBeVisible();
   await expect(page.getByRole("link", { name: /Open course page/ }).first()).toHaveAttribute("href", /portal\.uet\.vnu\.edu\.vn\/courses/);
+
+  await page.goto("/assignments");
+  const assignmentsSection = page.getByTestId("assignments-section");
+  await expect(assignmentsSection).toBeVisible();
+  await expect(assignmentsSection.locator(".section-panel")).toHaveCount(0);
 
   await page.goto("/exams");
   await expect(page.getByRole("button", { name: "Calendar" })).toBeVisible();
   await page.getByRole("button", { name: "Calendar" }).click();
-  await expect(page.getByText("written")).toBeVisible();
+  await expect(page.getByText("Written", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("written", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/07:00 AM/)).toHaveCount(0);
 });

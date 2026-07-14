@@ -1,6 +1,5 @@
 import type { TrainingPoint } from "@hyeboard/schemas";
-import { Card, CardContent } from "@/components/ui/card";
-import { Empty, FeatureFrame, FeedItem } from "@/components/shared";
+import { Empty, FeatureFrame, FeedItem, SectionPanel } from "@/components/shared";
 import { api } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
 import { useFeatureQuery, useHyeboard } from "@/state";
@@ -17,7 +16,9 @@ export function TrainingPointsPage() {
   const query = useFeatureQuery("training-points", () => api.trainingPoints(state.universityId));
   return (
     <FeatureFrame title={t.trainingPoints.title} description={t.trainingPoints.description} query={query}>
-      {(items) => items.length ? <Card><CardContent className="divide-y divide-border p-5">{items.map((item) => <TrainingPointRow key={item.id} item={item} />)}</CardContent></Card> : <Empty text={t.trainingPoints.none} />}
+      {(items) => items.length
+        ? <SectionPanel title={t.trainingPoints.listTitle} testId="training-points-section">{items.map((item) => <TrainingPointRow key={item.id} item={item} />)}</SectionPanel>
+        : <Empty text={t.trainingPoints.none} />}
     </FeatureFrame>
   );
 }

@@ -28,7 +28,7 @@ export function TuitionPage() {
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, bills]) => (
               <div key={term} className="space-y-2">
                 <h2 className="text-base font-semibold">{formatTermLabel(term, state.universityId, t.terms)}</h2>
-                <DataTable headers={t.tuition.headers} rows={bills.map((b) => [b.title, <StatusBadge key={b.id} value={b.status} />, b.paidAt ? formatDateTime(b.paidAt) : "-", formatCurrency(b.totalAmount), formatCurrency(b.paidAmount), formatCurrency(b.remainingAmount)])} />
+                <DataTable headers={t.tuition.headers} rows={bills.map((b) => [<span key={b.id} className="font-medium text-foreground">{b.title}</span>, <StatusBadge key={`${b.id}-status`} value={b.status} />, b.paidAt ? formatDateTime(b.paidAt) : "-", formatCurrency(b.totalAmount), formatCurrency(b.paidAmount), <span key={`${b.id}-remaining`} className={b.remainingAmount > 0 ? "font-semibold tabular-nums text-foreground" : "tabular-nums"}>{formatCurrency(b.remainingAmount)}</span>])} />
               </div>
             ))}
           </div>

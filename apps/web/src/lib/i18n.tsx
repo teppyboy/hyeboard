@@ -135,12 +135,15 @@ function buildDictionary() {
       statusActive: "active",
       nextDeadline: (date: string) => `Next: ${date}`,
       openCoursePage: "Open course page",
+      none: "No courses are connected for this term yet.",
+      listTitle: "All courses",
     },
     assignments: {
       title: "Assignments",
       description: "Upcoming work and missing submissions from the learning platform.",
       noneDue: "No assignments are due right now.",
       learningPlatform: "Learning platform",
+      listTitle: "All assignments",
     },
     grades: {
       title: "Grades",
@@ -172,6 +175,8 @@ function buildDictionary() {
       noExams: "No exams scheduled for this term yet.",
       headers: ["Course", "Type", "Method", "Date", "Time", "Session", "Room", "No."],
       examType: "Exam",
+      types: { midterm: "Midterm" } as Record<string, string>,
+      methods: { written: "Written" } as Record<string, string>,
       scheduledExams: (count: number) => `${count} scheduled exam${count === 1 ? "" : "s"}`,
     },
     tuition: {
@@ -202,6 +207,7 @@ function buildDictionary() {
       title: "Training Points",
       description: "Conduct-score criteria and recorded totals from the university portal.",
       none: "No training-point records are available yet.",
+      listTitle: "Recorded totals",
     },
     settings: {
       title: "Settings",
@@ -448,12 +454,15 @@ function vi(): typeof en {
       statusActive: "đang học",
       nextDeadline: (date: string) => `Kế tiếp: ${date}`,
       openCoursePage: "Mở trang khóa học",
+      none: "Chưa có khóa học nào được liên kết cho học kỳ này.",
+      listTitle: "Tất cả khóa học",
     },
     assignments: {
       title: "Bài tập",
       description: "Bài tập sắp tới và bài nộp còn thiếu từ nền tảng học tập.",
       noneDue: "Hiện không có bài tập nào đến hạn.",
       learningPlatform: "Nền tảng học tập",
+      listTitle: "Tất cả bài tập",
     },
     grades: {
       title: "Điểm số",
@@ -485,6 +494,8 @@ function vi(): typeof en {
       noExams: "Chưa có lịch thi nào cho học kỳ này.",
       headers: ["Môn học", "Loại", "Hình thức", "Ngày", "Giờ", "Ca", "Phòng", "STT"],
       examType: "Kỳ thi",
+      types: { midterm: "Giữa kỳ" } as Record<string, string>,
+      methods: { written: "Viết" } as Record<string, string>,
       scheduledExams: (count: number) => `${count} lịch thi`,
     },
     tuition: {
@@ -515,6 +526,7 @@ function vi(): typeof en {
       title: "Điểm rèn luyện",
       description: "Tiêu chí điểm rèn luyện và tổng điểm ghi nhận từ cổng thông tin trường.",
       none: "Chưa có dữ liệu điểm rèn luyện.",
+      listTitle: "Tổng điểm ghi nhận",
     },
     settings: {
       title: "Cài đặt",

@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DataTable, Empty, FeatureFrame } from "@/components/shared";
 import { api } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
+import { formatExamDetail } from "@/lib/presentation";
 import { useHyeboard } from "@/state";
 
 function examDateKey(exam: ExamSession) {
@@ -26,7 +27,7 @@ function formatDateOnly(value: string) {
 function ExamList({ items }: { items: ExamSession[] }) {
   const { t } = useLocale();
   const sorted = [...items].sort((a, b) => (a.startTime ?? a.examDate).localeCompare(b.startTime ?? b.examDate));
-  return <DataTable headers={t.exams.headers} rows={sorted.map((exam) => [exam.courseName, exam.examType ?? t.exams.examType, exam.examMethod ?? "-", formatDateOnly(exam.examDate), examTime(exam), exam.examSession ? String(exam.examSession) : "-", exam.room ?? "-", exam.examNumber ?? "-"])} />;
+  return <DataTable headers={t.exams.headers} rows={sorted.map((exam) => [exam.courseName, formatExamDetail(exam.examType, t.exams.types) ?? t.exams.examType, formatExamDetail(exam.examMethod, t.exams.methods) ?? "-", formatDateOnly(exam.examDate), examTime(exam), exam.examSession ? String(exam.examSession) : "-", exam.room ?? "-", exam.examNumber ?? "-"])} />;
 }
 
 function ExamCalendar({ items }: { items: ExamSession[] }) {
@@ -47,7 +48,7 @@ function ExamCalendar({ items }: { items: ExamSession[] }) {
               <div key={exam.id} className="list-row">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{exam.courseName}</p>
-                  <p className="truncate text-xs text-muted-foreground">{exam.courseCode} · {exam.examMethod ?? exam.examType ?? t.exams.examType} · {exam.room ?? t.timetable.roomNotListed}</p>
+                  <p className="truncate text-xs text-muted-foreground">{exam.courseCode} · {formatExamDetail(exam.examMethod, t.exams.methods) ?? formatExamDetail(exam.examType, t.exams.types) ?? t.exams.examType} · {exam.room ?? t.timetable.roomNotListed}</p>
                 </div>
                 <Badge className="shrink-0 border border-border bg-background font-normal text-foreground">{examTime(exam)}</Badge>
               </div>
@@ -91,7 +92,7 @@ export function ExamsPage() {
               <Button variant={view === "calendar" ? "default" : "outline"} size="sm" onClick={() => setView("calendar")}>{t.common.calendar}</Button>
             </div>
           </div>
-          <div key={view} className="view-panel">{items.length ? (view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />) : <Empty text={t.exams.noExams} />}</div>
+          <div key={view} className="view-panel" data-testid="exams-section">{items.length ? (view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />) : <Empty text={t.exams.noExams} />}</div>
         </div>
       )}
     </FeatureFrame>
