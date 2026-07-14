@@ -328,6 +328,79 @@ textarea.control {
   animation: row-in 220ms var(--ease-out-quint) both;
 }
 
+.timetable-grid-row {
+  display: grid;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.timetable-grid-row:last-child {
+  border-bottom: none;
+}
+
+.timetable-grid-header {
+  background: hsl(var(--muted) / 0.6);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.timetable-grid-cell {
+  border-left: 1px solid hsl(var(--border));
+  padding: 0.75rem;
+}
+
+.timetable-grid-cell:first-child {
+  border-left: none;
+}
+
+.timetable-header-cell {
+  text-align: center;
+}
+
+.timetable-period-cell {
+  min-height: 9rem;
+  background: hsl(var(--muted) / 0.3);
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.timetable-day-col {
+  display: flex;
+  min-height: 9rem;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.timetable-current-col {
+  background: hsl(var(--accent) / 0.08);
+}
+
+.timetable-session {
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  transition: background 140ms var(--ease-out-quint), border-color 140ms var(--ease-out-quint);
+}
+
+.timetable-session:hover {
+  background: hsl(var(--muted) / 0.5);
+  border-color: hsl(var(--primary) / 0.3);
+}
+
+.timetable-day-heading {
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.4);
+  padding: 0.75rem 1.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.timetable-current-day .timetable-day-heading {
+  background: hsl(var(--accent) / 0.12);
+}
+
 .table-row-motion:hover {
   background: hsl(var(--muted) / 0.4);
 }

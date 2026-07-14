@@ -296,6 +296,50 @@ test("grades merge summer term into term two and show term GPA", async ({ page }
   await expect(page.getByRole("columnheader", { name: /Point 10/ }).first()).toHaveAttribute("aria-sort", "descending");
 });
 
+test("timetable renders a responsive grid on desktop", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await loginDemo(page);
+  await page.goto("/timetable");
+
+  await expect(page.getByTestId("desktop-timetable")).toBeVisible();
+  await expect(page.getByTestId("mobile-timetable")).toBeHidden();
+  await expect(page.getByRole("columnheader", { name: "Sun" })).toHaveCount(0);
+  await expect(page.locator('[data-current-day="true"]')).toHaveCount(1);
+
+  await expect(page.getByText("Web Application Development").first()).toBeVisible();
+  await expect(page.getByText("G2-301").first()).toBeVisible();
+  await expect(page.getByText("Period 4-6").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open class page" }).first()).toHaveAttribute("href", "https://portal.uet.vnu.edu.vn/courses/5359");
+});
+
+test("timetable renders day groups on mobile without overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loginDemo(page);
+  await page.goto("/timetable");
+
+  await expect(page.getByTestId("desktop-timetable")).toBeHidden();
+  await expect(page.getByTestId("mobile-timetable")).toBeVisible();
+  await expect(page.getByRole("button", { name: "List" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Calendar" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+  const mobileSurface = page.getByTestId("mobile-timetable");
+  await expect(mobileSurface.getByText("Web Application Development").first()).toBeVisible();
+  await expect(mobileSurface.getByText("G2-301").first()).toBeVisible();
+  await expect(mobileSurface.getByRole("link", { name: "Open class page" }).first()).toHaveAttribute("href", "https://portal.uet.vnu.edu.vn/courses/5359");
+});
+
+test("timetable stays free of horizontal overflow on tablet", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await loginDemo(page);
+  await page.goto("/timetable");
+
+  await expect(page.getByTestId("mobile-timetable")).toBeVisible();
+  await expect(page.getByRole("button", { name: "List" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Calendar" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test("feature routes render UI instead of JSON dumps", async ({ page }) => {
   await loginDemo(page);
   const routes = [
