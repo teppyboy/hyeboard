@@ -1,9 +1,10 @@
 import type { Grade } from "@hyeboard/schemas";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Empty, FeatureFrame, Metric } from "@/components/shared";
+import { Empty, FeatureFrame, Metric, SummaryStat, SummaryStrip } from "@/components/shared";
 import { api } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
+import { formatTermLabel } from "@/lib/presentation";
 import { cn } from "@/lib/utils";
 import { useFeatureQuery, useHyeboard } from "@/state";
 
@@ -124,17 +125,18 @@ export function GradesPage() {
               const summary = summarizeGrades(grades);
               const includesSummer = usesUetTermRules(state.universityId) && grades.some((grade) => grade.termCode && grade.termCode !== term && grade.termCode.endsWith("3"));
               const sortedGrades = sortGrades(grades, sort);
+              const displayTerm = formatTermLabel(term, state.universityId, t.terms);
               return (
               <div key={term} className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{term}</h2>
+                  <h2 className="text-base font-semibold">{displayTerm}</h2>
                   {includesSummer ? <Badge className="border border-border bg-background text-foreground">{t.grades.includesSummer}</Badge> : null}
                 </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <Metric title={t.grades.termGpa} value={summary.point4?.toFixed(2) ?? "-"} detail={t.grades.termGpaDetail} />
-                  <Metric title={t.grades.average10} value={summary.point10?.toFixed(2) ?? "-"} detail={t.grades.average10Detail} />
-                  <Metric title={t.grades.credits} value={String(summary.credits || "-")} detail={t.grades.creditsIncludedDetail} />
-                </div>
+                <SummaryStrip testId="term-summary">
+                  <SummaryStat label={t.grades.termGpa} value={summary.point4?.toFixed(2) ?? "-"} />
+                  <SummaryStat label={t.grades.average10} value={summary.point10?.toFixed(2) ?? "-"} />
+                  <SummaryStat label={t.grades.credits} value={String(summary.credits || "-")} />
+                </SummaryStrip>
                 <GradeTable grades={sortedGrades} sort={sort} onSortChange={setSort} universityId={state.universityId} />
               </div>
             );})}

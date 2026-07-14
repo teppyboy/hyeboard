@@ -285,7 +285,10 @@ test("notifications menu shows dashboard notifications", async ({ page }) => {
 test("grades merge summer term into term two and show term GPA", async ({ page }) => {
   await loginDemo(page);
   await page.goto("/grades");
-  await expect(page.getByText("20242")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Semester 2, 2024–2025" })).toBeVisible();
+  await expect(page.getByText("20242", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("term-summary").first()).toBeVisible();
+  await expect(page.getByTestId("term-summary").first().locator(".stat-card")).toHaveCount(0);
   await expect(page.getByText("Includes summer term")).toBeVisible();
   await expect(page.getByText("Signals and Systems")).toBeVisible();
   await expect(page.getByText("Term GPA").first()).toBeVisible();
