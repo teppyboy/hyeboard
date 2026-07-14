@@ -56,28 +56,33 @@ const statusKeys = new Map<string, keyof StatusLabels>([
   ["available", "available"],
 ]);
 
+function normalizeKey(value: string): string {
+  return value.toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function capitalizeFirst(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function humanizeUnknown(value: string): string {
+  return capitalizeFirst(value.trim().replace(/[\s_-]+/g, " "));
+}
+
 export function formatStatus(status: string | undefined, labels: StatusLabels): { label: string; tone: StatusTone } {
   const value = status?.trim();
   if (!value) return { label: "-", tone: "neutral" };
 
-  const normalized = value.toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = normalizeKey(value);
   const key = statusKeys.get(normalized);
   if (key) return { label: labels[key], tone: statusTones[key] };
 
-  const readable = normalized.replace(/_+/g, " ");
-  return { label: readable.charAt(0).toUpperCase() + readable.slice(1), tone: "neutral" };
-}
-
-function humanizeUnknown(value: string): string {
-  const readable = value.trim().replace(/[\s_-]+/g, " ");
-  return readable.charAt(0).toUpperCase() + readable.slice(1);
+  return { label: capitalizeFirst(normalized.replace(/_+/g, " ")), tone: "neutral" };
 }
 
 export function formatExamDetail(value: string | undefined, knownMap: Record<string, string>): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
-  const normalized = trimmed.toLowerCase().replace(/[\s-]+/g, "_");
-  return knownMap[normalized] ?? humanizeUnknown(trimmed);
+  return knownMap[normalizeKey(trimmed)] ?? humanizeUnknown(trimmed);
 }
 
 export function formatTermLabel(term: string, universityId: string, labels: TermLabels): string {
