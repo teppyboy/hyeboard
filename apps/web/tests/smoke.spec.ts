@@ -126,6 +126,35 @@ test("friendly demo login opens dashboard", async ({ page }) => {
   await expect(page.getByText("Web Application Development").first()).toBeVisible();
   await expect(page.getByText("09:50 - 12:30").first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Open class page" })).toHaveAttribute("href", "https://portal.uet.vnu.edu.vn/courses/5359");
+
+  await expect(page.getByTestId("dashboard-summary")).toBeVisible();
+  await expect(page.getByTestId("dashboard-schedule")).toBeVisible();
+  await expect(page.getByTestId("dashboard-assignments")).toBeVisible();
+  await expect(page.getByTestId("dashboard-courses")).toBeVisible();
+  await expect(page.getByTestId("dashboard-notifications")).toBeVisible();
+  await expect(page.locator(".stat-card")).toHaveCount(0);
+});
+
+test("dashboard summary strip stays contained on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loginDemo(page);
+
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+
+  const stats = page.getByTestId("dashboard-summary").locator(".summary-stat");
+  await expect(stats).toHaveCount(4);
+  const first = await stats.nth(0).boundingBox();
+  const second = await stats.nth(1).boundingBox();
+  const third = await stats.nth(2).boundingBox();
+  expect(first).not.toBeNull();
+  expect(second).not.toBeNull();
+  expect(third).not.toBeNull();
+  expect(Math.abs(first!.y - second!.y)).toBeLessThan(5);
+  expect(third!.y).toBeGreaterThan(first!.y);
 });
 
 test("status labels render as readable text", async ({ page }) => {

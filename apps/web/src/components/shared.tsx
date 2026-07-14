@@ -64,8 +64,8 @@ export function StatusBadge({ value }: { value?: string | null }) {
   return <Badge data-testid="status-badge" data-tone={status.tone}>{status.label}</Badge>;
 }
 
-export function SummaryStrip({ children }: { children: ReactNode }) {
-  return <div data-testid="summary-strip" className="summary-strip">{children}</div>;
+export function SummaryStrip({ children, testId = "summary-strip" }: { children: ReactNode; testId?: string }) {
+  return <div data-testid={testId} className="summary-strip">{children}</div>;
 }
 
 export function SummaryStat({ label, value, detail }: { label: string; value: ReactNode; detail?: string }) {
@@ -122,10 +122,27 @@ export function AssignmentItem({ item }: { item: Assignment }) {
   );
 }
 
-export function CourseRow({ course }: { course: Course }) {
+type CourseRowProps = { course: Course; variant?: "card" | "row" };
+
+export function CourseRow({ course, variant = "card" }: CourseRowProps) {
   const { t } = useLocale();
-  const className = "motion-surface block rounded-lg border border-border p-4 hover:bg-muted/40";
   const url = safeExternalUrl(course.url);
+
+  if (variant === "row") {
+    return (
+      <div className="list-row">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{course.code}</p>
+          <p className="truncate text-xs text-muted-foreground">{course.name}</p>
+          {course.nextDeadline ? <p className="mt-1 truncate text-xs text-muted-foreground">{t.courses.nextDeadline(formatDateTime(course.nextDeadline))}</p> : null}
+          {url ? <a className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" href={url} target="_blank" rel="noreferrer"><ExternalLink size={12} /> {t.courses.openCoursePage}</a> : null}
+        </div>
+        <StatusBadge value={course.status ?? "active"} />
+      </div>
+    );
+  }
+
+  const className = "motion-surface block rounded-lg border border-border p-4 hover:bg-muted/40";
   const content = (
     <>
       <div className="flex items-start justify-between gap-3">
