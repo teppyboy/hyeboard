@@ -389,3 +389,84 @@ test("feature routes render UI instead of JSON dumps", async ({ page }) => {
   await expect(page.getByText("written", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/07:00 AM/)).toHaveCount(0);
 });
+
+test("login fields expose persistent accessible labels on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/login");
+
+  // UET branch: Google sign-in fields.
+  await page.getByRole("combobox", { name: "School" }).click();
+  await page.getByRole("option", { name: "VNU-UET" }).click();
+  await expect(page.getByLabel("Student or parent code")).toBeVisible();
+  await expect(page.getByLabel("Google account password")).toHaveAttribute("type", "password");
+
+  // Manual fallback fields.
+  await page.getByRole("button", { name: "Having trouble? Use a manual token instead" }).click();
+  await expect(page.getByLabel("University portal access token")).toHaveAttribute("type", "password");
+  await expect(page.getByLabel("Learning-platform access token")).toHaveAttribute("type", "password");
+  await page.getByText("Advanced cookie options").click();
+  await expect(page.getByLabel("University portal cookie")).toHaveAttribute("type", "password");
+  await expect(page.getByLabel("Learning-platform cookie")).toHaveAttribute("type", "password");
+  await expect(page.getByLabel("Learning-platform CSRF token")).toHaveAttribute("type", "password");
+
+  // Parent/guardian login swaps the password field label.
+  await page.getByLabel("Student or parent code").fill("PH000001");
+  await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("type", "password");
+
+  // VNU (daotao) branch: username/password fields.
+  await page.getByRole("combobox", { name: "School" }).click();
+  await page.getByRole("option", { name: "VNU (daotao)" }).click();
+  await expect(page.getByLabel("Username")).toBeVisible();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("type", "password");
+
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+});
+
+test("CAPTCHA verification field exposes a persistent accessible label", async ({ page }) => {
+  // A real StudentHub CAPTCHA prompt arrives over an SSE connection that
+  // stays open until the user answers (see uet-session-stream.ts). Playwright's
+  // route.fulfill() always delivers a complete, closed body, which makes the
+  // stream-reader treat the connection as closed and immediately dismiss the
+  // modal. Overriding window.fetch with a ReadableStream that is never closed
+  // reproduces the real "still waiting for an answer" condition instead.
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("/api/uet/auth/import-session") && init?.method === "POST") {
+        const stream = new ReadableStream({
+          start(controller) {
+            const chunk = `event: captcha_required\ndata: ${JSON.stringify({ challengeId: "smoke-1", image: "data:image/png;base64,QQ==" })}\n\n`;
+            controller.enqueue(new TextEncoder().encode(chunk));
+            // Intentionally never call controller.close() — the modal should
+            // stay open until the user submits an answer, same as production.
+          },
+        });
+        return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return originalFetch(input, init);
+    };
+  });
+
+  await page.goto("/login");
+  await page.getByRole("combobox", { name: "School" }).click();
+  await page.getByRole("option", { name: "VNU-UET" }).click();
+
+  await page.getByLabel("Student or parent code").fill("PH000001");
+  await page.getByLabel("Password", { exact: true }).fill("test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+
+  await expect(page.getByLabel("Verification code")).toBeVisible();
+});
+
+test("settings About section shows version and commit information", async ({ page }) => {
+  await loginDemo(page);
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
+  await expect(page.getByText("Version")).toBeVisible();
+  await expect(page.getByText(/^Commit /)).toBeVisible();
+});

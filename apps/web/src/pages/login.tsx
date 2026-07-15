@@ -328,8 +328,14 @@ export function LoginPage() {
           <CardContent className="space-y-3">
             {selectedUniversity === "uet" ? (
               <>
-                <Input type="text" autoComplete="username" placeholder={t.login.studentCodePlaceholder} value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
-                <Input type="password" autoComplete="current-password" placeholder={isUetParentLogin ? t.login.passwordPlaceholder : t.login.googlePasswordPlaceholder} value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                <div className="grid gap-2">
+                  <label htmlFor="uet-student-code" className="text-sm font-medium">{t.login.studentCodeLabel}</label>
+                  <Input id="uet-student-code" name="uet-student-code" type="text" autoComplete="username" placeholder={t.login.studentCodePlaceholder} value={uetGoogleEmail} onChange={(event) => setUetGoogleEmail(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="uet-google-password" className="text-sm font-medium">{isUetParentLogin ? t.login.passwordLabel : t.login.googlePasswordLabel}</label>
+                  <Input id="uet-google-password" name="uet-google-password" type="password" autoComplete="current-password" placeholder={isUetParentLogin ? t.login.passwordPlaceholder : t.login.googlePasswordPlaceholder} value={uetGooglePassword} onChange={(event) => setUetGooglePassword(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetGoogleSession)} />
+                </div>
                 <Button onClick={importUetGoogleSession} disabled={busy} className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{isUetParentLogin ? t.login.signIn : t.login.signInWithGoogle}</Button>
 
                 {!showManualFallback ? (
@@ -350,7 +356,10 @@ export function LoginPage() {
                       <p className="mt-2 text-foreground">{t.login.tokensExpireNote}</p>
                     </div>
                     <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://studenthub.uet.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> {t.login.openUniversityPortal}</Button>
-                    <Input type="password" autoComplete="off" placeholder={t.login.portalTokenPlaceholder} value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    <div className="grid gap-2">
+                      <label htmlFor="studenthub-token" className="text-sm font-medium">{t.login.portalTokenLabel}</label>
+                      <Input id="studenthub-token" name="studenthub-token" type="password" autoComplete="off" placeholder={t.login.portalTokenPlaceholder} value={studenthubToken} onChange={(event) => setStudenthubToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    </div>
                     <Button className="w-full" type="button" variant="secondary" onClick={() => window.open("https://portal.uet.vnu.edu.vn", "_blank", "noopener,noreferrer")}><ExternalLink size={16} /> {t.login.openLearningPlatform}</Button>
                     <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
                       <p className="font-medium text-foreground">{t.login.optionalConnectLearning}</p>
@@ -362,13 +371,25 @@ export function LoginPage() {
                         <li>{t.login.step4Learning}</li>
                       </ol>
                     </div>
-                    <Input type="password" autoComplete="off" placeholder={t.login.learningTokenPlaceholder} value={canvasToken} onChange={(event) => { setCanvasToken(event.target.value); setSessionStored(RELOGIN_KEYS.uetCanvasToken, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    <div className="grid gap-2">
+                      <label htmlFor="canvas-token" className="text-sm font-medium">{t.login.learningTokenLabel}</label>
+                      <Input id="canvas-token" name="canvas-token" type="password" autoComplete="off" placeholder={t.login.learningTokenPlaceholder} value={canvasToken} onChange={(event) => { setCanvasToken(event.target.value); setSessionStored(RELOGIN_KEYS.uetCanvasToken, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                    </div>
                     <details className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
                       <summary className="cursor-pointer font-medium text-foreground">{t.login.advancedCookieOptions}</summary>
                       <div className="mt-3 space-y-3">
-                        <Input type="password" autoComplete="off" placeholder={t.login.portalCookiePlaceholder} value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                        <Input type="password" autoComplete="off" placeholder={t.login.learningCookiePlaceholder} value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
-                        <Input type="password" autoComplete="off" placeholder={t.login.learningCsrfPlaceholder} value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        <div className="grid gap-2">
+                          <label htmlFor="studenthub-cookie" className="text-sm font-medium">{t.login.portalCookieLabel}</label>
+                          <Input id="studenthub-cookie" name="studenthub-cookie" type="password" autoComplete="off" placeholder={t.login.portalCookiePlaceholder} value={studenthubCookie} onChange={(event) => setStudenthubCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        </div>
+                        <div className="grid gap-2">
+                          <label htmlFor="canvas-cookie" className="text-sm font-medium">{t.login.learningCookieLabel}</label>
+                          <Input id="canvas-cookie" name="canvas-cookie" type="password" autoComplete="off" placeholder={t.login.learningCookiePlaceholder} value={canvasCookie} onChange={(event) => setCanvasCookie(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        </div>
+                        <div className="grid gap-2">
+                          <label htmlFor="canvas-csrf" className="text-sm font-medium">{t.login.learningCsrfLabel}</label>
+                          <Input id="canvas-csrf" name="canvas-csrf" type="password" autoComplete="off" placeholder={t.login.learningCsrfPlaceholder} value={canvasCsrfToken} onChange={(event) => setCanvasCsrfToken(event.target.value)} onKeyDown={(event) => submitOnEnter(event, importUetSession)} />
+                        </div>
                       </div>
                     </details>
                     <Button onClick={importUetSession} disabled={busy} variant="outline" className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{t.login.importUniversitySession}</Button>
@@ -377,8 +398,14 @@ export function LoginPage() {
               </>
             ) : selectedUniversity === "vnu" ? (
               <>
-                <Input placeholder={t.login.studentUsernamePlaceholder} autoComplete="username" value={vnuUsername} onChange={(event) => { setVnuUsername(event.target.value); setSessionStored(RELOGIN_KEYS.vnuUsername, event.target.value); }} />
-                <Input type="password" autoComplete="current-password" placeholder={t.login.passwordPlaceholder} value={vnuPassword} onChange={(event) => { setVnuPassword(event.target.value); setSessionStored(RELOGIN_KEYS.vnuPassword, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importVnuSession)} />
+                <div className="grid gap-2">
+                  <label htmlFor="vnu-username" className="text-sm font-medium">{t.login.usernameLabel}</label>
+                  <Input id="vnu-username" name="vnu-username" placeholder={t.login.studentUsernamePlaceholder} autoComplete="username" value={vnuUsername} onChange={(event) => { setVnuUsername(event.target.value); setSessionStored(RELOGIN_KEYS.vnuUsername, event.target.value); }} />
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="vnu-password" className="text-sm font-medium">{t.login.passwordLabel}</label>
+                  <Input id="vnu-password" name="vnu-password" type="password" autoComplete="current-password" placeholder={t.login.passwordPlaceholder} value={vnuPassword} onChange={(event) => { setVnuPassword(event.target.value); setSessionStored(RELOGIN_KEYS.vnuPassword, event.target.value); }} onKeyDown={(event) => submitOnEnter(event, importVnuSession)} />
+                </div>
                 <Button onClick={importVnuSession} disabled={busy} variant="outline" className="w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : null}{t.login.importUniversitySession}</Button>
               </>
             ) : (
@@ -399,13 +426,18 @@ export function LoginPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <img src={captchaChallenge.image} alt={t.login.verificationImageAlt} className="w-full rounded-lg border border-border" />
-              <Input
-                autoFocus
-                value={captchaAnswer}
-                onChange={(event) => setCaptchaAnswer(event.target.value)}
-                placeholder={t.login.enterCodeShown}
-                onKeyDown={(event) => { if (event.key === "Enter") submitCaptchaAnswer(); }}
-              />
+              <div className="grid gap-2">
+                <label htmlFor="captcha-answer" className="text-sm font-medium">{t.login.verificationCodeLabel}</label>
+                <Input
+                  id="captcha-answer"
+                  name="captcha-answer"
+                  autoFocus
+                  value={captchaAnswer}
+                  onChange={(event) => setCaptchaAnswer(event.target.value)}
+                  placeholder={t.login.enterCodeShown}
+                  onKeyDown={(event) => { if (event.key === "Enter") submitCaptchaAnswer(); }}
+                />
+              </div>
               <Button onClick={submitCaptchaAnswer} disabled={!captchaAnswer.trim()} className="w-full">{t.common.submit}</Button>
             </CardContent>
           </Card>

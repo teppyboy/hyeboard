@@ -90,6 +90,18 @@ export function SettingsPage() {
             <Button variant="destructive" className="w-full" onClick={signOut}><LogOut size={15} className="mr-2" />{t.settings.signOut}</Button>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>{t.settings.about}</CardTitle>
+            <CardDescription>{t.settings.aboutDesc}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">{t.settings.version}</span>
+              <span className="text-sm font-medium">{t.settings.commit(__HYEB_GIT_COMMIT__)}</span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

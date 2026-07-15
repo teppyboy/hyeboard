@@ -203,11 +203,7 @@ textarea.control {
 .app-header { min-height: 3.5rem; border-bottom: 1px solid hsl(var(--border)); }
 
 .login-screen {
-  background:
-    linear-gradient(hsl(var(--border) / 0.4) 1px, transparent 1px),
-    linear-gradient(90deg, hsl(var(--border) / 0.4) 1px, transparent 1px),
-    hsl(var(--background));
-  background-size: auto, 48px 48px, 48px 48px, auto;
+  background: hsl(var(--background));
 }
 
 .login-card {
