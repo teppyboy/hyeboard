@@ -205,11 +205,14 @@ function NavSearch() {
       <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm focus-within:border-ring">
         <Search size={16} className="shrink-0 text-muted-foreground" />
         <input
+          id="header-page-search"
+          name="page-search"
           value={query}
           onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           onKeyDown={(event) => { if (event.key === "Enter" && matches[0]) go(matches[0].to); if (event.key === "Escape") setOpen(false); }}
           placeholder={t.common.searchPlaceholder}
+          aria-label={t.common.searchAriaLabel}
           className="min-w-0 flex-1 truncate bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
         />
       </div>

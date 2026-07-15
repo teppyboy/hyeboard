@@ -346,7 +346,7 @@ test("timetable stays free of horizontal overflow on tablet", async ({ page }) =
 test("feature routes render UI instead of JSON dumps", async ({ page }) => {
   await loginDemo(page);
   const routes = [
-    ["/timetable", "Timetable", "Period 4-6"],
+    ["/timetable", "Timetable", "Web Application Development"],
     ["/courses", "Courses", "Data Structures and Algorithms"],
     ["/assignments", "Assignments", "Graph traversal quiz"],
     ["/grades", "Grades", "Academic transcript"],
@@ -359,7 +359,11 @@ test("feature routes render UI instead of JSON dumps", async ({ page }) => {
   for (const [path, heading, text] of routes) {
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
-    await expect(page.getByText(text).first()).toBeVisible();
+    // Some routes (e.g. Timetable) render the same data in both a desktop-only
+    // and a mobile-only surface; `.and(":visible")` picks only the currently
+    // rendered one instead of always latching onto the first DOM match, which
+    // may be the CSS-hidden counterpart on narrow viewports.
+    await expect(page.getByText(text).and(page.locator(":visible")).first()).toBeVisible();
     await expect(page.locator("pre")).toHaveCount(0);
     await expect(page.getByText("active", { exact: true })).toHaveCount(0);
   }
@@ -469,4 +473,125 @@ test("settings About section shows version and commit information", async ({ pag
   await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
   await expect(page.getByText("Version")).toBeVisible();
   await expect(page.getByText(/^Commit /)).toBeVisible();
+});
+
+async function expectNoPageOverflow(page: import("@playwright/test").Page) {
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+}
+
+const REFERENCE_VIEWPORTS = [
+  { width: 390, height: 844 },
+  { width: 768, height: 1024 },
+  { width: 1440, height: 900 },
+] as const;
+
+for (const viewport of REFERENCE_VIEWPORTS) {
+  test(`login, dashboard, timetable, and grades have no horizontal overflow at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/login");
+    await expectNoPageOverflow(page);
+
+    await loginDemo(page);
+    await expectNoPageOverflow(page);
+
+    await page.goto("/timetable");
+    await expectNoPageOverflow(page);
+
+    await page.goto("/grades");
+    await expectNoPageOverflow(page);
+  });
+}
+
+test("dashboard, timetable, grades, and login each expose exactly one page heading", async ({ page }) => {
+  await page.goto("/login");
+  await expect(page.locator("h1")).toHaveCount(1);
+
+  await loginDemo(page);
+  await expect(page.locator("h1")).toHaveCount(1);
+
+  await page.goto("/timetable");
+  await expect(page.locator("h1")).toHaveCount(1);
+
+  await page.goto("/grades");
+  await expect(page.locator("h1")).toHaveCount(1);
+});
+
+test("sidebar nav links have accessible names and move aria-current on navigation", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop-only sidebar, hidden below the lg breakpoint on mobile");
+  await loginDemo(page);
+  const dashboardLink = page.getByRole("link", { name: "Dashboard" });
+  const timetableLink = page.getByRole("link", { name: "Timetable" });
+  const gradesLink = page.getByRole("link", { name: "Grades" });
+  await expect(dashboardLink).toHaveAttribute("aria-current", "page");
+  await expect(timetableLink).not.toHaveAttribute("aria-current", "page");
+  await expect(gradesLink).not.toHaveAttribute("aria-current", "page");
+
+  await timetableLink.click();
+  await expect(page).toHaveURL(/\/timetable$/);
+  await expect(timetableLink).toHaveAttribute("aria-current", "page");
+  await expect(dashboardLink).not.toHaveAttribute("aria-current", "page");
+});
+
+test("header search field exposes an accessible name beyond its placeholder", async ({ page }) => {
+  await loginDemo(page);
+  await expect(page.getByRole("textbox", { name: "Search pages" })).toBeVisible();
+});
+
+test("view toggles and key settings actions meet mobile touch target size", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loginDemo(page);
+
+  // WebKit at a 3x device pixel ratio can report a CSS 44px target as
+  // 43.99998 due to subpixel snapping, so allow a hairline rounding tolerance.
+  const MIN_TOUCH_TARGET = 43.9;
+
+  await page.goto("/timetable");
+  for (const name of ["List", "Calendar"]) {
+    const box = await page.getByRole("button", { name, exact: true }).boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
+  }
+
+  await page.goto("/exams");
+  for (const name of ["List", "Calendar"]) {
+    const box = await page.getByRole("button", { name, exact: true }).boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
+  }
+
+  await page.goto("/settings");
+  const toggleBox = await page.getByRole("button", { name: "Toggle light and dark mode" }).boundingBox();
+  expect(toggleBox).not.toBeNull();
+  expect(toggleBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
+
+  const signOutBox = await page.getByRole("button", { name: "Sign out" }).boundingBox();
+  expect(signOutBox).not.toBeNull();
+  expect(signOutBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
+});
+
+test("focus-visible ring remains rendered for interactive controls in light and dark mode", async ({ page }) => {
+  await loginDemo(page);
+  await page.goto("/settings");
+  // A preceding keyboard event keeps the browser's focus-visible input-modality
+  // heuristic on "keyboard" so a later programmatic .focus() still renders the
+  // focus ring, matching how a real keyboard user would tab to the control.
+  await page.keyboard.press("Tab");
+  const toggle = page.getByRole("button", { name: "Toggle light and dark mode" });
+  await toggle.focus();
+  await expect(toggle).toBeFocused();
+  const lightShadow = await toggle.evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(lightShadow).not.toBe("none");
+
+  await toggle.click();
+  await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+  await page.keyboard.press("Tab");
+  const signOut = page.getByRole("button", { name: "Sign out" });
+  await signOut.focus();
+  await expect(signOut).toBeFocused();
+  const darkShadow = await signOut.evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(darkShadow).not.toBe("none");
 });

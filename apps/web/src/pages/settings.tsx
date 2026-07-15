@@ -37,7 +37,7 @@ export function SettingsPage() {
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm">{t.settings.colorMode}</span>
-              <Button variant="outline" size="sm" onClick={() => state.setMode(state.mode === "dark" ? "light" : "dark")} aria-label={t.common.toggleLightDark}>
+              <Button variant="outline" size="sm" className="max-lg:min-h-11" onClick={() => state.setMode(state.mode === "dark" ? "light" : "dark")} aria-label={t.common.toggleLightDark}>
                 {state.mode === "dark" ? <><Sun size={14} className="mr-1" />{t.common.light}</> : <><Moon size={14} className="mr-1" />{t.common.dark}</>}
               </Button>
             </div>
@@ -87,7 +87,7 @@ export function SettingsPage() {
             <CardDescription>{data?.student?.fullName ? t.settings.signedInAs(data.student.fullName, data.student.studentCode) : t.settings.sessionUnavailable}</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button variant="destructive" className="w-full" onClick={signOut}><LogOut size={15} className="mr-2" />{t.settings.signOut}</Button>
+            <Button variant="destructive" className="w-full max-lg:min-h-11" onClick={signOut}><LogOut size={15} className="mr-2" />{t.settings.signOut}</Button>
           </CardContent>
         </Card>
         <Card>

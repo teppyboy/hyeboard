@@ -88,8 +88,8 @@ export function ExamsPage() {
               </Select>
             ) : <span />}
             <div className="flex gap-2">
-              <Button variant={view === "list" ? "default" : "outline"} size="sm" onClick={() => setView("list")}>{t.common.list}</Button>
-              <Button variant={view === "calendar" ? "default" : "outline"} size="sm" onClick={() => setView("calendar")}>{t.common.calendar}</Button>
+              <Button variant={view === "list" ? "default" : "outline"} size="sm" className="max-lg:min-h-11" onClick={() => setView("list")}>{t.common.list}</Button>
+              <Button variant={view === "calendar" ? "default" : "outline"} size="sm" className="max-lg:min-h-11" onClick={() => setView("calendar")}>{t.common.calendar}</Button>
             </div>
           </div>
           <div key={view} className="view-panel" data-testid="exams-section">{items.length ? (view === "list" ? <ExamList items={items} /> : <ExamCalendar items={items} />) : <Empty text={t.exams.noExams} />}</div>

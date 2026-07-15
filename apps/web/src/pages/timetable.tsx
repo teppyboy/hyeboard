@@ -38,7 +38,7 @@ function ViewToggle<T extends string>({ value, onChange, options = ["list", "cal
   const optionLabel = (option: T) => (option === "list" ? t.common.list : option === "calendar" ? t.common.calendar : option);
   return (
     <div className="flex flex-wrap justify-end gap-2">
-      {options.map((option) => <Button key={option} variant={value === option ? "default" : "outline"} size="sm" onClick={() => onChange(option)}>{optionLabel(option)}</Button>)}
+      {options.map((option) => <Button key={option} variant={value === option ? "default" : "outline"} size="sm" className="max-lg:min-h-11" onClick={() => onChange(option)}>{optionLabel(option)}</Button>)}
     </div>
   );
 }

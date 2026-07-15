@@ -52,6 +52,7 @@ function buildDictionary() {
     },
     common: {
       searchPlaceholder: "Search pages...",
+      searchAriaLabel: "Search pages",
       noPageMatches: "No page matches that search.",
       notifications: "Notifications",
       noNotifications: "No notifications right now.",
@@ -384,6 +385,7 @@ function vi(): typeof en {
     },
     common: {
       searchPlaceholder: "Tìm trang...",
+      searchAriaLabel: "Tìm trang",
       noPageMatches: "Không tìm thấy trang phù hợp.",
       notifications: "Thông báo",
       noNotifications: "Hiện chưa có thông báo nào.",

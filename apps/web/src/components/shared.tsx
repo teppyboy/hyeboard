@@ -95,7 +95,9 @@ export function SectionPanel({ title, description, children, testId }: SectionPa
 export function ScheduleItem({ item }: { item: ClassSession }) {
   const { t } = useLocale();
   const label = item.timeLabel ?? (item.periodStart != null
-    ? `${t.timetable.periodHeader} ${item.periodStart}${item.periodEnd && item.periodEnd !== item.periodStart ? `–${item.periodEnd}` : ""}`
+    ? (item.periodEnd && item.periodEnd !== item.periodStart
+      ? t.timetable.periodRange(item.periodStart, item.periodEnd)
+      : t.timetable.periodSingle(item.periodStart))
     : formatDateTime(item.startTime));
   return (
     <div className="list-row">
