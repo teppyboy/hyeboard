@@ -1,7 +1,7 @@
 import type { Grade } from "@hyeboard/schemas";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Empty, FeatureFrame, Metric, SummaryStat, SummaryStrip } from "@/components/shared";
+import { Empty, FeatureFrame, SummaryStat, SummaryStrip } from "@/components/shared";
 import { api } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
 import { formatTermLabel } from "@/lib/presentation";
@@ -116,11 +116,11 @@ export function GradesPage() {
         }, {});
         return (
           <div className="space-y-6">
-            <div className="grid gap-3 md:grid-cols-3">
-              <Metric title={t.dashboard.gpa} value={gpa?.gpa?.toFixed(2) ?? "-"} detail={t.grades.gpaDetail} />
-              <Metric title={t.grades.cpa} value={gpa?.cpa?.toFixed(2) ?? "-"} detail={state.universityId === "vnu" ? t.grades.cpaDetailVnu : t.grades.cpaDetailOther} />
-              <Metric title={t.grades.credits} value={String(gpa?.totalAccumulatedCredits ?? "-")} detail={t.grades.creditsCompleted} />
-            </div>
+            <SummaryStrip testId="grades-summary">
+              <SummaryStat label={t.dashboard.gpa} value={gpa?.gpa?.toFixed(2) ?? "-"} detail={t.grades.gpaDetail} />
+              <SummaryStat label={t.grades.cpa} value={gpa?.cpa?.toFixed(2) ?? "-"} detail={state.universityId === "vnu" ? t.grades.cpaDetailVnu : t.grades.cpaDetailOther} />
+              <SummaryStat label={t.grades.credits} value={String(gpa?.totalAccumulatedCredits ?? "-")} detail={t.grades.creditsCompleted} />
+            </SummaryStrip>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, grades]) => {
               const summary = summarizeGrades(grades);
               const includesSummer = usesUetTermRules(state.universityId) && grades.some((grade) => grade.termCode && grade.termCode !== term && grade.termCode.endsWith("3"));

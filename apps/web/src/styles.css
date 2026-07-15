@@ -236,18 +236,6 @@ textarea.control {
   background: hsl(var(--muted) / 0.5);
 }
 
-.stat-card {
-  border-radius: 0.85rem;
-  border: 1px solid hsl(var(--border));
-  padding: 1.1rem 1.25rem;
-  background: hsl(var(--card));
-}
-
-.stat-card.accent {
-  border-color: hsl(var(--primary) / 0.28);
-  background: hsl(var(--primary) / 0.06);
-}
-
 .summary-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));

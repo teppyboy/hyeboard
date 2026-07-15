@@ -1,5 +1,5 @@
 import type { Bill } from "@hyeboard/schemas";
-import { DataTable, FeatureFrame, Metric, StatusBadge } from "@/components/shared";
+import { DataTable, FeatureFrame, StatusBadge, SummaryStat, SummaryStrip } from "@/components/shared";
 import { api } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
 import { formatTermLabel } from "@/lib/presentation";
@@ -20,11 +20,11 @@ export function TuitionPage() {
         }, {});
         return (
           <div className="space-y-6">
-            <div className="grid gap-3 md:grid-cols-3">
-              <Metric title={t.tuition.total} value={formatCurrency(tuition.totalAmount)} detail={t.tuition.chargesPosted} />
-              <Metric title={t.tuition.paid} value={formatCurrency(tuition.paidAmount)} detail={t.tuition.paymentsReceived} />
-              <Metric title={t.tuition.remaining} value={formatCurrency(tuition.remainingAmount)} detail={t.tuition.amountDue} />
-            </div>
+            <SummaryStrip testId="tuition-summary">
+              <SummaryStat label={t.tuition.total} value={formatCurrency(tuition.totalAmount)} detail={t.tuition.chargesPosted} />
+              <SummaryStat label={t.tuition.paid} value={formatCurrency(tuition.paidAmount)} detail={t.tuition.paymentsReceived} />
+              <SummaryStat label={t.tuition.remaining} value={formatCurrency(tuition.remainingAmount)} detail={t.tuition.amountDue} />
+            </SummaryStrip>
             {Object.entries(byTerm).sort(([a], [b]) => b.localeCompare(a)).map(([term, bills]) => (
               <div key={term} className="space-y-2">
                 <h2 className="text-base font-semibold">{formatTermLabel(term, state.universityId, t.terms)}</h2>

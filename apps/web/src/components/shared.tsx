@@ -1,6 +1,6 @@
 import type { Assignment, ClassSession, Course } from "@hyeboard/schemas";
 import { Link } from "@tanstack/react-router";
-import { CheckCircle2, ExternalLink, type LayoutDashboard } from "lucide-react";
+import { CheckCircle2, ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,21 +41,6 @@ export function FeatureFrame<T>({ title, description, query, children }: Feature
 
 export function FeatureHeader({ title, description, actions }: { title: string; description: string; actions?: ReactNode }) {
   return <div><h1 className="text-2xl font-semibold tracking-tight md:text-3xl">{title}</h1><p className="mt-1 text-sm text-muted-foreground">{description}</p>{actions}</div>;
-}
-
-type MetricProps = { title: string; value: string; detail: string; icon?: typeof LayoutDashboard; tone?: "default" | "accent" };
-
-export function Metric({ title, value, detail, icon: Icon, tone = "default" }: MetricProps) {
-  return (
-    <div className={cn("stat-card", tone === "accent" && "accent")}>
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
-        {Icon ? <Icon className={cn("h-4 w-4", tone === "accent" ? "text-primary" : "text-muted-foreground")} /> : null}
-      </div>
-      <p className={cn("mt-2 text-3xl font-semibold tracking-tight", tone === "accent" && "text-primary")}>{value}</p>
-      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
-    </div>
-  );
 }
 
 export function StatusBadge({ value }: { value?: string | null }) {
