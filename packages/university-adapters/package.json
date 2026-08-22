@@ -13,17 +13,17 @@
     "test": "tsc -p tsconfig.json --noEmit && vitest run"
   },
   "dependencies": {
-    "@cloudflare/puppeteer": "^1.0.2",
+    "@cloudflare/puppeteer": "^1.4.0",
     "@hyeboard/core": "workspace:*",
     "@hyeboard/schemas": "workspace:*",
-    "patchright": "^1.61.1",
-    "puppeteer-core": "^24.15.0"
+    "patchright": "^1.62.1",
+    "puppeteer-core": "^25.8.0"
   },
   "optionalDependencies": {
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
-    "typescript": "^6.0.3",
-    "vitest": "^3.2.4"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }

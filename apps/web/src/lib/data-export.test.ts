@@ -600,7 +600,7 @@ describe("PDF export", () => {
     const remove = vi.fn();
     const anchor = { href: "", download: "", click: vi.fn(), remove };
     const environment = { createObjectURL, revokeObjectURL, createAnchor: vi.fn(() => anchor), appendAnchor: vi.fn() };
-    const createPdf = vi.fn(() => ({ getBlob: (callback: (blob: Blob) => void) => callback(new Blob(["%PDF-1.7\\nsynthetic"], { type: "application/pdf" })) }));
+    const createPdf = vi.fn(() => ({ getBlob: async () => new Blob(["%PDF-1.7\nsynthetic"], { type: "application/pdf" }) }));
     const open = vi.fn();
     vi.stubGlobal("open", open);
 
@@ -805,9 +805,9 @@ describe("PDF export", () => {
       import("pdfmake/build/pdfmake"),
       import("pdfmake/build/vfs_fonts"),
     ]);
-    const pdfMake = (pdfMakeModule.default ?? pdfMakeModule) as { vfs?: unknown; createPdf(definition: unknown): { getBlob(callback: (blob: Blob) => void): void } };
+    const pdfMake = (pdfMakeModule.default ?? pdfMakeModule) as { addVirtualFileSystem(vfs: unknown): void; createPdf(definition: unknown): { getBlob(): Promise<Blob> } };
     const vfs = (pdfVfsModule.default ?? pdfVfsModule) as unknown;
-    pdfMake.vfs = vfs;
+    pdfMake.addVirtualFileSystem(vfs);
     const definition = createPdfExportDefinition(
       createGradesExport({ surface: "grades-page", universityId: "mock", identity: { studentName: "Sinh viên thử nghiệm" }, derivedTerms: [term] }),
       "vi",
@@ -816,7 +816,7 @@ describe("PDF export", () => {
     );
     // pdfmake does not expose stable text extraction. Assert structured report content above;
     // here verify real renderer output without snapshotting volatile PDF bytes.
-    const blob = await new Promise<Blob>((resolve) => pdfMake.createPdf(definition).getBlob(resolve));
+    const blob = await pdfMake.createPdf(definition).getBlob();
 
     expect(blob.type).toBe("application/pdf");
     expect((await blob.text()).slice(0, 5)).toBe("%PDF-");
