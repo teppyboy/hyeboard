@@ -80,6 +80,14 @@ app.kubernetes.io/component: automation-worker
 {{- end -}}
 {{- end -}}
 
+{{- define "hyeboard.redisImage" -}}
+{{- if .tag -}}
+{{- printf "%s:%s" .repository .tag -}}
+{{- else -}}
+{{- .repository -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "hyeboard.commonLabels" -}}
 {{- with .Values.commonLabels }}
 {{ toYaml . }}

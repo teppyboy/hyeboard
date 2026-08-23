@@ -252,14 +252,14 @@ redis:
     clusterSize: 3
     image:
       repository: quay.io/opstree/redis
-      tag: "v7.0.15"
+      # Optional. Omit to use the registry's default tag.
       pullPolicy: IfNotPresent
     sentinel:
       enabled: true
       size: 3
       image:
         repository: quay.io/opstree/redis-sentinel
-        tag: "v7.0.15"
+        # Optional. Omit to use the registry's default tag.
         pullPolicy: IfNotPresent
       resources:
         requests:
@@ -275,7 +275,6 @@ redis:
       existingSecret: hyeboard-redis-auth
       key: password
     storage:
-      storageClassName: ""
       size: 50Gi
     resources:
       requests:

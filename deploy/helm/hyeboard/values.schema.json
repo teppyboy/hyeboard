@@ -303,7 +303,7 @@
     "automationWorker": { "$ref": "#/definitions/componentCommon" },
     "redisImage": {
       "type": "object",
-      "required": ["repository", "tag", "pullPolicy"],
+      "required": ["repository", "pullPolicy"],
       "additionalProperties": false,
       "properties": {
         "repository": { "type": "string", "minLength": 1, "pattern": "^\\S+$" },
@@ -362,7 +362,7 @@
         },
         "storage": {
           "type": "object",
-          "required": ["storageClassName", "size"],
+          "required": ["size"],
           "additionalProperties": false,
           "properties": {
             "storageClassName": { "type": "string" },

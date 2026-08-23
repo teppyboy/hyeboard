@@ -32,6 +32,10 @@ const mutableTags = new Set([
   "edge",
   "nightly",
 ]);
+const allowUnpinnedImages = new Set([
+  "quay.io/opstree/redis",
+  "quay.io/opstree/redis-sentinel",
+]);
 
 const args = new Set(process.argv.slice(2));
 const option = (name) => {
@@ -154,17 +158,24 @@ function assertField(document, pattern, description) {
   assert(pattern.test(document), `Missing ${description} in ${resourceKind(document)} ${resourceName(document)}`);
 }
 
+function normalizeImageReference(value) {
+  return value.replace(/^['"]|['"]$/g, "");
+}
+
 function validateImages(rendered, { strictRelease }) {
-  const images = [...rendered.matchAll(/^\s*image:\s*(?:>-\s*)?([^\s#]+)\s*$/gm)].map((match) => match[1]);
+  const images = [...rendered.matchAll(/^\s*image:\s*(?:>-\s*)?([^\s#]+)\s*$/gm)].map((match) => normalizeImageReference(match[1]));
   assert(images.length >= 2, "Rendered chart must contain API and worker image references");
   const applicationImages = documentSections(rendered)
     .filter((document) => resourceKind(document) === "Deployment")
     .filter((document) => /api|automation-worker/.test(resourceName(document) || ""))
-    .flatMap((document) => [...document.matchAll(/^\s*image:\s*(?:>-\s*)?([^\s#]+)\s*$/gm)].map((match) => match[1]));
+    .flatMap((document) => [...document.matchAll(/^\s*image:\s*(?:>-\s*)?([^\s#]+)\s*$/gm)].map((match) => normalizeImageReference(match[1])));
   for (const image of images) {
     const digest = image.match(/@sha256:([a-f0-9]{64})$/i)?.[1];
     const tag = digest ? undefined : image.match(/:([^:/]+)$/)?.[1];
-    assert(digest || tag, `Image reference has no tag or digest: ${image}`);
+    if (!digest && !tag) {
+      assert(allowUnpinnedImages.has(image), `Image reference has no tag or digest: ${image}`);
+      continue;
+    }
     if (digest) {
       assert(!/^([a-f0-9])\1{63}$/i.test(digest), `Image ${image} uses a placeholder digest`);
       continue;

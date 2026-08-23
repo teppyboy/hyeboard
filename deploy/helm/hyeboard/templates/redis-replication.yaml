@@ -10,7 +10,7 @@ metadata:
 spec:
   clusterSize: {{ .Values.redis.operator.clusterSize }}
   kubernetesConfig:
-    image: {{ printf "%s:%s" .Values.redis.operator.image.repository .Values.redis.operator.image.tag | quote }}
+    image: {{ include "hyeboard.redisImage" .Values.redis.operator.image | quote }}
     imagePullPolicy: {{ .Values.redis.operator.image.pullPolicy }}
     redisSecret:
       name: {{ .Values.redis.operator.auth.existingSecret }}
@@ -48,7 +48,7 @@ spec:
   {{- if .Values.redis.operator.sentinel.enabled }}
   sentinel:
     size: {{ .Values.redis.operator.sentinel.size }}
-    image: {{ printf "%s:%s" .Values.redis.operator.sentinel.image.repository .Values.redis.operator.sentinel.image.tag | quote }}
+    image: {{ include "hyeboard.redisImage" .Values.redis.operator.sentinel.image | quote }}
     imagePullPolicy: {{ .Values.redis.operator.sentinel.image.pullPolicy }}
     resources:
       {{- toYaml .Values.redis.operator.sentinel.resources | nindent 6 }}
