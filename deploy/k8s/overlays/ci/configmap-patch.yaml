@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hyeboard-runtime
+data:
+  HYEB_ALLOWED_ORIGINS: http://hyeboard-api
+  HYEB_AUTOMATION_EXECUTOR_READY: "true"
+  HYEB_BROWSER_HEADLESS: "true"

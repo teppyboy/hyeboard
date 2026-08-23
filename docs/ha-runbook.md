@@ -193,6 +193,8 @@ The overlays are intentionally different:
 | `staging` | `hyeboard-staging` | `staging.hyeboard.example.com` | 2 API, 2 workers | `ghcr.io/im-yuuki` |
 | `production` | `hyeboard-production` | `hyeboard.example.com` | 3 API, 3 workers, 3 Browserless | `registry.internal.example` placeholder |
 
+CI uses `deploy/k8s/overlays/ci` with a disposable three-node Kind cluster. It runs PostgreSQL, Redis, and Browserless inside the cluster, loads the CI images, enables metrics-server for HPA status, and executes the same round-robin/failover validator. This proves the Kubernetes wiring in an ephemeral cluster; it does not replace target-cluster or real UET credential validation.
+
 The base starts `HYEB_AUTOMATION_EXECUTOR_READY=false` and uses distributed mode with Browserless as the configured provider. The setting is not changed by any overlay. Keep it false: a running worker, Browserless endpoint, or healthy rollout does not establish Browserless/UET parity.
 
 ### Images and secrets

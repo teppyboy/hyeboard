@@ -10,7 +10,7 @@ const clientMocks = vi.hoisted(() => ({
 }));
 vi.mock("./google-login-automation", () => ({ automateVnuGoogleLogin: vi.fn() }));
 vi.mock("./studenthub-client", () => ({
-  StudentHubClient: vi.fn().mockImplementation(() => clientMocks),
+  StudentHubClient: vi.fn().mockImplementation(function () { return clientMocks; }),
 }));
 
 import { automateVnuGoogleLogin } from "./google-login-automation";

@@ -23,7 +23,15 @@ RUN pnpm package
 
 # Use the lockfile-resolved production dependency tree, rather than resolving
 # the generated package.json with npm during the image build.
-RUN pnpm pm deploy --filter=@hyeboard/worker --prod --legacy runtime \
+RUN pnpm pm deploy --filter=@hyeboard/worker --prod --legacy runtime
+
+# Elysia declares TypeScript as an optional peer. pnpm materializes the
+# compiler and its platform-specific Go binary in the virtual store even
+# for a production deploy; neither is needed by the runtime image.
+RUN rm -rf runtime/node_modules/.pnpm/typescript@* \
+    runtime/node_modules/.pnpm/@typescript+typescript-* \
+    runtime/node_modules/.pnpm/node_modules/typescript \
+    runtime/node_modules/.pnpm/node_modules/@typescript \
   && rm -rf runtime/dist runtime/public runtime/src runtime/test runtime/scripts \
     runtime/.wrangler runtime/.env.example runtime/eng.traineddata \
     runtime/tsconfig*.json runtime/vitest*.ts runtime/worker-configuration.d.ts runtime/wrangler.jsonc \

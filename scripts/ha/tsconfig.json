@@ -1,15 +1,25 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"],
-    "typeRoots": ["../../apps/worker/node_modules/@types"],
-    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "../../apps/worker/node_modules/@types"
+    ],
     "paths": {
-      "vitest": ["../../apps/worker/node_modules/vitest"],
-      "@testcontainers/postgresql": ["../../apps/worker/node_modules/@testcontainers/postgresql"],
-      "@testcontainers/redis": ["../../apps/worker/node_modules/@testcontainers/redis"]
+      "vitest": [
+        "../../apps/worker/node_modules/vitest"
+      ],
+      "@testcontainers/postgresql": [
+        "../../apps/worker/node_modules/@testcontainers/postgresql"
+      ],
+      "@testcontainers/redis": [
+        "../../apps/worker/node_modules/@testcontainers/redis"
+      ]
     }
   },
-  "include": ["*.ts"]
+  "include": [
+    "*.ts"
+  ]
 }

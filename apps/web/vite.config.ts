@@ -4,9 +4,10 @@ import { execSync } from "node:child_process";
 import path from "node:path";
 import { defineConfig } from "vite";
 
+const gitRoot = import.meta.dirname;
 const gitCommit = (() => {
   try {
-    return execSync("git rev-parse --short HEAD", { cwd: path.resolve(__dirname, "../..") }).toString().trim();
+    return execSync("git rev-parse --short HEAD", { cwd: path.resolve(gitRoot, "../..") }).toString().trim();
   } catch {
     return "dev";
   }
@@ -19,7 +20,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   server: {

@@ -273,6 +273,7 @@ function useHyeboardState() {
   const universities = useQuery({
     queryKey: ["universities"],
     queryFn: api.universities,
+    refetchOnWindowFocus: false,
   });
 
   const ensureSession = async () => {

@@ -2,11 +2,15 @@ packages:
   - "apps/*"
   - "packages/*"
 allowBuilds:
+  cpu-features: false
   esbuild: true
+  protobufjs: false
   sharp: true
+  ssh2: false
   tesseract.js: true
   workerd: true
 minimumReleaseAgeExclude:
-  - '@cloudflare/workers-types@5.20260710.1'
+  - "@cloudflare/workers-types@5.20260710.1"
 overrides:
+  '@cloudflare/puppeteer>@puppeteer/browsers': 3.2.1
   ip-address: 10.3.1
