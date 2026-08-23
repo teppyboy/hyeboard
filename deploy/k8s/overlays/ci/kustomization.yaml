@@ -6,10 +6,10 @@ resources:
   - namespace.yaml
   - dependencies.yaml
 images:
-  - name: ghcr.io/im-yuuki/hyeboard-api
+  - name: ghcr.io/teppyboy/hyeboard-api
     newName: hyeboard-api
     newTag: ci
-  - name: ghcr.io/im-yuuki/hyeboard-automation-worker
+  - name: ghcr.io/teppyboy/hyeboard-automation-worker
     newName: hyeboard-automation-worker
     newTag: ci
 patches:

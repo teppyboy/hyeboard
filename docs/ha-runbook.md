@@ -189,8 +189,8 @@ The overlays are intentionally different:
 
 | Overlay | Namespace | Hostname | Initial replicas | Image registry |
 | --- | --- | --- | --- | --- |
-| `example` | `hyeboard` | `hyeboard.example.com` | 1 API, 1 worker | `ghcr.io/im-yuuki` |
-| `staging` | `hyeboard-staging` | `staging.hyeboard.example.com` | 2 API, 2 workers | `ghcr.io/im-yuuki` |
+| `example` | `hyeboard` | `hyeboard.example.com` | 1 API, 1 worker | `ghcr.io/teppyboy` |
+| `staging` | `hyeboard-staging` | `staging.hyeboard.example.com` | 2 API, 2 workers | `ghcr.io/teppyboy` |
 | `production` | `hyeboard-production` | `hyeboard.example.com` | 3 API, 3 workers, 3 Browserless | `registry.internal.example` placeholder |
 
 CI uses `deploy/k8s/overlays/ci` with a disposable three-node Kind cluster. It runs PostgreSQL, Redis, and Browserless inside the cluster, loads the CI images, enables metrics-server for HPA status, and executes the same round-robin/failover validator. This proves the Kubernetes wiring in an ephemeral cluster; it does not replace target-cluster or real UET credential validation.
@@ -202,7 +202,7 @@ The base starts `HYEB_AUTOMATION_EXECUTOR_READY=false` and uses distributed mode
 Build and publish both images with an immutable commit tag. The container workflow uses `sha-${GITHUB_SHA}` and publishes to `ghcr.io/${GITHUB_REPOSITORY_OWNER}/hyeboard-api` and `ghcr.io/${GITHUB_REPOSITORY_OWNER}/hyeboard-automation-worker` for non-PR events:
 
 ```bash
-export IMAGE_OWNER=im-yuuki
+export IMAGE_OWNER=teppyboy
 export IMAGE_TAG=sha-<40-character-commit-sha>
 docker login ghcr.io
 docker build -t "ghcr.io/${IMAGE_OWNER}/hyeboard-api:${IMAGE_TAG}" .
@@ -357,11 +357,11 @@ The operator's master Service is the endpoint used by the current Node Redis cli
 
 ## Helm alternative
 
-The Helm chart is available at [`deploy/helm/hyeboard`](../deploy/helm/hyeboard). It is an alternative to the Kustomize templates above; do not let Helm and Kustomize manage the same workloads in one namespace. The chart can deploy Browserless and render a RedisReplication custom resource when enabled, but it does not install the cluster-scoped Redis Operator, Namespace, or Secrets.
+The Helm chart is published at `https://tretrauit.me/hyeboard/`. It is an alternative to the Kustomize templates above; do not let Helm and Kustomize manage the same workloads in one namespace. The chart can deploy Browserless, render a RedisReplication custom resource, and create the application Secrets when `secrets.create` is enabled. It does not install the cluster-scoped Redis Operator or CRD.
 
 The Helm production prerequisites are Helm 3, `kubectl` access to the selected cluster context, a pinned OT-CONTAINER-KIT Redis Operator/CRD, a StorageClass for Redis PVCs, an ingress controller matching the chart's configured Ingress class, DNS, and a pre-created TLS Secret. PostgreSQL remains external. `values-production.yaml` enables Browserless and the RedisReplication resource; the chart does not install the Redis Operator itself.
 
-Create `hyeboard-runtime` and `hyeboard-redis-auth` in each target namespace before installing the production release. Use an external secret manager or External Secrets integration where available. The runtime Secret must contain:
+Put the runtime credentials and Redis password in a local values file with `secrets.create: true`. The chart creates `hyeboard-runtime` and `hyeboard-redis-auth` from that file. The runtime Secret must contain:
 
 ```text
 HYEB_SESSION_SECRET
@@ -377,9 +377,9 @@ BROWSERLESS_TOKEN
 
 Set `images.api.repository`, `images.api.tag`/`digest`, and the corresponding `images.automationWorker.*` values and use an immutable commit SHA tag such as `sha-<40-character-commit-sha>` or a verified registry digest. Never use `latest` or another mutable tag. Put environment-specific values in a local uncommitted file. For the production values, `HYEB_REDIS_URL` uses `<release>-redis-master` and `BROWSERLESS_ENDPOINT` uses `<release>-browserless`.
 
-For a production Helm release, layer `values-production.yaml` with an uncommitted site values file containing the real image registry/tag or digests, `ingress.enabled: true`, ingress hostname/TLS, allowed origins, and any environment-specific scheduling values. The Redis Operator must already be installed and the two Secrets must exist in the release namespace. With the default release name `hyeboard`, the runtime Secret should use `HYEB_REDIS_URL=redis://:<password>@hyeboard-redis-master:6379/0` and `BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium`.
+For a production Helm release, use one uncommitted values file containing the real image registry/tag or digests, `ingress.enabled: true`, ingress hostname/TLS, allowed origins, runtime credentials, and Redis password. The Redis Operator must already be installed. With the default release name `hyeboard`, the runtime Secret should use `HYEB_REDIS_URL=redis://:<password>@hyeboard-redis-master:6379/0` and `BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium`.
 
-The site values file contains no credentials. A minimal production shape is:
+The values file contains credentials and must stay outside the repository. A minimal production shape is:
 
 ```yaml
 images:
@@ -406,7 +406,7 @@ ingress:
         - hyeboard.example.com
 ```
 
-Keep this file outside the repository. Create or update the two Secrets through the cluster secret manager; if `kubectl` is used, feed values from environment variables and do not apply `secret.example.yaml`.
+Set `secrets.create: true` and add the runtime values and Redis password to the same file. Protect it with `chmod 600` and do not commit it.
 
 ```bash
 export HYEB_K8S_NAMESPACE=hyeboard-production

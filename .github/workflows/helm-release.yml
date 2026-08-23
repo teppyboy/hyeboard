@@ -1,0 +1,33 @@
+name: Release Helm chart
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - deploy/helm/**
+      - .github/workflows/helm-release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Publish chart to GitHub Pages
+        uses: helm/chart-releaser-action@v1.7.0
+        with:
+          charts_dir: deploy/helm
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

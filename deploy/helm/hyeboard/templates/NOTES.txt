@@ -1,9 +1,13 @@
 Hyeboard has been rendered in namespace {{ .Release.Namespace }}.
 
-The chart references an existing Secret named {{ .Values.secrets.existingSecret }};
-it does not create or populate credentials. Ensure it contains the configured
-PostgreSQL, Redis, Browserless, session-secret, and automation-key entries before
-starting the workloads.
+{{- if .Values.secrets.create }}
+The chart created runtime Secret {{ .Values.secrets.existingSecret }} and Redis
+auth Secret {{ .Values.secrets.redisAuth.existingSecret }} from the supplied
+values file.
+{{- else }}
+The chart references existing runtime Secret {{ .Values.secrets.existingSecret }}
+and Redis auth Secret {{ .Values.secrets.redisAuth.existingSecret }}.
+{{- end }}
 
 The automation executor gate is {{ index .Values.config.runtime "HYEB_AUTOMATION_EXECUTOR_READY" | quote }}.
 It must remain false until the distributed Browserless executor has passed real-provider validation.
