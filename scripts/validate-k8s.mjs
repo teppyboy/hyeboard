@@ -159,6 +159,7 @@ function validateDeploymentSecurity(text, name) {
 
 function validateBrowserlessSecurity(text) {
   has(text, /automountServiceAccountToken:\s*false/);
+  has(text, /runAsUser:\s*999/);
   has(text, /runAsNonRoot:\s*true/);
   has(text, /seccompProfile:\s*\n\s+type:\s*RuntimeDefault/);
   has(text, /allowPrivilegeEscalation:\s*false/);

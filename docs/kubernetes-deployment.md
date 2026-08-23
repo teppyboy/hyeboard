@@ -30,9 +30,9 @@ helm version
 Redis Operator phải được cài sẵn. Helm chart chỉ tạo `RedisReplication`, không
 cài operator hoặc CRD.
 
-## 2. Tạo file values.yml
+## 2. Tạo file hyeboard-values.yml
 
-Tạo `values.yml` trên máy triển khai. File này chứa cả cấu hình và credential,
+Tạo `hyeboard-values.yml` trên máy triển khai. File này chứa cả cấu hình và credential,
 nên chỉ lưu cục bộ:
 
 ```yaml
@@ -105,13 +105,7 @@ kubectl create namespace hyeboard
 kubectl -n hyeboard create secret tls hyeboard-tls --cert=/path/to/fullchain.pem --key=/path/to/privkey.pem
 ```
 
-Giữ file riêng tư:
-
-```bash
-chmod 600 values.yml
-```
-
-Không commit `values.yml` vào repository.
+Không commit `hyeboard-values.yml` vào repository.
 
 ## 3. Cài chart từ OCI registry
 
@@ -121,10 +115,10 @@ Nếu chart GHCR là private, đăng nhập một lần:
 echo '<github-token>' | helm registry login ghcr.io --username <github-username> --password-stdin
 ```
 
-Sau đó cài hoặc nâng cấp bằng một lệnh. `0.2.0` là version chart hiện tại:
+Sau đó cài hoặc nâng cấp bằng một lệnh. `0.2.1` là version chart hiện tại:
 
 ```bash
-helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.0 --namespace hyeboard --create-namespace --values ./values.yml --wait --atomic --timeout 5m
+helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.1 --namespace hyeboard --create-namespace --values ./hyeboard-values.yml --wait --rollback-on-failure --timeout 5m
 ```
 
 Chart sẽ tạo runtime Secret, Redis auth Secret, API, worker, Browserless,
@@ -168,6 +162,6 @@ helm rollback hyeboard <revision> --namespace hyeboard --wait --timeout 5m
 - [ ] Đúng Kubernetes context.
 - [ ] PostgreSQL, Ingress, DNS, TLS và Redis Operator đã sẵn sàng.
 - [ ] Hai image dùng tag SHA hoặc digest tồn tại trên GHCR.
-- [ ] `values.yml` có đủ cấu hình và credential.
-- [ ] `values.yml` không được commit hoặc gửi vào ticket.
+- [ ] `hyeboard-values.yml` có đủ cấu hình và credential.
+- [ ] `hyeboard-values.yml` không được commit hoặc gửi vào ticket.
 - [ ] API, worker, Browserless, RedisReplication và `/api/ready` đã kiểm tra.

@@ -252,14 +252,14 @@ redis:
     clusterSize: 3
     image:
       repository: quay.io/opstree/redis
-      tag: "7.0.15"
+      tag: "v7.0.15"
       pullPolicy: IfNotPresent
     sentinel:
       enabled: true
       size: 3
       image:
         repository: quay.io/opstree/redis-sentinel
-        tag: "7.0.15"
+        tag: "v7.0.15"
         pullPolicy: IfNotPresent
       resources:
         requests:
@@ -328,6 +328,9 @@ browserless:
       cpu: "2"
       memory: 4Gi
   podSecurityContext:
+    # Browserless v2.55.4 declares the symbolic user "blessuser". Pin its
+    # image-defined UID so Kubernetes can verify the non-root policy.
+    runAsUser: 999
     runAsNonRoot: true
     seccompProfile:
       type: RuntimeDefault

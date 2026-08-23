@@ -285,7 +285,7 @@ Use `images.api.repository`, `images.api.tag`/`digest`, and the corresponding `i
 For production, add the published chart repository and use one local values file containing the image, ingress, runtime, and Secret values:
 
 ```bash
-helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.0 --namespace hyeboard --create-namespace --values /path/to/values.yml --wait --atomic --timeout 15m
+helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.1 --namespace hyeboard --create-namespace --values /path/to/values.yml --wait --atomic --timeout 15m
 kubectl -n hyeboard get redisreplication,svc,pods
 ```
 

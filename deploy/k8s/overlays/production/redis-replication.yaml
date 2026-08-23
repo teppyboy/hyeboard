@@ -8,7 +8,7 @@ metadata:
 spec:
   clusterSize: 3
   kubernetesConfig:
-    image: quay.io/opstree/redis:7.0.15
+    image: quay.io/opstree/redis:v7.0.15
     imagePullPolicy: IfNotPresent
     redisSecret:
       name: hyeboard-redis-auth
@@ -49,7 +49,7 @@ spec:
           redis_setup_type: replication
   sentinel:
     size: 3
-    image: quay.io/opstree/redis-sentinel:7.0.15
+    image: quay.io/opstree/redis-sentinel:v7.0.15
     imagePullPolicy: IfNotPresent
     resources:
       requests:

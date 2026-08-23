@@ -195,6 +195,7 @@ function validateDeployment(document, role) {
 
 function validateBrowserlessDeployment(document) {
   assertField(document, /^\s*automountServiceAccountToken:\s*false\s*$/m, "Browserless service-account token restriction");
+  assertField(document, /^\s*runAsUser:\s*999\s*$/m, "Browserless image-defined UID");
   assertField(document, /^\s*runAsNonRoot:\s*true\s*$/m, "Browserless non-root security context");
   assertField(document, /seccompProfile:\s*\n[\s\S]*?type:\s*RuntimeDefault/m, "Browserless RuntimeDefault seccomp profile");
   assertField(document, /^\s*allowPrivilegeEscalation:\s*false\s*$/m, "Browserless privilege-escalation restriction");

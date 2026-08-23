@@ -27,6 +27,9 @@ spec:
       terminationGracePeriodSeconds: 60
       automountServiceAccountToken: false
       securityContext:
+        # Browserless v2.55.4 declares the symbolic user "blessuser";
+        # its image-defined UID is pinned so Kubernetes can verify non-root.
+        runAsUser: 999
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
