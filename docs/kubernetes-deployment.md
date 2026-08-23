@@ -12,7 +12,8 @@ Cluster cần có:
 - NGINX Ingress Controller với IngressClass `nginx`.
 - DNS trỏ hostname production vào Ingress.
 - Certificate và private key cho hostname đó.
-- Redis Operator OT-CONTAINER-KIT cùng CRD `RedisReplication`.
+- CRD `RedisReplication` và quyền tạo cluster-scoped CRD; Redis Operator sẽ chạy
+  trong namespace `hyeboard` bằng một Helm release riêng.
 - StorageClass có thể tạo Redis PVC.
 - `kubectl` và Helm.
 
@@ -27,10 +28,27 @@ kubectl get storageclass
 helm version
 ```
 
-Redis Operator phải được cài sẵn. Helm chart chỉ tạo `RedisReplication`, không
-cài operator hoặc CRD.
+Helm chart ứng dụng chỉ tạo `RedisReplication`, không sở hữu operator hoặc CRD.
+Operator được cài trong cùng namespace để NetworkPolicy cho phép nó truy cập Redis:
 
-## 2. Tạo file hyeboard-values.yml
+```bash
+helm repo add ot-helm https://ot-container-kit.github.io/helm-charts
+helm repo update
+
+helm upgrade --install redis-operator ot-helm/redis-operator \
+  --namespace hyeboard \
+  --create-namespace \
+  --version 0.26.1 \
+  --values deploy/helm/redis-operator-values.yaml \
+  --wait --timeout 10m
+
+kubectl get crd redisreplications.redis.redis.opstreelabs.in
+kubectl -n hyeboard rollout status deployment/redis-operator --timeout=180s
+```
+
+CRD là cluster-scoped và phải được giữ lại khi gỡ Helm release ứng dụng.
+
+## 3. Tạo file hyeboard-values.yml
 
 Tạo `hyeboard-values.yml` trên máy triển khai. File này chứa cả cấu hình và credential,
 nên chỉ lưu cục bộ:
@@ -107,7 +125,7 @@ kubectl -n hyeboard create secret tls hyeboard-tls --cert=/path/to/fullchain.pem
 
 Không commit `hyeboard-values.yml` vào repository.
 
-## 3. Cài chart từ OCI registry
+## 4. Cài chart từ OCI registry
 
 Nếu chart GHCR là private, đăng nhập một lần:
 
@@ -118,13 +136,13 @@ echo '<github-token>' | helm registry login ghcr.io --username <github-username>
 Sau đó cài hoặc nâng cấp bằng một lệnh:
 
 ```bash
-helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --namespace hyeboard --create-namespace --values ./hyeboard-values.yml --wait --rollback-on-failure --timeout 5m
+helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.2 --namespace hyeboard --create-namespace --values ./hyeboard-values.yml --wait --rollback-on-failure --timeout 15m
 ```
 
 Chart sẽ tạo runtime Secret, Redis auth Secret, API, worker, Browserless,
 RedisReplication, Ingress, HPA và PDB.
 
-## 4. Kiểm tra
+## 5. Kiểm tra
 
 ```bash
 kubectl -n hyeboard get pods,svc,ingress,redisreplication
@@ -150,7 +168,7 @@ kubectl -n hyeboard describe redisreplication hyeboard-redis
 `HYEB_AUTOMATION_EXECUTOR_READY` mặc định vẫn là `false`. Chỉ bật sau khi
 executor đã được kiểm chứng với provider thật.
 
-## 5. Rollback
+## 6. Rollback
 
 ```bash
 helm history hyeboard --namespace hyeboard
@@ -160,7 +178,7 @@ helm rollback hyeboard <revision> --namespace hyeboard --wait --timeout 5m
 ## Checklist
 
 - [ ] Đúng Kubernetes context.
-- [ ] PostgreSQL, Ingress, DNS, TLS và Redis Operator đã sẵn sàng.
+- [ ] PostgreSQL, Ingress, DNS, TLS và Redis Operator trong `hyeboard` đã sẵn sàng.
 - [ ] Hai image dùng tag SHA hoặc digest tồn tại trên GHCR.
 - [ ] `hyeboard-values.yml` có đủ cấu hình và credential.
 - [ ] `hyeboard-values.yml` không được commit hoặc gửi vào ticket.

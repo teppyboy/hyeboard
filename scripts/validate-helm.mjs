@@ -243,6 +243,8 @@ function validateRenderedManifest(rendered, label, { strictRelease }) {
 
   if (strictRelease && label === "production") {
     findResource(documents, "RedisReplication", /redis/);
+    const redisPolicy = findResource(documents, "NetworkPolicy", /redis/);
+    assertField(redisPolicy, /podSelector:[\s\S]*?name:\s*redis-operator/m, "Redis Operator pod access");
   }
 
   if (label === "production") {

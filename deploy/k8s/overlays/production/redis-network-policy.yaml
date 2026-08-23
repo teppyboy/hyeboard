@@ -28,6 +28,9 @@ spec:
             matchLabels:
               app: hyeboard-redis
               redis_setup_type: sentinel
+        - podSelector:
+            matchLabels:
+              name: redis-operator
       ports:
         - protocol: TCP
           port: 6379
