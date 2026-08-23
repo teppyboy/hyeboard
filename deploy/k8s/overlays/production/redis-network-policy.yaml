@@ -26,9 +26,12 @@ spec:
               redis_setup_type: replication
         - podSelector:
             matchLabels:
-              app: hyeboard-redis
+              app: hyeboard-redis-s
               redis_setup_type: sentinel
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ot-operators
+          podSelector:
             matchLabels:
               name: redis-operator
       ports:

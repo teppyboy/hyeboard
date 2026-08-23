@@ -60,14 +60,11 @@ spec:
         - protocol: TCP
           port: 3000
   egress:
-    - to:
-        - namespaceSelector: {}
-      ports:
+    - ports:
         - protocol: UDP
           port: 53
         - protocol: TCP
           port: 53
-    - ports:
         - protocol: TCP
           port: 443
 {{- end }}
@@ -102,9 +99,12 @@ spec:
               redis_setup_type: replication
         - podSelector:
             matchLabels:
-              app: {{ include "hyeboard.redisName" . }}
+              app: {{ include "hyeboard.redisName" . }}-s
               redis_setup_type: sentinel
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.redis.operator.namespace | quote }}
+          podSelector:
             matchLabels:
               name: redis-operator
       ports:

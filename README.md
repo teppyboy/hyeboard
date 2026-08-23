@@ -239,7 +239,7 @@ The templates are under [`deploy/k8s`](deploy/k8s):
 - `overlays/staging` targets namespace `hyeboard-staging`, hostname `staging.hyeboard.example.com`, and two replicas of each workload.
 - `overlays/production` targets namespace `hyeboard-production`, hostname `hyeboard.example.com`, and three API, worker, and Browserless replicas; it also declares a three-node RedisReplication with three Sentinel pods through the OT-CONTAINER-KIT Redis Operator. Its application image names point at `registry.internal.example` until replaced.
 
-Kubernetes does not provision PostgreSQL, an ingress controller, TLS, or a secret manager. Example and staging use external PostgreSQL, Redis, and Browserless services. Production runs Redis and Browserless in-cluster, and requires the pinned namespace-scoped Redis Operator release in the same workload namespace, its cluster-scoped CRD, a production StorageClass, and enough capacity for three Redis members, three Sentinels, three Browserless pods, and the application replicas. All overlays require an NGINX ingress class, a `metrics-server`-compatible metrics API, and the referenced TLS Secret.
+Kubernetes does not provision PostgreSQL, an ingress controller, TLS, or a secret manager. Example and staging use external PostgreSQL, Redis, and Browserless services. Production runs Redis and Browserless in-cluster, and requires the pinned cluster-scoped Redis Operator release in `ot-operators` watching the workload namespace, its cluster-scoped CRD, a production StorageClass, and enough capacity for three Redis members, three Sentinels, three Browserless pods, and the application replicas. All overlays require an NGINX ingress class, a `metrics-server`-compatible metrics API, and the referenced TLS Secret.
 
 `deploy/k8s/base/secret.example.yaml` is a template only and is not a Kustomize resource. Prefer an external secret manager or External Secrets integration to materialize a Secret named `hyeboard-runtime` with these keys: `HYEB_SESSION_SECRET`, `HYEB_POSTGRES_URL`, `HYEB_REDIS_URL`, `AUTOMATION_KEY_CURRENT_ID`, `AUTOMATION_KEY_CURRENT_B64`, optional previous automation key pair, `BROWSERLESS_ENDPOINT`, and `BROWSERLESS_TOKEN`. For production, point `HYEB_REDIS_URL` at the operator-managed `hyeboard-redis-master` Service and `BROWSERLESS_ENDPOINT` at `ws://hyeboard-browserless:3000/chromium`; include the Redis password in the Redis URI as required by the Node Redis client. Create a separate `hyeboard-redis-auth` Secret with key `password` for the Redis Operator. If a cluster secret manager is unavailable, create both Secrets out of band with `kubectl` from environment variables; never apply templates unchanged or commit generated Secret YAML.
 
@@ -256,7 +256,7 @@ kubectl rollout status deployment/hyeboard-api -n hyeboard-staging --timeout=180
 kubectl rollout status deployment/hyeboard-automation-worker -n hyeboard-staging --timeout=180s
 ```
 
-For a production rollout, install the pinned namespace-scoped OT-CONTAINER-KIT Redis Operator release in the target overlay namespace and verify the `redis.redis.opstreelabs.in/v1beta2` CRD before applying `deploy/k8s/overlays/production`. Confirm the internal registry names, real application digests, StorageClass, Redis auth Secret, and runtime Secret first. The example overlay is intended for rendering/smoke use and has one replica, so it does not satisfy the multi-replica cluster validator. Validate staging or production with cluster access:
+For a production rollout, install the pinned OT-CONTAINER-KIT Redis Operator release in `ot-operators`, configure it to watch the target overlay namespace, and verify the `redis.redis.opstreelabs.in/v1beta2` CRD before applying `deploy/k8s/overlays/production`. Confirm the internal registry names, real application digests, StorageClass, Redis auth Secret, and runtime Secret first. The example overlay is intended for rendering/smoke use and has one replica, so it does not satisfy the multi-replica cluster validator. Validate staging or production with cluster access:
 
 ```bash
 HYEB_K8S_NAMESPACE=hyeboard-staging \
@@ -274,7 +274,7 @@ Keep `HYEB_AUTOMATION_EXECUTOR_READY=false` in Compose and Kubernetes defaults. 
 
 ### Helm
 
-The chart is published at `oci://ghcr.io/teppyboy/charts/hyeboard`. It deploys the API, automation-worker, Browserless, Ingress, HPA, PDB, and an optional `RedisReplication` custom resource. It does not install or own the Redis Operator or its cluster-scoped CRD; install the separate namespace-scoped operator release in `hyeboard` first.
+The chart is published at `oci://ghcr.io/teppyboy/charts/hyeboard`. It deploys the API, automation-worker, Browserless, Ingress, HPA, PDB, and an optional `RedisReplication` custom resource. It does not install or own the Redis Operator or its cluster-scoped CRD; install the separate cluster-scoped operator release in `ot-operators` first.
 
 Helm and Kustomize are alternatives. Use one release method for a namespace; do not install the Helm release and apply a Kustomize overlay to the same workloads.
 
@@ -285,7 +285,7 @@ Use `images.api.repository`, `images.api.tag`/`digest`, and the corresponding `i
 For production, add the published chart repository and use one local values file containing the image, ingress, runtime, and Secret values:
 
 ```bash
-helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.2 --namespace hyeboard --create-namespace --values /path/to/values.yml --wait --atomic --timeout 15m
+helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.5 --namespace hyeboard --create-namespace --values /path/to/values.yml
 kubectl -n hyeboard get redisreplication,svc,pods
 ```
 
@@ -304,23 +304,19 @@ helm template hyeboard deploy/helm/hyeboard \
 helm install hyeboard deploy/helm/hyeboard \
   --namespace hyeboard-staging \
   --create-namespace \
-  -f /path/to/values-staging.yaml \
-  --wait --timeout 10m
+  -f /path/to/values-staging.yaml
 
 helm upgrade --install hyeboard deploy/helm/hyeboard \
   --namespace hyeboard-staging \
   --create-namespace \
-  -f /path/to/values-staging.yaml \
-  --wait --atomic --timeout 10m
+  -f /path/to/values-staging.yaml
 
 helm upgrade hyeboard deploy/helm/hyeboard \
   --namespace hyeboard-staging \
-  -f /path/to/values-staging.yaml \
-  --wait --atomic --timeout 10m
+  -f /path/to/values-staging.yaml
 helm history hyeboard --namespace hyeboard-staging
 helm rollback hyeboard <REVISION> \
-  --namespace hyeboard-staging \
-  --wait --timeout 10m
+  --namespace hyeboard-staging
 ```
 
 Keep `HYEB_AUTOMATION_EXECUTOR_READY=false` in Helm values and rendered defaults. A healthy Helm rollout, automation worker, or reachable Browserless service does not establish Browserless/UET parity; enabling the flag requires a separate target-environment executor review.

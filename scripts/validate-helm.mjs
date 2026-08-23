@@ -242,9 +242,14 @@ function validateRenderedManifest(rendered, label, { strictRelease }) {
   }
 
   if (strictRelease && label === "production") {
-    findResource(documents, "RedisReplication", /redis/);
+    const redisReplication = findResource(documents, "RedisReplication", /redis/);
+    assert(!/helm\.sh\/chart:/.test(redisReplication), "RedisReplication must not pass the mutable chart label to operator-managed StatefulSets");
+    const apiPolicy = findResource(documents, "NetworkPolicy", /api/);
+    assertField(apiPolicy, /port:\s*53/m, "DNS egress access");
     const redisPolicy = findResource(documents, "NetworkPolicy", /redis/);
+    assertField(redisPolicy, /namespaceSelector:[\s\S]*?kubernetes\.io\/metadata\.name:[\s\S]*?ot-operators/m, "Redis Operator namespace access");
     assertField(redisPolicy, /podSelector:[\s\S]*?name:\s*redis-operator/m, "Redis Operator pod access");
+    assertField(redisPolicy, /app:\s*hyeboard-redis-s[\s\S]*?redis_setup_type:\s*sentinel/m, "Redis Sentinel pod access");
   }
 
   if (label === "production") {

@@ -18,11 +18,17 @@ export interface PostgresPoolLike extends PostgresQueryable {
 
 export type PostgresPoolConfig = PoolConfig | string;
 
+// Bound startup dependency checks so an unreachable distributed database does
+// not prevent the HTTP server from binding its liveness port indefinitely.
+export const POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
+
 export class PostgresPool implements PostgresPoolLike {
   private readonly pool: pg.Pool;
 
   constructor(config?: PostgresPoolConfig) {
-    this.pool = typeof config === "string" ? new pg.Pool({ connectionString: config }) : new pg.Pool(config);
+    this.pool = typeof config === "string"
+      ? new pg.Pool({ connectionString: config, connectionTimeoutMillis: POSTGRES_CONNECTION_TIMEOUT_MS })
+      : new pg.Pool(config);
     // `pg.Pool` emits idle-client errors asynchronously. Without a listener a
     // database outage can become an uncaught process exception, taking every
     // API replica down instead of letting the request boundary return the

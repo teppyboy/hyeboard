@@ -4,7 +4,11 @@ kind: RedisReplication
 metadata:
   name: {{ include "hyeboard.redisName" . }}
   labels:
-    {{- include "hyeboard.labels" . | nindent 4 }}
+    # Do not copy the chart version into the operator-managed child
+    # StatefulSets. The version is mutable across Helm upgrades, while a
+    # StatefulSet selector is immutable.
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: redis
     {{- include "hyeboard.commonLabels" . | nindent 4 }}
 spec:

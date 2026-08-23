@@ -249,6 +249,7 @@ redis:
     enabled: false
     apiVersion: redis.redis.opstreelabs.in/v1beta2
     name: hyeboard-redis
+    namespace: ot-operators
     clusterSize: 3
     image:
       repository: quay.io/opstree/redis
@@ -492,14 +493,11 @@ networkPolicy:
   enabled: true
   api:
     egress:
-      - to:
-          - namespaceSelector: {}
-        ports:
+      - ports:
           - protocol: UDP
             port: 53
           - protocol: TCP
             port: 53
-      - ports:
           - protocol: TCP
             port: 443
           - protocol: TCP
@@ -510,14 +508,11 @@ networkPolicy:
             port: 3000
   automationWorker:
     egress:
-      - to:
-          - namespaceSelector: {}
-        ports:
+      - ports:
           - protocol: UDP
             port: 53
           - protocol: TCP
             port: 53
-      - ports:
           - protocol: TCP
             port: 443
           - protocol: TCP

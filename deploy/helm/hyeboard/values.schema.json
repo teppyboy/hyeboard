@@ -317,6 +317,7 @@
         "enabled",
         "apiVersion",
         "name",
+        "namespace",
         "clusterSize",
         "image",
         "sentinel",
@@ -335,6 +336,7 @@
         "enabled": { "type": "boolean" },
         "apiVersion": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1, "maxLength": 63 },
+        "namespace": { "type": "string", "minLength": 1, "maxLength": 63 },
         "clusterSize": { "type": "integer", "minimum": 3 },
         "image": { "$ref": "#/definitions/redisImage" },
         "sentinel": {
