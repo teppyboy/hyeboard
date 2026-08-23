@@ -117,18 +117,21 @@ jobs:
             --from-literal=AUTOMATION_KEY_CURRENT_B64="$key_b64" \
             --from-literal=BROWSERLESS_ENDPOINT=ws://browserless:3000/chromium \
             --from-literal=BROWSERLESS_TOKEN=ci-browserless-token
+      - run: |
+          kubectl apply -n hyeboard \
+            -f deploy/k8s/overlays/ci/dependencies.yaml
+          kubectl rollout status deployment/postgres \
+            -n hyeboard --timeout=30s
+          kubectl rollout status deployment/redis \
+            -n hyeboard --timeout=30s
+          kubectl rollout status deployment/browserless \
+            -n hyeboard --timeout=30s
       - run: kubectl apply -k deploy/k8s/overlays/ci
       - run: |
-          kubectl rollout status deployment/postgres \
-            -n hyeboard --timeout=180s
-          kubectl rollout status deployment/redis \
-            -n hyeboard --timeout=180s
-          kubectl rollout status deployment/browserless \
-            -n hyeboard --timeout=300s
           kubectl rollout status deployment/hyeboard-api \
-            -n hyeboard --timeout=300s
+            -n hyeboard --timeout=30s
           kubectl rollout status deployment/hyeboard-automation-worker \
-            -n hyeboard --timeout=300s
+            -n hyeboard --timeout=30s
       - run: |
           hpa_filter='[.items[].status.conditions[]? |
             select(.type == "ScalingActive" and .status == "True")] |

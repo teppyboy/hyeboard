@@ -93,12 +93,13 @@ test("VNU plaintext input never enters storage while UET relogin persistence rem
 });
 
 test("VNU plaintext is absent after session expiry and manual sign-in is empty", async ({ page }) => {
-  await startMockedVnuSession(page, {
+  const mockedSession = await startMockedVnuSession(page, {
     code: "VNU_SESSION_EXPIRED",
     status: 401,
     message: "Synthetic VNU session expired",
   });
 
+  await mockedSession.allRawResponsesFulfilled;
   await expect(page).toHaveURL(/\/login$/);
   const storage = await page.evaluate(() => ({
     accounts: JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as unknown[],

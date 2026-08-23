@@ -4,7 +4,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import { env, once, removeListener } from "node:process";
+import { env } from "node:process";
 import puppeteer from "puppeteer-core";
 import { createClient, createClientPool } from "redis";
 import {
@@ -328,8 +328,8 @@ export async function runAutomationWorker(
       )
       .finally(resolveStopRequested);
   };
-  once("SIGTERM", stop);
-  once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
   try {
     await host.start();
     await Promise.race([host.waitForFailure(), stopRequested]);
@@ -339,8 +339,8 @@ export async function runAutomationWorker(
     });
     throw error;
   } finally {
-    removeListener("SIGTERM", stop);
-    removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    process.removeListener("SIGINT", stop);
     await host.stop().catch(() => undefined);
   }
 }

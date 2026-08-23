@@ -280,7 +280,32 @@ Helm and Kustomize are alternatives. Use one release method for a namespace; do 
 
 A Helm deployment still requires Helm 3, `kubectl` access to the target cluster, an ingress controller that supports the chart's configured Ingress class, DNS, and a TLS Secret in the target namespace. PostgreSQL remains external. The optional production values enable in-cluster Browserless and the RedisReplication resource; install a pinned OT-CONTAINER-KIT Redis Operator and verify its CRD first. Create `hyeboard-runtime` and `hyeboard-redis-auth` out of band before installing. `HYEB_REDIS_URL` should use the operator's `<redis-name>-master` Service and `BROWSERLESS_ENDPOINT` should use the chart's `<release>-browserless` Service. The runtime Secret must provide `HYEB_SESSION_SECRET`, `HYEB_POSTGRES_URL`, `HYEB_REDIS_URL`, `AUTOMATION_KEY_CURRENT_ID`, `AUTOMATION_KEY_CURRENT_B64`, optional previous automation key pair, `BROWSERLESS_ENDPOINT`, and `BROWSERLESS_TOKEN`; the Redis auth Secret must provide `password`.
 
-Use `images.api.repository`, `images.api.tag`/`digest`, and the corresponding `images.automationWorker.*` values to set immutable release references. Prefer a verified registry digest; otherwise use a commit SHA tag such as `sha-<40-character-commit-sha>`. The production values file enables the in-cluster dependencies but intentionally leaves application image placeholders and environment secrets for a site-specific uncommitted values file. Do not use `latest` or a mutable environment tag.
+Use `images.api.repository`, `images.api.tag`/`digest`, and the corresponding `images.automationWorker.*` values to set immutable release references. Prefer a verified registry digest; otherwise use a commit SHA tag such as `sha-<40-character-commit-sha>`. The production values file enables the in-cluster dependencies but intentionally leaves application image placeholders, ingress, and environment-specific settings for a site-specific uncommitted values file. Set `ingress.enabled: true` there; it is false by default. Do not use `latest` or a mutable environment tag.
+
+For production, Helm is the preferred release path because it supports atomic upgrades and rollback. With the Redis Operator, TLS Secret, runtime Secrets, and site values ready:
+
+```bash
+export HYEB_K8S_NAMESPACE=hyeboard-production
+export RELEASE_NAME=hyeboard
+
+helm lint deploy/helm/hyeboard --strict \
+  -f deploy/helm/hyeboard/values-production.yaml \
+  -f /path/to/values-production-site.yaml
+helm template "$RELEASE_NAME" deploy/helm/hyeboard \
+  --namespace "$HYEB_K8S_NAMESPACE" \
+  -f deploy/helm/hyeboard/values-production.yaml \
+  -f /path/to/values-production-site.yaml \
+  > /tmp/hyeboard-production.yaml
+kubectl diff -f /tmp/hyeboard-production.yaml
+helm upgrade --install "$RELEASE_NAME" deploy/helm/hyeboard \
+  --namespace "$HYEB_K8S_NAMESPACE" --create-namespace \
+  -f deploy/helm/hyeboard/values-production.yaml \
+  -f /path/to/values-production-site.yaml \
+  --wait --atomic --timeout 15m
+kubectl -n "$HYEB_K8S_NAMESPACE" get redisreplication,svc,pods
+```
+
+Use the production Kustomize procedure in the HA runbook when Helm is unavailable or the cluster release process requires raw manifests. Helm and Kustomize are alternatives: never manage the same namespace with both.
 
 The following commands are reference examples. Replace `/path/to/values-staging.yaml` with a values file matching the supplied chart, and review the rendered output before applying it:
 

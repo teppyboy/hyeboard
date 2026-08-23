@@ -1,6 +1,7 @@
 import { test, expect } from "./fixtures/base";
 
 test("timetable renders a responsive grid on desktop", async ({ authenticatedPage: page }) => {
+  await page.clock.setFixedTime(new Date("2026-08-24T08:00:00+07:00"));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/timetable");
 

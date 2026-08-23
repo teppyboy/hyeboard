@@ -131,7 +131,7 @@ spec:
               containerPort: 3000
           readinessProbe:
             httpGet:
-              path: /pressure
+              path: /pressure?token=ci-browserless-token
               port: browser
             periodSeconds: 5
             timeoutSeconds: 3
