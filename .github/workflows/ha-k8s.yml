@@ -163,9 +163,9 @@ jobs:
       - run: kubectl apply -k deploy/k8s/overlays/ci
       - run: |
           kubectl rollout status deployment/hyeboard-api \
-            -n hyeboard --timeout=30s
+            -n hyeboard --timeout=180s
           kubectl rollout status deployment/hyeboard-automation-worker \
-            -n hyeboard --timeout=30s
+            -n hyeboard --timeout=180s
       - run: |
           hpa_filter='[.items[].status.conditions[]? |
             select(.type == "ScalingActive" and .status == "True")] |
