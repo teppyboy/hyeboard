@@ -42,6 +42,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
+            # A version tag push (for example v1.2.3) publishes the same tag.
+            type=ref,event=tag
+            # Keep the commit-addressable tag for deployments and rollback.
             type=raw,value=sha-${{ github.sha }}
 
       - name: Build image

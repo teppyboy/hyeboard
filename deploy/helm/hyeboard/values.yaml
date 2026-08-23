@@ -252,14 +252,17 @@ redis:
     clusterSize: 3
     image:
       repository: quay.io/opstree/redis
-      # Optional. Omit to use the registry's default tag.
+      # The operator's validated Redis compatibility default. Override only
+      # with an image version verified against the installed operator.
+      tag: v7.0.15
       pullPolicy: IfNotPresent
     sentinel:
       enabled: true
       size: 3
       image:
         repository: quay.io/opstree/redis-sentinel
-        # Optional. Omit to use the registry's default tag.
+        # Keep Sentinel aligned with the Redis compatibility default above.
+        tag: v7.0.15
         pullPolicy: IfNotPresent
       resources:
         requests:

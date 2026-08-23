@@ -115,10 +115,10 @@ Nếu chart GHCR là private, đăng nhập một lần:
 echo '<github-token>' | helm registry login ghcr.io --username <github-username> --password-stdin
 ```
 
-Sau đó cài hoặc nâng cấp bằng một lệnh. `0.2.1` là version chart hiện tại:
+Sau đó cài hoặc nâng cấp bằng một lệnh:
 
 ```bash
-helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.1 --namespace hyeboard --create-namespace --values ./hyeboard-values.yml --wait --rollback-on-failure --timeout 5m
+helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --namespace hyeboard --create-namespace --values ./hyeboard-values.yml --wait --rollback-on-failure --timeout 5m
 ```
 
 Chart sẽ tạo runtime Secret, Redis auth Secret, API, worker, Browserless,

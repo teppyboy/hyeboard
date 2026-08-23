@@ -245,6 +245,17 @@ function validateRenderedManifest(rendered, label, { strictRelease }) {
     findResource(documents, "RedisReplication", /redis/);
   }
 
+  if (label === "production") {
+    assert(
+      rendered.includes('image: "quay.io/opstree/redis:v7.0.15"'),
+      "Default Redis image must use the operator-compatible v7.0.15 tag",
+    );
+    assert(
+      rendered.includes('image: "quay.io/opstree/redis-sentinel:v7.0.15"'),
+      "Default Redis Sentinel image must use the operator-compatible v7.0.15 tag",
+    );
+  }
+
   if (strictRelease) validateRenderedSecrets(rendered, label);
 }
 

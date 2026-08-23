@@ -1,0 +1,54 @@
+images:
+  api:
+    repository: ghcr.io/teppyboy/hyeboard-api
+    tag: sha-<40-character-commit-sha>
+  automationWorker:
+    repository: ghcr.io/teppyboy/hyeboard-automation-worker
+    tag: sha-<40-character-commit-sha>
+
+secrets:
+  create: true
+  runtime:
+    HYEB_SESSION_SECRET: "<random-secret-at-least-32-characters>"
+    HYEB_POSTGRES_URL: "<managed-postgresql-url>"
+    HYEB_REDIS_URL: "redis://:<redis-password>@hyeboard-redis-master:6379/0"
+    AUTOMATION_KEY_CURRENT_ID: "<automation-key-id>"
+    AUTOMATION_KEY_CURRENT_B64: "<base64-encoded-32-byte-key>"
+    BROWSERLESS_ENDPOINT: "ws://hyeboard-browserless:3000/chromium"
+    BROWSERLESS_TOKEN: "<browserless-token>"
+  redisAuth:
+    existingSecret: hyeboard-redis-auth
+    key: password
+    password: "<redis-password>"
+
+config:
+  runtime:
+    HYEB_ALLOWED_ORIGINS: https://hyeboard.example.com
+    HYEB_AUTOMATION_EXECUTOR_READY: false
+
+api:
+  replicaCount: 3
+
+automationWorker:
+  replicaCount: 3
+
+browserless:
+  enabled: true
+  replicaCount: 3
+
+redis:
+  operator:
+    enabled: true
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: hyeboard.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: hyeboard-tls
+      hosts:
+        - hyeboard.example.com
