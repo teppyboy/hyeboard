@@ -276,7 +276,7 @@ export function serializePrintableExport(model: ExportDocument, locale: string, 
 
 export type PdfPageOrientation = "portrait" | "landscape";
 export type PdfDocumentDefinition = Record<string, unknown>;
-export type PdfGenerator = { getBlob(callback: (blob: Blob) => void): void };
+export type PdfGenerator = { getBlob(): Promise<Blob> };
 export type PdfLibrary = { createPdf(definition: PdfDocumentDefinition): PdfGenerator };
 export type PdfLibraryLoader = () => Promise<PdfLibrary>;
 
@@ -300,7 +300,7 @@ const PDF_TABLE_LAYOUT = {
   fillColor: (rowIndex: number) => rowIndex === 0 ? PDF_COLORS.accentFill : rowIndex % 2 === 0 ? PDF_COLORS.stripe : undefined,
 };
 
-type PdfMakeModule = PdfLibrary & { vfs?: unknown };
+type PdfMakeModule = PdfLibrary & { addVirtualFileSystem(vfs: unknown): void };
 type PdfVfsModule = { pdfMake?: { vfs?: unknown }; default?: unknown };
 
 async function loadPdfMake(): Promise<PdfLibrary> {
@@ -312,7 +312,7 @@ async function loadPdfMake(): Promise<PdfLibrary> {
   const defaultVfs = isRecord(pdfVfsModule.default) ? pdfVfsModule.default : undefined;
   const vfs = pdfVfsModule.pdfMake?.vfs ?? defaultVfs?.vfs ?? (isRecord(defaultVfs?.pdfMake) ? defaultVfs.pdfMake.vfs : undefined) ?? pdfVfsModule.default;
   if (!isRecord(vfs)) throw new Error("PDF font assets are unavailable");
-  pdfMake.vfs = vfs;
+  pdfMake.addVirtualFileSystem(vfs);
   return pdfMake;
 }
 
@@ -742,14 +742,13 @@ function createBrowserDownloadEnvironment(): DownloadEnvironment {
   };
 }
 
-function createPdfBlob(library: PdfLibrary, definition: PdfDocumentDefinition): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    try {
-      library.createPdf(definition).getBlob((blob) => resolve(new Blob([blob], { type: "application/pdf" })));
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error("PDF generation failed"));
-    }
-  });
+async function createPdfBlob(library: PdfLibrary, definition: PdfDocumentDefinition): Promise<Blob> {
+  try {
+    const blob = await library.createPdf(definition).getBlob();
+    return new Blob([blob], { type: "application/pdf" });
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("PDF generation failed");
+  }
 }
 
 export async function downloadPdfExport(

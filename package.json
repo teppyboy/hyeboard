@@ -33,7 +33,7 @@
     "audit:performance": "pnpm build:web && pnpm audit:web-performance"
   },
   "devDependencies": {
-    "concurrently": "^10.0.3",
-    "typescript": "^6.0.3"
+    "concurrently": "^10.0.5",
+    "typescript": "^7.0.2"
   }
 }
