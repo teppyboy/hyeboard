@@ -44,10 +44,24 @@ jobs:
       - uses: azure/setup-kubectl@v4
         with:
           version: latest
+      - run: kubectl kustomize deploy/k8s/overlays/example
+
+  kubernetes-ha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: latest
       - uses: helm/kind-action@v1.12.0
         with:
           config: .github/kind-ha-config.yaml
           cluster_name: hyeboard-ha
+      - run: |
+          docker build --tag hyeboard-api:ci .
+          docker build --tag hyeboard-automation-worker:ci \
+            --file apps/automation-worker/Dockerfile .
       - run: |
           docker pull postgres:16-alpine
           docker pull redis:7-alpine
@@ -127,4 +141,3 @@ jobs:
         run: >-
           kubectl delete namespace hyeboard --ignore-not-found=true
           --wait=true --timeout=180s
-      - run: kubectl kustomize deploy/k8s/overlays/example
