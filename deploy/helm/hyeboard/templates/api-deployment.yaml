@@ -7,7 +7,9 @@ metadata:
     {{- include "hyeboard.apiSelectorLabels" . | nindent 4 }}
     {{- include "hyeboard.commonLabels" . | nindent 4 }}
 spec:
+  {{- if not .Values.hpa.api.enabled }}
   replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
   revisionHistoryLimit: {{ .Values.api.revisionHistoryLimit }}
   minReadySeconds: {{ .Values.api.minReadySeconds }}
   strategy:

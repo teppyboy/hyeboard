@@ -9,7 +9,9 @@ metadata:
     app.kubernetes.io/component: browserless
     {{- include "hyeboard.commonLabels" . | nindent 4 }}
 spec:
+  {{- if not .Values.browserless.hpa.enabled }}
   replicas: {{ .Values.browserless.replicaCount }}
+  {{- end }}
   revisionHistoryLimit: {{ .Values.browserless.revisionHistoryLimit }}
   minReadySeconds: {{ .Values.browserless.minReadySeconds }}
   strategy:

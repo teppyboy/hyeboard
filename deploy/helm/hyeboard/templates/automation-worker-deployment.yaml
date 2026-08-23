@@ -7,7 +7,9 @@ metadata:
     {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 4 }}
     {{- include "hyeboard.commonLabels" . | nindent 4 }}
 spec:
+  {{- if not .Values.hpa.automationWorker.enabled }}
   replicas: {{ .Values.automationWorker.replicaCount }}
+  {{- end }}
   revisionHistoryLimit: {{ .Values.automationWorker.revisionHistoryLimit }}
   minReadySeconds: {{ .Values.automationWorker.minReadySeconds }}
   strategy:

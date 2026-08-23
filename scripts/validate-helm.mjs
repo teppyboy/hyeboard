@@ -221,6 +221,14 @@ function validateBrowserlessDeployment(document) {
   assert(!/^\s*hostPath:/m.test(document), "Browserless mounts a hostPath volume");
 }
 
+function validateHpaReplicaOwnership(documents, deployment, hpaPattern, role) {
+  const hpa = documents.find(
+    (document) => resourceKind(document) === "HorizontalPodAutoscaler" && hpaPattern.test(resourceName(document) || ""),
+  );
+  if (!hpa) return;
+  assert(!/^  replicas:/m.test(deployment), `${role} Deployment must leave spec.replicas to its HPA`);
+}
+
 function validateRenderedManifest(rendered, label, { strictRelease }) {
   const documents = documentSections(rendered);
   assert(documents.length > 0, `${label} rendered no Kubernetes resources`);
@@ -230,6 +238,8 @@ function validateRenderedManifest(rendered, label, { strictRelease }) {
   const worker = findResource(documents, "Deployment", /worker|automation/);
   validateDeployment(api, "API deployment");
   validateDeployment(worker, "worker deployment");
+  validateHpaReplicaOwnership(documents, api, /api/, "API");
+  validateHpaReplicaOwnership(documents, worker, /worker|automation/, "worker");
   findResource(documents, "Service", /(^|-)api($|-)/);
   assert(documents.some((document) => resourceKind(document) === "Ingress"), `${label} is missing an Ingress`);
 
@@ -238,6 +248,7 @@ function validateRenderedManifest(rendered, label, { strictRelease }) {
   );
   if (browserless) {
     validateBrowserlessDeployment(browserless);
+    validateHpaReplicaOwnership(documents, browserless, /browserless/, "Browserless");
     findResource(documents, "Service", /browserless/);
   }
 
