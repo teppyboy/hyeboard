@@ -13,7 +13,7 @@ Cluster cần có:
 - DNS trỏ hostname production vào Ingress.
 - Certificate và private key cho hostname đó.
 - CRD `RedisReplication` và Redis Operator OT-CONTAINER-KIT chạy trong namespace
-  riêng `ot-operators` với quyền cluster-scoped.
+  riêng `ot-operators` với quyền cluster-scoped và watch toàn bộ namespace.
 - StorageClass có thể tạo Redis PVC.
 - `kubectl` và Helm.
 
@@ -29,7 +29,9 @@ helm version
 ```
 
 Helm chart ứng dụng chỉ tạo `RedisReplication`, không sở hữu operator hoặc CRD.
-Operator được cài riêng trong `ot-operators` và chỉ watch namespace `hyeboard`:
+Operator được cài riêng trong `ot-operators`. Với `rbac.scope=cluster` và không
+đặt `redisOperator.watchNamespace`, operator sẽ watch toàn bộ namespace để các
+Redis resource của những service khác trong tương lai cũng được reconcile:
 
 ## 2. Cài Redis Operator
 
@@ -42,14 +44,15 @@ helm upgrade --install redis-operator ot-helm/redis-operator \
   --create-namespace \
   --version 0.26.1 \
   --set rbac.scope=cluster \
-  --set redisOperator.watchNamespace=hyeboard \
   --set featureGates.GenerateConfigInInitContainer=true
 
 kubectl get crd redisreplications.redis.redis.opstreelabs.in
 kubectl -n ot-operators rollout status deployment/redis-operator --timeout=180s
 ```
 
-CRD là cluster-scoped và phải được giữ lại khi gỡ Helm release ứng dụng.
+CRD là cluster-scoped và phải được giữ lại khi gỡ Helm release ứng dụng. Các
+NetworkPolicy của namespace chứa Redis phải cho phép operator trong
+`ot-operators` truy cập workload tương ứng.
 
 ## 3. Tạo file hyeboard-values.yml
 
@@ -124,7 +127,7 @@ Tạo TLS Secret trước khi cài chart:
 
 ```bash
 kubectl create namespace hyeboard
-kubectl -n hyeboard create secret tls hyeboard-tls --cert=/path/to/fullchain.pem --key=/path/to/privkey.pem
+kubectl -n hyeboard create secret tls hyeboard-tls --cert /path/to/fullchain.pem --key /path/to/privkey.pem
 ```
 
 Không commit `hyeboard-values.yml` vào repository.
@@ -140,7 +143,7 @@ echo '<github-token>' | helm registry login ghcr.io --username <github-username>
 Sau đó cài hoặc nâng cấp bằng một lệnh:
 
 ```bash
-helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.5 --namespace hyeboard --create-namespace --values ./hyeboard-values.yml --rollback-on-failure
+helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --namespace hyeboard --values ./hyeboard-values.yml --rollback-on-failure
 ```
 
 Chart sẽ tạo runtime Secret, Redis auth Secret, API, worker, Browserless,

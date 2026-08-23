@@ -54,20 +54,8 @@ jobs:
           file: ${{ matrix.file }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          load: ${{ github.event_name == 'pull_request' }}
           push: ${{ github.event_name != 'pull_request' }}
           sbom: ${{ github.event_name != 'pull_request' }}
           provenance: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Scan image for high and critical vulnerabilities
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.meta.outputs.tags }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL

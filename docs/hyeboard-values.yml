@@ -1,10 +1,10 @@
 images:
   api:
     repository: ghcr.io/teppyboy/hyeboard-api
-    tag: sha-<40-character-commit-sha>
+    tag: v0.1.0
   automationWorker:
     repository: ghcr.io/teppyboy/hyeboard-automation-worker
-    tag: sha-<40-character-commit-sha>
+    tag: v0.1.0
 
 secrets:
   create: true

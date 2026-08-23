@@ -233,17 +233,14 @@ For the in-cluster production topology, set `HYEB_REDIS_URL` to the operator-man
 ### Install the OpsTree Redis Operator
 
 Install the OT-CONTAINER-KIT Redis Operator as a separate Helm release in
-`ot-operators`. Keep its cluster-scoped RBAC but restrict its watch namespace to
-the Hyeboard workload namespace. Its `RedisReplication` CRD remains
-cluster-scoped and must be installed and retained independently. Pin the
-operator chart version after reviewing the available versions; do not install
-an unpinned release in production:
+`ot-operators`. Keep its cluster-scoped RBAC and let it watch all namespaces so
+Redis resources for future services can use the same operator. Its
+`RedisReplication` CRD remains cluster-scoped and must be installed and
+retained independently. Pin the operator chart version after reviewing the
+available versions; do not install an unpinned release in production:
 
 ```bash
 export OPERATOR_NAMESPACE=ot-operators
-export OPERATOR_WATCH_NAMESPACE=hyeboard
-# For the production Kustomize overlay, use:
-# export OPERATOR_WATCH_NAMESPACE=hyeboard-production
 helm repo add ot-helm https://ot-container-kit.github.io/helm-charts
 helm repo update
 helm search repo ot-helm/redis-operator --versions
@@ -254,7 +251,6 @@ helm upgrade --install redis-operator ot-helm/redis-operator \
   --create-namespace \
   --version "$REDIS_OPERATOR_VERSION" \
   --set rbac.scope=cluster \
-  --set redisOperator.watchNamespace="$OPERATOR_WATCH_NAMESPACE" \
   --set featureGates.GenerateConfigInInitContainer=true
 
 kubectl -n "$OPERATOR_NAMESPACE" \
@@ -262,7 +258,7 @@ kubectl -n "$OPERATOR_NAMESPACE" \
 kubectl get crd redisreplications.redis.redis.opstreelabs.in
 ```
 
-The operator's upstream YAML installer is intended for development; use its Helm chart for a production cluster. Verify the operator version, image provenance, cluster-scoped RBAC, CRD version (`redis.redis.opstreelabs.in/v1beta2`), and upgrade policy before installing. The production Hyeboard resource creates three Redis members and three Sentinel pods through this CRD. Do not include the operator or CRD in the application Helm release; uninstalling the application must not remove cluster-scoped CRDs.
+The operator's upstream YAML installer is intended for development; use its Helm chart for a production cluster. With `rbac.scope=cluster` and no `redisOperator.watchNamespace` override, the operator watches all namespaces. Verify the operator version, image provenance, cluster-scoped RBAC, CRD version (`redis.redis.opstreelabs.in/v1beta2`), and upgrade policy before installing. The production Hyeboard resource creates three Redis members and three Sentinel pods through this CRD. Do not include the operator or CRD in the application Helm release; uninstalling the application must not remove cluster-scoped CRDs. Each namespace containing an operator-managed Redis workload must allow the operator namespace through its NetworkPolicy.
 
 Create the Redis auth Secret and Hyeboard runtime Secret in the application namespace before applying either deployment method. Generate a hex password so it is safe to place in a Redis URI without additional URL encoding:
 
@@ -360,7 +356,7 @@ The operator's master Service is the endpoint used by the current Node Redis cli
 
 ### CI
 
-`.github/workflows/container.yml` builds both Dockerfiles on pull requests and loads them for scanning. On non-PR events it logs in to GHCR, publishes SHA-tagged images, and when a `v*` Git tag is pushed also publishes that exact version tag; it emits SBOM/provenance and runs the Trivy high/critical vulnerability scan. It does not deploy Kubernetes.
+`.github/workflows/container.yml` builds both Dockerfiles on pull requests. On non-PR events it logs in to GHCR, publishes SHA-tagged images, and when a `v*` Git tag is pushed also publishes that exact version tag; it emits SBOM/provenance. It does not deploy Kubernetes.
 
 `.github/workflows/ha-k8s.yml` runs `pnpm test:k8s`, `docker compose config --quiet`, the build/package/test gates, the HA integration tests, and temporary Kustomize renders for all three overlays with the commit SHA substituted for `replace-with-release-tag`. It does not create a cluster, apply an overlay, or enable `HYEB_AUTOMATION_EXECUTOR_READY`.
 
@@ -368,7 +364,7 @@ The operator's master Service is the endpoint used by the current Node Redis cli
 
 The Helm chart is published at `oci://ghcr.io/teppyboy/charts/hyeboard`. It is an alternative to the Kustomize templates above; do not let Helm and Kustomize manage the same workloads in one namespace. The chart can deploy Browserless, render a RedisReplication custom resource, and create the application Secrets when `secrets.create` is enabled. It does not install or own the Redis Operator or its cluster-scoped CRD; install the separate cluster-scoped operator release in `ot-operators` first.
 
-The Helm production prerequisites are Helm 3, `kubectl` access to the selected cluster context, a pinned cluster-scoped OT-CONTAINER-KIT Redis Operator in `ot-operators` watching the Hyeboard namespace, its CRD, a StorageClass for Redis PVCs, an ingress controller matching the chart's configured Ingress class, DNS, and a pre-created TLS Secret. PostgreSQL remains external. `values-production.yaml` enables Browserless and the RedisReplication resource; the chart does not install the Redis Operator itself.
+The Helm production prerequisites are Helm 3, `kubectl` access to the selected cluster context, a pinned cluster-scoped OT-CONTAINER-KIT Redis Operator in `ot-operators` watching all namespaces, its CRD, a StorageClass for Redis PVCs, an ingress controller matching the chart's configured Ingress class, DNS, and a pre-created TLS Secret. PostgreSQL remains external. `values-production.yaml` enables Browserless and the RedisReplication resource; the chart does not install the Redis Operator itself.
 
 Put the runtime credentials and Redis password in a local values file with `secrets.create: true`. The chart creates `hyeboard-runtime` and `hyeboard-redis-auth` from that file. The runtime Secret must contain:
 
