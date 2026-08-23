@@ -75,6 +75,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
+      - run: pnpm build:web
       - run: >-
           pnpm --filter @hyeboard/web exec playwright install
           --with-deps chromium webkit
