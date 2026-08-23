@@ -23,6 +23,7 @@ const config = {
   heartbeatIntervalMs: 10_000,
   reclaimIdleMs: 30_000,
   readBlockMs: 1_000,
+  redisConnectTimeoutMs: 30_000,
   shutdownTimeoutMs: 100,
   maxDeliveryCount: 3,
   resultTtlMs: 300_000,

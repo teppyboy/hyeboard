@@ -11,6 +11,7 @@ import {
   AutomationControlConsumer,
   CaptchaControlBridge,
   createAutomationHost,
+  createRedisHostClients,
   automationHealthResponse,
   type AutomationControl,
 } from "./index";
@@ -47,6 +48,7 @@ const config: AutomationWorkerConfig = {
   heartbeatIntervalMs: 10_000,
   reclaimIdleMs: 1_000,
   readBlockMs: 1,
+  redisConnectTimeoutMs: 10,
   shutdownTimeoutMs: 50,
   maxDeliveryCount: 3,
   resultTtlMs: 30_000,
@@ -75,6 +77,17 @@ describe("automation worker health", () => {
     expect(automationHealthResponse("/readyz", true)).toMatchObject({
       status: 200,
     });
+  });
+});
+
+describe("automation Redis clients", () => {
+  it("handles asynchronous node-redis errors on both clients", () => {
+    const clients = createRedisHostClients("redis://localhost:6379/0");
+    const normal = clients.normal as unknown as { listenerCount(event: string): number };
+    const blocking = clients.blocking as unknown as { listenerCount(event: string): number };
+
+    expect(normal.listenerCount("error")).toBeGreaterThan(0);
+    expect(blocking.listenerCount("error")).toBeGreaterThan(0);
   });
 });
 
@@ -248,5 +261,43 @@ describe("executable host readiness", () => {
     expect(browserConnected).toBe(true);
     expect(ready).toHaveBeenCalledOnce();
     await host.stop();
+  });
+
+  it("bounds Redis bootstrap and destroys clients when connection hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const connect = vi.fn(() => new Promise<void>(() => undefined));
+      const destroy = vi.fn();
+      const normal = { ...fakeRedis(), connect, destroy };
+      const blocking = { ...fakeRedis(), connect, destroy };
+      const close = vi.fn(async () => undefined);
+      const host = createAutomationHost({
+        env: {
+          REDIS_URL: config.redisUrl,
+          BROWSERLESS_ENDPOINT: config.browserlessEndpoint,
+          BROWSERLESS_TOKEN: config.browserlessToken,
+          AUTOMATION_REDIS_CONNECT_TIMEOUT_MS: "10",
+          AUTOMATION_KEY_CURRENT_ID: "current",
+          AUTOMATION_KEY_CURRENT_B64: Buffer.from(
+            keyring.current.material as Uint8Array,
+          ).toString("base64"),
+        },
+        redis: { normal, blocking, close },
+        connectBrowser: async () => browser,
+      });
+
+      const starting = host.start().then(
+        () => ({ error: undefined }),
+        (error) => ({ error }),
+      );
+      await vi.advanceTimersByTimeAsync(10);
+      const result = await starting;
+      expect(result.error).toHaveProperty("message", "Redis bootstrap timed out after 10ms.");
+      expect(connect).toHaveBeenCalledTimes(2);
+      expect(destroy).toHaveBeenCalledTimes(2);
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

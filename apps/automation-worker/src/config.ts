@@ -26,6 +26,7 @@ export type AutomationWorkerConfig = {
   heartbeatIntervalMs: number;
   reclaimIdleMs: number;
   readBlockMs: number;
+  redisConnectTimeoutMs: number;
   shutdownTimeoutMs: number;
   maxDeliveryCount: number;
   resultTtlMs: number;
@@ -148,6 +149,7 @@ export function parseAutomationWorkerConfig(env: Env): AutomationWorkerConfig {
     heartbeatIntervalMs,
     reclaimIdleMs: positiveInteger(env, "AUTOMATION_RECLAIM_IDLE_MS", leaseTtlMs),
     readBlockMs: positiveInteger(env, "AUTOMATION_READ_BLOCK_MS", 1_000),
+    redisConnectTimeoutMs: positiveInteger(env, "AUTOMATION_REDIS_CONNECT_TIMEOUT_MS", 30_000),
     shutdownTimeoutMs: positiveInteger(env, "AUTOMATION_SHUTDOWN_TIMEOUT_MS", 30_000),
     maxDeliveryCount: positiveInteger(env, "AUTOMATION_MAX_DELIVERY_COUNT", 3),
     resultTtlMs: positiveInteger(env, "AUTOMATION_RESULT_TTL_MS", 300_000),
@@ -168,6 +170,7 @@ export function safeConfigSummary(config: AutomationWorkerConfig): Record<string
     executionMode: config.executionMode,
     browserProvider: config.browserProvider,
     browserlessEndpoint: config.browserlessEndpoint ? new URL(config.browserlessEndpoint).origin : undefined,
+    redisConnectTimeoutMs: config.redisConnectTimeoutMs,
     keyIds: [config.keyring.current.id, config.keyring.previous?.id].filter(Boolean),
   };
 }

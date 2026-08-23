@@ -45,6 +45,7 @@ export type AutomationRedisHostClient = NodeRedisStreamsClient & {
   connect(): Promise<void>;
   ping(): Promise<string>;
   isOpen?: boolean;
+  on?(event: "error", listener: (error: unknown) => void): unknown;
   quit?(): Promise<unknown>;
   close?(): Promise<unknown>;
   destroy?(): void;
@@ -136,22 +137,65 @@ async function closeRedisClient(
   }
 }
 
+function destroyRedisClient(client: AutomationRedisHostClient): void {
+  try {
+    client.destroy?.();
+  } catch {
+    // The client may already be closed after another connection failed.
+  }
+}
+
+async function connectRedisClients(
+  normal: AutomationRedisHostClient,
+  blocking: AutomationRedisHostClient,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const connecting = Promise.all([normal.connect(), blocking.connect()]);
+    await Promise.race([
+      connecting,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Redis bootstrap timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    destroyRedisClient(normal);
+    destroyRedisClient(blocking);
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function defaultConnector(): PuppeteerConnector {
   return async ({ browserWSEndpoint }) =>
     puppeteer.connect({ browserWSEndpoint }) as never;
 }
 
-function createRedisHostClients(redisUrl: string): {
+export function createRedisHostClients(redisUrl: string): {
   normal: AutomationRedisHostClient;
   blocking: AutomationRedisHostClient;
   close: () => Promise<void>;
 } {
   const normal = createClient({
     url: redisUrl,
+    socket: {
+      reconnectStrategy: (retries, cause) =>
+        retries < 5 ? Math.min(100 * 2 ** retries, 1_000) : cause,
+    },
   }) as unknown as AutomationRedisHostClient;
   const blocking = createClientPool({
     url: redisUrl,
+    socket: {
+      reconnectStrategy: (retries, cause) =>
+        retries < 5 ? Math.min(100 * 2 ** retries, 1_000) : cause,
+    },
   }) as unknown as AutomationRedisHostClient;
+  normal.on?.("error", () => undefined);
+  blocking.on?.("error", () => undefined);
   return {
     normal,
     blocking,
@@ -236,9 +280,12 @@ export function createAutomationHost(
       if (started) return;
       const clientsConnected = new Set<AutomationRedisHostClient>();
       try {
-        await redis.normal.connect();
+        await connectRedisClients(
+          redis.normal,
+          redis.blocking,
+          config.redisConnectTimeoutMs,
+        );
         clientsConnected.add(redis.normal);
-        await redis.blocking.connect();
         clientsConnected.add(redis.blocking);
         await Promise.all([redis.normal.ping(), redis.blocking.ping()]);
         const probe = await provider.open();
