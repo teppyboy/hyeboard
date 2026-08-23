@@ -2,9 +2,7 @@
 
 Dùng Helm chart từ OCI registry:
 
-`oci://ghcr.io/im-yuuki/charts/hyeboard`
-
-Người triển khai không cần clone repository Hyeboard, cài pnpm hoặc chạy lint.
+`oci://ghcr.io/teppyboy/charts/hyeboard`
 
 ## 1. Cần chuẩn bị
 
@@ -126,7 +124,7 @@ echo '<github-token>' | helm registry login ghcr.io --username <github-username>
 Sau đó cài hoặc nâng cấp bằng một lệnh. `0.2.0` là version chart hiện tại:
 
 ```bash
-helm upgrade --install hyeboard oci://ghcr.io/im-yuuki/charts/hyeboard --version 0.2.0 --namespace hyeboard --create-namespace --values ./values.yml --wait --atomic --timeout 5m
+helm upgrade --install hyeboard oci://ghcr.io/teppyboy/charts/hyeboard --version 0.2.0 --namespace hyeboard --create-namespace --values ./values.yml --wait --atomic --timeout 5m
 ```
 
 Chart sẽ tạo runtime Secret, Redis auth Secret, API, worker, Browserless,
