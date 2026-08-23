@@ -72,7 +72,7 @@ secrets:
   create: true
   runtime:
     HYEB_SESSION_SECRET: "<random-secret-at-least-32-characters>"
-    HYEB_POSTGRES_URL: "<managed-postgresql-url>"
+    HYEB_POSTGRES_URL: "postgresql://<USERNAME>:<PASSWORD>@<HOST>:5432/<DATABASE>"
     HYEB_REDIS_URL: "redis://:<redis-password>@hyeboard-redis-master:6379/0"
     AUTOMATION_KEY_CURRENT_ID: "<automation-key-id>"
     AUTOMATION_KEY_CURRENT_B64: "<base64-encoded-32-byte-key>"
@@ -180,6 +180,13 @@ executor đã được kiểm chứng với provider thật.
 ```bash
 helm history hyeboard --namespace hyeboard
 helm rollback hyeboard <revision> --namespace hyeboard --timeout 5m
+```
+
+## 7. Gỡ cài đặt
+
+```bash
+helm uninstall hyeboard --namespace hyeboard --wait --timeout 5m
+kubectl delete namespace hyeboard --wait --timeout 5m
 ```
 
 ## Checklist

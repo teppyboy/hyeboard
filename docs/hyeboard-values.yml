@@ -10,7 +10,7 @@ secrets:
   create: true
   runtime:
     HYEB_SESSION_SECRET: "<random-secret-at-least-32-characters>"
-    HYEB_POSTGRES_URL: "<managed-postgresql-url>"
+    HYEB_POSTGRES_URL: "postgresql://<USERNAME>:<PASSWORD>@<HOST>:5432/<DATABASE>"
     HYEB_REDIS_URL: "redis://:<redis-password>@hyeboard-redis-master:6379/0"
     AUTOMATION_KEY_CURRENT_ID: "<automation-key-id>"
     AUTOMATION_KEY_CURRENT_B64: "<base64-encoded-32-byte-key>"

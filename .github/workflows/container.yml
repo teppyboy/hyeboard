@@ -46,6 +46,8 @@ jobs:
             type=ref,event=tag
             # Keep the commit-addressable tag for deployments and rollback.
             type=raw,value=sha-${{ github.sha }}
+            # Also publish a mutable convenience tag for temporary testing.
+            type=raw,value=latest
 
       - name: Build image
         uses: docker/build-push-action@v6
