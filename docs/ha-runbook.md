@@ -193,7 +193,7 @@ The overlays are intentionally different:
 | `staging` | `hyeboard-staging` | `staging.hyeboard.example.com` | 2 API, 2 workers | `ghcr.io/teppyboy` |
 | `production` | `hyeboard-production` | `hyeboard.example.com` | 3 API, 3 workers, 3 Browserless | `registry.internal.example` placeholder |
 
-CI uses `deploy/k8s/overlays/ci` with a disposable three-node Kind cluster. It runs PostgreSQL, Redis, and Browserless inside the cluster, loads the CI images, enables metrics-server for HPA status, and executes the same round-robin/failover validator. This proves the Kubernetes wiring in an ephemeral cluster; it does not replace target-cluster or real UET credential validation.
+CI validates `deploy/k8s/overlays/ci` as manifests and renders the example, staging, and production overlays with temporary immutable image tags. It does not create a cluster, apply an overlay, or replace target-cluster and real UET credential validation.
 
 The base starts `HYEB_AUTOMATION_EXECUTOR_READY=false` and uses distributed mode with Browserless as the configured provider. The setting is not changed by any overlay. Keep it false: a running worker, Browserless endpoint, or healthy rollout does not establish Browserless/UET parity.
 
@@ -353,7 +353,7 @@ The operator's master Service is the endpoint used by the current Node Redis cli
 
 `.github/workflows/container.yml` builds both Dockerfiles on pull requests and loads them for scanning. On non-PR events it logs in to GHCR, publishes SHA-tagged images, emits SBOM/provenance, and runs the Trivy high/critical vulnerability scan. It does not deploy Kubernetes.
 
-`.github/workflows/ha-k8s.yml` runs `pnpm test:k8s`, `docker compose config --quiet`, the build/package/test gates, the HA integration tests, both Docker builds, and temporary Kustomize renders for all three overlays with the commit SHA substituted for `replace-with-release-tag`. It does not apply an overlay or enable `HYEB_AUTOMATION_EXECUTOR_READY`.
+`.github/workflows/ha-k8s.yml` runs `pnpm test:k8s`, `docker compose config --quiet`, the build/package/test gates, the HA integration tests, and temporary Kustomize renders for all three overlays with the commit SHA substituted for `replace-with-release-tag`. It does not create a cluster, apply an overlay, or enable `HYEB_AUTOMATION_EXECUTOR_READY`.
 
 ## Helm alternative
 

@@ -268,7 +268,7 @@ The validator needs `kubectl`, a working cluster context, active HPA metrics, th
 CI coverage is split across two workflows:
 
 - `.github/workflows/container.yml` builds both Dockerfiles on pull requests and pushes SHA-tagged images with SBOM/provenance to GHCR on non-PR events, then scans published images with Trivy.
-- `.github/workflows/ha-k8s.yml` runs manifest validation, `docker compose config --quiet`, builds both images, runs package/tests, performs the Wrangler dry-run, and renders/validates temporary Kustomize example, staging, and production overlays. It does not apply Kubernetes resources.
+- `.github/workflows/ha-k8s.yml` runs manifest validation, `docker compose config --quiet`, package/tests, the Wrangler dry-run, and renders/validates temporary Kustomize example, staging, and production overlays. It does not create a cluster or apply Kubernetes resources.
 
 Keep `HYEB_AUTOMATION_EXECUTOR_READY=false` in Compose and Kubernetes defaults. Enabling it is a separate deployment gate and requires target-environment validation; the repository makes no Browserless/UET parity claim.
 
