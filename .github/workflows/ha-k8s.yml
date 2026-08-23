@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -21,16 +25,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
       - run: pnpm test:k8s
       - run: docker compose config --quiet
-      - run: pnpm build
+      - run: pnpm build:worker
       - run: pnpm package
       - run: pnpm test
-      - run: >-
-          pnpm --filter @hyeboard/web exec playwright install
-          --with-deps chromium webkit
-      - run: pnpm --filter @hyeboard/web exec playwright test --retries=1
       - run: pnpm --filter @hyeboard/worker check:node-package
       - run: pnpm --filter @hyeboard/worker exec wrangler deploy --dry-run
       - run: >-
@@ -39,10 +39,6 @@ jobs:
       - run: pnpm test:ha
         env:
           HYEB_REQUIRE_HA_INFRASTRUCTURE: "true"
-      - run: docker build --tag hyeboard-api:ci .
-      - run: >-
-          docker build --tag hyeboard-automation-worker:ci
-          --file apps/automation-worker/Dockerfile .
       - uses: azure/setup-kubectl@v4
         with:
           version: latest
@@ -62,6 +58,28 @@ jobs:
             node scripts/validate-k8s.mjs --rendered="$render_dir/$overlay.yaml" --expected-tag="$image_tag"
           done
 
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
+      - run: >-
+          pnpm --filter @hyeboard/web exec playwright install
+          --with-deps chromium webkit
+      - run: pnpm --filter @hyeboard/web exec playwright test --retries=1
+
   kubernetes-ha:
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -74,10 +92,25 @@ jobs:
         with:
           config: .github/kind-ha-config.yaml
           cluster_name: hyeboard-ha
-      - run: |
-          docker build --tag hyeboard-api:ci .
-          docker build --tag hyeboard-automation-worker:ci \
-            --file apps/automation-worker/Dockerfile .
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: hyeboard-api:ci
+          load: true
+          cache-from: type=gha,scope=ha-api
+          cache-to: type=gha,mode=max,scope=ha-api
+      - name: Build automation worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/automation-worker/Dockerfile
+          tags: hyeboard-automation-worker:ci
+          load: true
+          cache-from: type=gha,scope=ha-worker
+          cache-to: type=gha,mode=max,scope=ha-worker
       - run: |
           docker pull postgres:16-alpine
           docker pull redis:7-alpine
