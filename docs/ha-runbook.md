@@ -377,7 +377,36 @@ BROWSERLESS_TOKEN
 
 Set `images.api.repository`, `images.api.tag`/`digest`, and the corresponding `images.automationWorker.*` values and use an immutable commit SHA tag such as `sha-<40-character-commit-sha>` or a verified registry digest. Never use `latest` or another mutable tag. Put environment-specific values in a local uncommitted file. For the production values, `HYEB_REDIS_URL` uses `<release>-redis-master` and `BROWSERLESS_ENDPOINT` uses `<release>-browserless`.
 
-For a production Helm release, layer `values-production.yaml` with an uncommitted site values file containing the real image registry/tag or digests, ingress hostname/TLS, allowed origins, and any environment-specific scheduling values. The Redis Operator must already be installed and the two Secrets must exist in the release namespace:
+For a production Helm release, layer `values-production.yaml` with an uncommitted site values file containing the real image registry/tag or digests, `ingress.enabled: true`, ingress hostname/TLS, allowed origins, and any environment-specific scheduling values. The Redis Operator must already be installed and the two Secrets must exist in the release namespace. With the default release name `hyeboard`, the runtime Secret should use `HYEB_REDIS_URL=redis://:<password>@hyeboard-redis-master:6379/0` and `BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium`.
+
+The site values file contains no credentials. A minimal production shape is:
+
+```yaml
+images:
+  api:
+    repository: registry.example.internal/hyeboard-api
+    tag: sha-<40-character-commit-sha>
+  automationWorker:
+    repository: registry.example.internal/hyeboard-automation-worker
+    tag: sha-<40-character-commit-sha>
+config:
+  runtime:
+    HYEB_ALLOWED_ORIGINS: https://hyeboard.example.com
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: hyeboard.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: hyeboard-tls
+      hosts:
+        - hyeboard.example.com
+```
+
+Keep this file outside the repository. Create or update the two Secrets through the cluster secret manager; if `kubectl` is used, feed values from environment variables and do not apply `secret.example.yaml`.
 
 ```bash
 export HYEB_K8S_NAMESPACE=hyeboard-production

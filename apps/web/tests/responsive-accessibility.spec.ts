@@ -7,8 +7,14 @@ for (const viewport of REFERENCE_VIEWPORTS.slice(0, 2)) {
     await expectNoPageOverflow(page);
     await authenticateDemoPage(page);
     await expectNoPageOverflow(page);
-    for (const route of ["/timetable", "/grades", "/exams", "/tuition"]) {
+    for (const [route, heading] of [
+      ["/timetable", "Timetable"],
+      ["/grades", "Grades"],
+      ["/exams", "Exams"],
+      ["/tuition", "Tuition"],
+    ] as const) {
       await page.goto(route);
+      await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
       await expectNoPageOverflow(page);
     }
   });

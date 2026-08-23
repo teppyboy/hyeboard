@@ -23,6 +23,7 @@ export async function authenticateDemoPage(page: Page, destination = "/"): Promi
     localStorage.setItem("hyeboard.playwrightFixtureReady", "1");
   }, account);
   await page.goto(destination);
+  await expect(page.getByRole("button", { name: "Open account menu" })).toBeVisible();
 }
 
 export const test = base.extend<{ authenticatedPage: Page }>({
