@@ -274,7 +274,7 @@ Keep `HYEB_AUTOMATION_EXECUTOR_READY=false` in Compose and Kubernetes defaults. 
 
 ### Helm
 
-The chart is published at `https://tretrauit.me/hyeboard/`. It deploys the API, automation-worker, Browserless, Ingress, HPA, PDB, and an optional `RedisReplication` custom resource. It does not install the cluster-scoped Redis Operator or CRD.
+The chart is published at `oci://ghcr.io/im-yuuki/charts/hyeboard`. It deploys the API, automation-worker, Browserless, Ingress, HPA, PDB, and an optional `RedisReplication` custom resource. It does not install the cluster-scoped Redis Operator or CRD.
 
 Helm and Kustomize are alternatives. Use one release method for a namespace; do not install the Helm release and apply a Kustomize overlay to the same workloads.
 
@@ -285,9 +285,7 @@ Use `images.api.repository`, `images.api.tag`/`digest`, and the corresponding `i
 For production, add the published chart repository and use one local values file containing the image, ingress, runtime, and Secret values:
 
 ```bash
-helm repo add hyeboard https://tretrauit.me/hyeboard/
-helm repo update hyeboard
-helm upgrade --install hyeboard hyeboard/hyeboard --namespace hyeboard --create-namespace --values /path/to/values.yml --wait --atomic --timeout 15m
+helm upgrade --install hyeboard oci://ghcr.io/im-yuuki/charts/hyeboard --version 0.2.0 --namespace hyeboard --create-namespace --values /path/to/values.yml --wait --atomic --timeout 15m
 kubectl -n hyeboard get redisreplication,svc,pods
 ```
 

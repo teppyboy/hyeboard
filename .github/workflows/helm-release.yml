@@ -8,7 +8,8 @@ on:
       - .github/workflows/helm-release.yml
 
 permissions:
-  contents: write
+  contents: read
+  packages: write
 
 jobs:
   release:
@@ -17,17 +18,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Configure Git
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      - name: Log in to GHCR
         run: |
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
 
-      - name: Publish chart to GitHub Pages
-        uses: helm/chart-releaser-action@v1.7.0
-        with:
-          charts_dir: deploy/helm
-        env:
-          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package and publish chart to GHCR
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/helm-chart"
+          helm package deploy/helm/hyeboard --destination "$RUNNER_TEMP/helm-chart"
+          helm push "$RUNNER_TEMP"/helm-chart/hyeboard-*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"

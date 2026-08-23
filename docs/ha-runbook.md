@@ -357,7 +357,7 @@ The operator's master Service is the endpoint used by the current Node Redis cli
 
 ## Helm alternative
 
-The Helm chart is published at `https://tretrauit.me/hyeboard/`. It is an alternative to the Kustomize templates above; do not let Helm and Kustomize manage the same workloads in one namespace. The chart can deploy Browserless, render a RedisReplication custom resource, and create the application Secrets when `secrets.create` is enabled. It does not install the cluster-scoped Redis Operator or CRD.
+The Helm chart is published at `oci://ghcr.io/im-yuuki/charts/hyeboard`. It is an alternative to the Kustomize templates above; do not let Helm and Kustomize manage the same workloads in one namespace. The chart can deploy Browserless, render a RedisReplication custom resource, and create the application Secrets when `secrets.create` is enabled. It does not install the cluster-scoped Redis Operator or CRD.
 
 The Helm production prerequisites are Helm 3, `kubectl` access to the selected cluster context, a pinned OT-CONTAINER-KIT Redis Operator/CRD, a StorageClass for Redis PVCs, an ingress controller matching the chart's configured Ingress class, DNS, and a pre-created TLS Secret. PostgreSQL remains external. `values-production.yaml` enables Browserless and the RedisReplication resource; the chart does not install the Redis Operator itself.
 
