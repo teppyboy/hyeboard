@@ -34,8 +34,8 @@ Build the image from the repository root and publish it with an immutable SHA ta
 
 ```bash
 docker build -f apps/automation-worker/Dockerfile \
-  -t ghcr.io/im-yuuki/hyeboard-automation-worker:sha-<40-character-commit-sha> .
-docker push ghcr.io/im-yuuki/hyeboard-automation-worker:sha-<40-character-commit-sha>
+  -t ghcr.io/teppyboy/hyeboard-automation-worker:sha-<40-character-commit-sha> .
+docker push ghcr.io/teppyboy/hyeboard-automation-worker:sha-<40-character-commit-sha>
 ```
 
 The worker needs Redis, Browserless/Puppeteer, the current automation key pair, and its stream/health configuration. Prefer the repository `docker-compose.yml` `distributed` profile for local container orchestration; it supplies the private network endpoints and health checks. Kubernetes uses the same image through `deploy/k8s/base` and its `example`, `staging`, and `production` overlays. The production overlay runs Browserless in-cluster and consumes Redis through the operator-managed primary Service; PostgreSQL, TLS, the Redis Operator, and secrets remain operator-managed prerequisites.

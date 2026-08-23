@@ -35,9 +35,10 @@
     },
     "secrets": {
       "type": "object",
-      "required": ["existingSecret", "keys"],
+      "required": ["create", "existingSecret", "keys", "runtime", "redisAuth"],
       "additionalProperties": false,
       "properties": {
+        "create": { "type": "boolean" },
         "existingSecret": {
           "type": "string",
           "minLength": 1,
@@ -68,6 +69,25 @@
             "automationCurrentB64": { "$ref": "#/definitions/envKey" },
             "automationPreviousId": { "$ref": "#/definitions/envKey" },
             "automationPreviousB64": { "$ref": "#/definitions/envKey" }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "redisAuth": {
+          "type": "object",
+          "required": ["existingSecret", "key", "password"],
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 253,
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+            },
+            "key": { "$ref": "#/definitions/envKey" },
+            "password": { "type": "string" }
           }
         }
       }

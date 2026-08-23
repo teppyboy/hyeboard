@@ -1,0 +1,36 @@
+name: Release Helm chart
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - deploy/helm/**
+      - .github/workflows/helm-release.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Package and publish chart to GHCR
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/helm-chart"
+          helm package deploy/helm/hyeboard --destination "$RUNNER_TEMP/helm-chart"
+          helm push "$RUNNER_TEMP"/helm-chart/hyeboard-*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"

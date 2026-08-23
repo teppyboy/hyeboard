@@ -14,9 +14,9 @@ configMapGenerator:
       - HYEB_ALLOWED_ORIGINS=https://staging.hyeboard.example.com
 images:
   # Replace the explicit placeholder tags with an immutable release tag.
-  - name: ghcr.io/im-yuuki/hyeboard-api
-    newName: ghcr.io/im-yuuki/hyeboard-api
+  - name: ghcr.io/teppyboy/hyeboard-api
+    newName: ghcr.io/teppyboy/hyeboard-api
     newTag: replace-with-release-tag
-  - name: ghcr.io/im-yuuki/hyeboard-automation-worker
-    newName: ghcr.io/im-yuuki/hyeboard-automation-worker
+  - name: ghcr.io/teppyboy/hyeboard-automation-worker
+    newName: ghcr.io/teppyboy/hyeboard-automation-worker
     newTag: replace-with-release-tag

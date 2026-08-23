@@ -53,7 +53,7 @@ spec:
       containers:
         - name: automation-worker
           image: >-
-            ghcr.io/im-yuuki/hyeboard-automation-worker:replace-with-release-tag
+            ghcr.io/teppyboy/hyeboard-automation-worker:replace-with-release-tag
           imagePullPolicy: IfNotPresent
           ports:
             - name: health

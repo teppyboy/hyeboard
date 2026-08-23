@@ -8,12 +8,12 @@ imagePullSecrets: []
 
 images:
   api:
-    repository: ghcr.io/im-yuuki/hyeboard-api
+    repository: ghcr.io/teppyboy/hyeboard-api
     tag: replace-with-release-tag
     digest: ""
     pullPolicy: IfNotPresent
   automationWorker:
-    repository: ghcr.io/im-yuuki/hyeboard-automation-worker
+    repository: ghcr.io/teppyboy/hyeboard-automation-worker
     tag: replace-with-release-tag
     digest: ""
     pullPolicy: IfNotPresent
@@ -28,10 +28,10 @@ serviceAccounts:
     name: ""
     annotations: {}
 
-# This Secret must already exist. The chart deliberately never renders a
-# Secret, so credentials remain in an external secret manager or Kubernetes
-# Secret supplied by the operator.
 secrets:
+  # Set true when the values file contains the runtime credentials. Keep the
+  # file outside Git and protect it with normal file permissions.
+  create: false
   existingSecret: hyeboard-runtime
   keys:
     sessionSecret: HYEB_SESSION_SECRET
@@ -43,6 +43,11 @@ secrets:
     automationCurrentB64: AUTOMATION_KEY_CURRENT_B64
     automationPreviousId: AUTOMATION_KEY_PREVIOUS_ID
     automationPreviousB64: AUTOMATION_KEY_PREVIOUS_B64
+  runtime: {}
+  redisAuth:
+    existingSecret: hyeboard-redis-auth
+    key: password
+    password: ""
 
 config:
   runtime:
