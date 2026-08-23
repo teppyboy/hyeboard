@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hyeboard
+resources:
+  - ../../base
+  - namespace.yaml
+  - dependencies.yaml
+images:
+  - name: ghcr.io/teppyboy/hyeboard-api
+    newName: hyeboard-api
+    newTag: ci
+  - name: ghcr.io/teppyboy/hyeboard-automation-worker
+    newName: hyeboard-automation-worker
+    newTag: ci
+patches:
+  - path: configmap-patch.yaml

@@ -138,6 +138,8 @@ The manifests in [`deploy/k8s`](../deploy/k8s) run two API replicas and two auto
 
 Before applying the example overlay:
 
+CI uses `deploy/k8s/overlays/ci` with a disposable three-node Kind cluster. It runs PostgreSQL, Redis, and Browserless inside the cluster, loads the CI images, enables metrics-server for HPA status, and executes the same round-robin/failover validator. This proves the Kubernetes wiring in an ephemeral cluster; it does not replace target-cluster or real UET credential validation.
+
 1. Build and publish both images, then replace the image tags in `deploy/k8s/overlays/example/kustomization.yaml`. From the repository root:
 
 ```bash
