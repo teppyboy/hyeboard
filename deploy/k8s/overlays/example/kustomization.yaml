@@ -5,10 +5,18 @@ resources:
   - ../../base
   - namespace.yaml
   - ingress.yaml
+patches:
+  - path: scaling.yaml
+configMapGenerator:
+  - name: hyeboard-runtime
+    behavior: merge
+    literals:
+      - HYEB_ALLOWED_ORIGINS=https://hyeboard.example.com
 images:
-  - name: ghcr.io/teppyboy/hyeboard-api
-    newName: ghcr.io/teppyboy/hyeboard-api
+  # Replace the explicit placeholder tags with an immutable release tag.
+  - name: ghcr.io/im-yuuki/hyeboard-api
+    newName: ghcr.io/im-yuuki/hyeboard-api
     newTag: replace-with-release-tag
-  - name: ghcr.io/teppyboy/hyeboard-automation-worker
-    newName: ghcr.io/teppyboy/hyeboard-automation-worker
+  - name: ghcr.io/im-yuuki/hyeboard-automation-worker
+    newName: ghcr.io/im-yuuki/hyeboard-automation-worker
     newTag: replace-with-release-tag

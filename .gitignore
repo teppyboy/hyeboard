@@ -13,6 +13,7 @@ apps/web/blob-report/
 .env
 .env.*
 !.env.example
+compose.env
 .dev.vars
 
 # HAR captures contain cookies, tokens, session IDs, and PII.

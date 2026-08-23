@@ -1,0 +1,43 @@
+{{- if .Values.hpa.api.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "hyeboard.apiName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    {{- include "hyeboard.apiSelectorLabels" . | nindent 4 }}
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "hyeboard.apiName" . }}
+  minReplicas: {{ .Values.hpa.api.minReplicas }}
+  maxReplicas: {{ .Values.hpa.api.maxReplicas }}
+  behavior:
+    {{- toYaml .Values.hpa.api.behavior | nindent 4 }}
+  metrics:
+    {{- toYaml .Values.hpa.api.metrics | nindent 4 }}
+{{- end }}
+{{- if .Values.hpa.automationWorker.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "hyeboard.automationWorkerName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 4 }}
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "hyeboard.automationWorkerName" . }}
+  minReplicas: {{ .Values.hpa.automationWorker.minReplicas }}
+  maxReplicas: {{ .Values.hpa.automationWorker.maxReplicas }}
+  behavior:
+    {{- toYaml .Values.hpa.automationWorker.behavior | nindent 4 }}
+  metrics:
+    {{- toYaml .Values.hpa.automationWorker.metrics | nindent 4 }}
+{{- end }}

@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - configmap.yaml
+  - serviceaccounts.yaml
   - api-deployment.yaml
   - api-service.yaml
   - api-pdb.yaml
@@ -10,10 +10,35 @@ resources:
   - automation-hpa.yaml
   - automation-pdb.yaml
   - network-policy.yaml
+configMapGenerator:
+  - name: hyeboard-runtime
+    literals:
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=8787
+      - HYEB_ALLOWED_ORIGINS=
+      - HYEB_HA_MODE=distributed
+      - HYEB_HA_SESSION_EPOCH=0
+      - HYEB_HA_ENFORCE_SESSION_EPOCH=false
+      - HYEB_SHUTDOWN_TIMEOUT_MS=30000
+      - HYEB_BROWSER_LOCAL=false
+      - HYEB_BROWSER_HEADLESS=true
+      - HYEB_AUTOMATION_EXECUTOR_READY=false
+      - AUTOMATION_EXECUTION_MODE=distributed
+      - AUTOMATION_BROWSER_PROVIDER=browserless
+      - AUTOMATION_HEALTH_PORT=8080
+      - AUTOMATION_HEALTH_HOST=0.0.0.0
+      - AUTOMATION_CONSUMER_GROUP=automation-workers
+      - AUTOMATION_CONTROL_CONSUMER_GROUP=automation-control-workers
+      - AUTOMATION_JOB_STREAM=hyeboard:automation:jobs
+      - AUTOMATION_EVENT_STREAM=hyeboard:automation:events
+      - AUTOMATION_CONTROL_STREAM=hyeboard:automation:control
+      - AUTOMATION_SHUTDOWN_TIMEOUT_MS=30000
 images:
-  - name: ghcr.io/teppyboy/hyeboard-api
-    newName: ghcr.io/teppyboy/hyeboard-api
+  # Replace the explicit placeholder tags with an immutable release tag.
+  - name: ghcr.io/im-yuuki/hyeboard-api
+    newName: ghcr.io/im-yuuki/hyeboard-api
     newTag: replace-with-release-tag
-  - name: ghcr.io/teppyboy/hyeboard-automation-worker
-    newName: ghcr.io/teppyboy/hyeboard-automation-worker
+  - name: ghcr.io/im-yuuki/hyeboard-automation-worker
+    newName: ghcr.io/im-yuuki/hyeboard-automation-worker
     newTag: replace-with-release-tag

@@ -1,0 +1,68 @@
+{{- if .Values.redis.operator.enabled }}
+apiVersion: {{ .Values.redis.operator.apiVersion }}
+kind: RedisReplication
+metadata:
+  name: {{ include "hyeboard.redisName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  clusterSize: {{ .Values.redis.operator.clusterSize }}
+  kubernetesConfig:
+    image: {{ printf "%s:%s" .Values.redis.operator.image.repository .Values.redis.operator.image.tag | quote }}
+    imagePullPolicy: {{ .Values.redis.operator.image.pullPolicy }}
+    redisSecret:
+      name: {{ .Values.redis.operator.auth.existingSecret }}
+      key: {{ .Values.redis.operator.auth.key }}
+    resources:
+      {{- toYaml .Values.redis.operator.resources | nindent 6 }}
+  storage:
+    volumeClaimTemplate:
+      spec:
+        {{- with .Values.redis.operator.storage.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.redis.operator.storage.size | quote }}
+  podSecurityContext:
+    {{- toYaml .Values.redis.operator.podSecurityContext | nindent 4 }}
+  securityContext:
+    {{- toYaml .Values.redis.operator.securityContext | nindent 4 }}
+  terminationGracePeriodSeconds: {{ .Values.redis.operator.terminationGracePeriodSeconds }}
+  {{- with .Values.redis.operator.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.redis.operator.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.redis.operator.topologySpreadConstraints }}
+  topologySpreadConstraints:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .Values.redis.operator.sentinel.enabled }}
+  sentinel:
+    size: {{ .Values.redis.operator.sentinel.size }}
+    image: {{ printf "%s:%s" .Values.redis.operator.sentinel.image.repository .Values.redis.operator.sentinel.image.tag | quote }}
+    imagePullPolicy: {{ .Values.redis.operator.sentinel.image.pullPolicy }}
+    resources:
+      {{- toYaml .Values.redis.operator.sentinel.resources | nindent 6 }}
+    {{- with .Values.redis.operator.sentinel.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.redis.operator.sentinel.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.redis.operator.sentinel.topologySpreadConstraints }}
+    topologySpreadConstraints:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+{{- end }}

@@ -1,38 +1,160 @@
-# Optional headless Chrome for self-hosting the UET Google-login automation
-# feature outside Cloudflare (Node/Bun deployments only — Cloudflare
-# deployments use the managed Browser Rendering binding instead and don't
-# need this).
+# Local Compose deployment modes:
+#   docker compose --env-file compose.env --profile memory up -d --build
+#   docker compose --env-file compose.env --profile distributed up -d --build
 #
-# Usage:
-#   docker compose up -d
-#   HYEB_BROWSER_WS_ENDPOINT=ws://localhost:3000/chromium pnpm --filter @hyeboard/worker serve:node
-#
-# Every other Hyeboard feature works without this container.
+# Only the API is published to the host. PostgreSQL, Redis, Browserless, and
+# the automation health endpoint are reachable only on the Compose network.
+
+x-api-base: &api-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  init: true
+  healthcheck:
+    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    interval: 30s
+    timeout: 5s
+    start_period: 45s
+    retries: 3
+  networks:
+    - hyeboard
+
+x-automation-base: &automation-base
+  build:
+    context: .
+    dockerfile: apps/automation-worker/Dockerfile
+  restart: unless-stopped
+  init: true
+  environment:
+    NODE_ENV: production
+    AUTOMATION_EXECUTION_MODE: distributed
+    AUTOMATION_BROWSER_PROVIDER: browserless
+    AUTOMATION_HEALTH_HOST: 0.0.0.0
+    AUTOMATION_HEALTH_PORT: "8080"
+    REDIS_URL: redis://redis:6379/0
+    BROWSERLESS_ENDPOINT: ws://browserless:3000/chromium
+    BROWSERLESS_TOKEN: ${BROWSERLESS_TOKEN:-}
+    AUTOMATION_KEY_CURRENT_ID: ${AUTOMATION_KEY_CURRENT_ID:-}
+    AUTOMATION_KEY_CURRENT_B64: ${AUTOMATION_KEY_CURRENT_B64:-}
+    AUTOMATION_KEY_PREVIOUS_ID: ${AUTOMATION_KEY_PREVIOUS_ID:-}
+    AUTOMATION_KEY_PREVIOUS_B64: ${AUTOMATION_KEY_PREVIOUS_B64:-}
+    AUTOMATION_CONSUMER_NAME: ${AUTOMATION_CONSUMER_NAME:-compose-automation-worker}
+    AUTOMATION_CONTROL_CONSUMER_NAME: ${AUTOMATION_CONTROL_CONSUMER_NAME:-compose-automation-worker}
+  healthcheck:
+    # Compose health means the process is serving its control endpoint. The
+    # Kubernetes readiness probe remains /readyz so a cluster never routes
+    # work to a worker whose Redis/Browserless startup is incomplete.
+    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    interval: 30s
+    timeout: 5s
+    start_period: 60s
+    retries: 3
+  depends_on:
+    redis:
+      condition: service_healthy
+    browserless:
+      condition: service_healthy
+  networks:
+    - hyeboard
+
 services:
-  chrome:
-    image: ghcr.io/browserless/chromium:v2.55.4
+  api:
+    <<: *api-base
+    profiles: [distributed]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "8787"
+      HYEB_HA_MODE: distributed
+      HYEB_HA_NODE_ID: ${HYEB_HA_NODE_ID:-compose-api}
+      HYEB_ALLOWED_ORIGINS: ${HYEB_ALLOWED_ORIGINS:-http://localhost:8787}
+      HYEB_SESSION_SECRET: ${HYEB_SESSION_SECRET:-}
+      HYEB_POSTGRES_URL: postgresql://hyeboard:${POSTGRES_PASSWORD:-}@postgres:5432/hyeboard
+      HYEB_REDIS_URL: redis://redis:6379/0
+      AUTOMATION_KEY_CURRENT_ID: ${AUTOMATION_KEY_CURRENT_ID:-}
+      AUTOMATION_KEY_CURRENT_B64: ${AUTOMATION_KEY_CURRENT_B64:-}
+      AUTOMATION_KEY_PREVIOUS_ID: ${AUTOMATION_KEY_PREVIOUS_ID:-}
+      AUTOMATION_KEY_PREVIOUS_B64: ${AUTOMATION_KEY_PREVIOUS_B64:-}
+      HYEB_AUTOMATION_EXECUTOR_READY: ${HYEB_AUTOMATION_EXECUTOR_READY:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
-      - "3000:3000"
-    restart: unless-stopped
+      - "${API_PORT:-8787}:8787"
+
+  api-memory:
+    <<: *api-base
+    profiles: [memory]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "8787"
+      HYEB_HA_MODE: memory
+      HYEB_ALLOWED_ORIGINS: ${HYEB_ALLOWED_ORIGINS:-http://localhost:8787}
+      HYEB_SESSION_SECRET: ${HYEB_SESSION_SECRET:-}
+      HYEB_AUTOMATION_EXECUTOR_READY: "false"
+    ports:
+      - "${API_PORT:-8787}:8787"
+
+  automation-worker:
+    <<: *automation-base
+    profiles: [distributed]
+
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.10-alpine
+    profiles: [distributed]
     environment:
       POSTGRES_DB: hyeboard
       POSTGRES_USER: hyeboard
-      POSTGRES_PASSWORD: hyeboard-local-only
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - hyeboard-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    networks:
+      - hyeboard
+
   redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    image: redis:7.4.5-alpine
+    profiles: [distributed]
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - hyeboard-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    networks:
+      - hyeboard
+
+  browserless:
+    image: ghcr.io/browserless/chromium:v2.55.4
+    profiles: [distributed]
+    environment:
+      TOKEN: ${BROWSERLESS_TOKEN:-}
+    shm_size: 2gb
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/pressure?token=' + process.env.TOKEN).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - hyeboard
 
 volumes:
   hyeboard-postgres:
   hyeboard-redis:
+
+networks:
+  hyeboard:

@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hyeboard.apiName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    {{- include "hyeboard.apiSelectorLabels" . | nindent 4 }}
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+  {{- with .Values.api.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    {{- include "hyeboard.apiSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: {{ .Values.api.service.targetPort }}

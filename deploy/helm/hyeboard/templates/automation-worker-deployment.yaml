@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hyeboard.automationWorkerName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 4 }}
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.automationWorker.replicaCount }}
+  revisionHistoryLimit: {{ .Values.automationWorker.revisionHistoryLimit }}
+  minReadySeconds: {{ .Values.automationWorker.minReadySeconds }}
+  strategy:
+    {{- toYaml .Values.automationWorker.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "hyeboard.labels" . | nindent 8 }}
+        {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.automationWorker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.automationWorker.terminationGracePeriodSeconds }}
+      serviceAccountName: {{ include "hyeboard.automationWorkerServiceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.automationWorker.podSecurityContext | nindent 8 }}
+      {{- with .Values.automationWorker.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.automationWorker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.automationWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.automationWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: automation-worker
+          image: {{ include "hyeboard.image" (dict "image" .Values.images.automationWorker) }}
+          imagePullPolicy: {{ .Values.images.automationWorker.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "hyeboard.fullname" . }}-runtime
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.redisUrl }}
+            - name: BROWSERLESS_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.browserlessEndpoint }}
+            - name: BROWSERLESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.browserlessToken }}
+            - name: AUTOMATION_KEY_CURRENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.automationCurrentId }}
+            - name: AUTOMATION_KEY_CURRENT_B64
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.automationCurrentB64 }}
+            - name: AUTOMATION_KEY_PREVIOUS_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.automationPreviousId }}
+                  optional: true
+            - name: AUTOMATION_KEY_PREVIOUS_B64
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.automationPreviousB64 }}
+                  optional: true
+            - name: AUTOMATION_CONSUMER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: AUTOMATION_CONTROL_CONSUMER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- with .Values.automationWorker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            {{- toYaml .Values.automationWorker.probes.readiness | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.automationWorker.probes.liveness | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.automationWorker.probes.startup | nindent 12 }}
+          resources:
+            {{- toYaml .Values.automationWorker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.automationWorker.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            {{- toYaml .Values.automationWorker.tmpVolume | nindent 12 }}

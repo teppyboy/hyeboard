@@ -12,3 +12,4 @@ apps/web/blob-report
 .env
 .env.*
 !.env.example
+compose.env

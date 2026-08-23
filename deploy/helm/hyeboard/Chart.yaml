@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hyeboard
+description: Hyeboard API and distributed automation worker
+type: application
+version: 0.1.0
+appVersion: replace-with-release-version

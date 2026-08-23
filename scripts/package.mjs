@@ -118,6 +118,7 @@ async function main() {
   if (existsSync(SHIP)) {
     await rm(join(SHIP, "dist"), { recursive: true, force: true });
     await rm(join(SHIP, "public"), { recursive: true, force: true });
+    await rm(join(SHIP, "migrations"), { recursive: true, force: true });
   }
 
   await mkdir(join(SHIP, "dist"), { recursive: true });
@@ -132,6 +133,9 @@ async function main() {
 
   console.log("[package] Copying web static files…");
   await cp(join(ROOT, "apps/web/dist"), join(SHIP, "public"), { recursive: true });
+
+  console.log("[package] Copying PostgreSQL migrations…");
+  await cp(join(ROOT, "apps/worker/migrations"), join(SHIP, "migrations"), { recursive: true });
 
   console.log("[package] Writing package.json…");
   await cp(join(ROOT, "apps/worker/package.json"), join(SHIP, "package.json"));

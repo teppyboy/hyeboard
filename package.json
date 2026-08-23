@@ -24,6 +24,7 @@
     "test:ha": "pnpm test:ha:postgres && pnpm test:ha:redis",
     "test:ha:postgres": "pnpm --filter @hyeboard/worker test:ha:postgres",
     "test:ha:redis": "pnpm --filter @hyeboard/worker test:ha:redis",
+    "test:helm": "node scripts/validate-helm.mjs",
     "test:k8s": "node scripts/validate-k8s.mjs",
     "test:benchmark-lifecycle": "node scripts/run-benchmark-process-runner-tests.mjs",
     "test:browser": "pnpm --filter @hyeboard/web exec playwright test --retries=0",

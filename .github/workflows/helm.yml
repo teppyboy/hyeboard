@@ -1,0 +1,30 @@
+name: Helm chart
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      - name: Verify Helm version
+        run: helm version --short
+
+      - name: Validate default, example, and production values
+        run: node scripts/validate-helm.mjs --require-chart
+
+      - name: Validate strict release rendering
+        run: node scripts/validate-helm.mjs --strict --require-chart --image-tag="sha-${GITHUB_SHA}"

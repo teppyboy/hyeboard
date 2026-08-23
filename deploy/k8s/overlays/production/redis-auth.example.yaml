@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hyeboard-redis-auth
+  annotations:
+    kubernetes.io/description: >-
+      Template only. Create the real Secret with an external secret manager
+      or kubectl; this file is intentionally not a Kustomize resource.
+type: Opaque
+stringData:
+  password: replace-with-a-random-redis-password

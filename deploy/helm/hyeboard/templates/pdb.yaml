@@ -1,0 +1,31 @@
+{{- if .Values.pdb.api.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "hyeboard.apiName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    {{- include "hyeboard.apiSelectorLabels" . | nindent 4 }}
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.pdb.api.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "hyeboard.apiSelectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if .Values.pdb.automationWorker.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "hyeboard.automationWorkerName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 4 }}
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.pdb.automationWorker.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 6 }}
+{{- end }}

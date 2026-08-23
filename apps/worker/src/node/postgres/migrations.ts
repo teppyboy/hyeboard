@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -13,6 +14,13 @@ type AppliedMigration = { version: string | number; name: string; checksum: stri
 const migrationFilePattern = /^(\d+)_([a-z0-9_-]+)\.sql$/i;
 
 export function defaultPostgresMigrationsDirectory(): string {
+  // The bundled Node artifact keeps `migrations/` beside its `dist/` folder:
+  // apps/worker/dist -> apps/worker/migrations in the workspace and
+  // package/dist -> package/migrations in the standalone artifact. During
+  // tsx development this module still lives under src/node/postgres, so use
+  // the source-tree path when the bundled sibling does not exist.
+  const bundledPath = fileURLToPath(new URL("../migrations/", import.meta.url));
+  if (existsSync(bundledPath)) return bundledPath;
   return fileURLToPath(new URL("../../../migrations/", import.meta.url));
 }
 

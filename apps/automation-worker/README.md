@@ -26,4 +26,18 @@ The event sink is injectable. `StreamAutomationEventSink` writes JSON events to 
 - Retryable failures remain pending until reclaim and are not emitted as terminal events. A final failure is acknowledged after `maxDeliveryCount`.
 - Cancellation is cooperative. An executor that ignores `AbortSignal` can outlive the configured drain timeout; it will not be acknowledged after shutdown.
 
-The Browserless image is pinned to `ghcr.io/browserless/chromium:v2.55.4`, was pulled manually, and started successfully; a live Puppeteer CDP smoke test passed against `ws://127.0.0.1:3000/chromium`, including a token query. The host bridge was exercised in a real distributed Browserless/UET Google login attempt using credentials supplied through the local ignored `.env`, local PostgreSQL/Redis, the API, and this worker. `/api/ready` reached ready and `pnpm test:ha` passed PostgreSQL 5/5 and Redis 4/4. Login progress reached `0, 10, 35, 35, 60` before HTTP 502 code `GOOGLE_SIGNIN_FAILURE`; the worker logged Puppeteer `Attempted to use detached Frame ...` while waiting for Keycloak `#username`. The real login did not pass. The node-redis stream read-shape fix was committed as `f7c78fd`; Kubernetes remains deferred.
+## Containers
+
+`apps/automation-worker/Dockerfile` builds the executable bridge as a non-root Node `22.22.0-bookworm-slim` image. It starts `node dist/cli.cjs`, listens on port `8080`, and exposes `/healthz` and `/readyz` for container probes.
+
+Build the image from the repository root and publish it with an immutable SHA tag:
+
+```bash
+docker build -f apps/automation-worker/Dockerfile \
+  -t ghcr.io/im-yuuki/hyeboard-automation-worker:sha-<40-character-commit-sha> .
+docker push ghcr.io/im-yuuki/hyeboard-automation-worker:sha-<40-character-commit-sha>
+```
+
+The worker needs Redis, Browserless/Puppeteer, the current automation key pair, and its stream/health configuration. Prefer the repository `docker-compose.yml` `distributed` profile for local container orchestration; it supplies the private network endpoints and health checks. Kubernetes uses the same image through `deploy/k8s/base` and its `example`, `staging`, and `production` overlays. The production overlay runs Browserless in-cluster and consumes Redis through the operator-managed primary Service; PostgreSQL, TLS, the Redis Operator, and secrets remain operator-managed prerequisites.
+
+The Compose/Kubernetes defaults keep `HYEB_AUTOMATION_EXECUTOR_READY=false` on the API. The worker image and a reachable Browserless service are not a claim of Browserless/UET parity; automated university login requires a separate target-environment gate.

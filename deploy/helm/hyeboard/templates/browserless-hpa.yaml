@@ -1,0 +1,22 @@
+{{- if and .Values.browserless.enabled .Values.browserless.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "hyeboard.browserlessName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "hyeboard.browserlessName" . }}
+    app.kubernetes.io/component: browserless
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "hyeboard.browserlessName" . }}
+  minReplicas: {{ .Values.browserless.hpa.minReplicas }}
+  maxReplicas: {{ .Values.browserless.hpa.maxReplicas }}
+  behavior:
+    {{- toYaml .Values.browserless.hpa.behavior | nindent 4 }}
+  metrics:
+    {{- toYaml .Values.browserless.hpa.metrics | nindent 4 }}
+{{- end }}

@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hyeboard-api
+spec:
+  replicas: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hyeboard-automation-worker
+spec:
+  replicas: 3
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hyeboard-api
+spec:
+  minReplicas: 3
+  maxReplicas: 12
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hyeboard-automation-worker
+spec:
+  minReplicas: 3
+  maxReplicas: 8

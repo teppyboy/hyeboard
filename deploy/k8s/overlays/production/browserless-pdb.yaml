@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: hyeboard-browserless
+  labels:
+    app.kubernetes.io/name: hyeboard-browserless
+    app.kubernetes.io/component: browserless
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hyeboard-browserless
+      app.kubernetes.io/component: browserless

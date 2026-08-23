@@ -1,0 +1,26 @@
+Hyeboard has been rendered in namespace {{ .Release.Namespace }}.
+
+The chart references an existing Secret named {{ .Values.secrets.existingSecret }};
+it does not create or populate credentials. Ensure it contains the configured
+PostgreSQL, Redis, Browserless, session-secret, and automation-key entries before
+starting the workloads.
+
+The automation executor gate is {{ index .Values.config.runtime "HYEB_AUTOMATION_EXECUTOR_READY" | quote }}.
+It must remain false until the distributed Browserless executor has passed real-provider validation.
+
+{{- if .Values.browserless.enabled }}
+Browserless is enabled as the internal ClusterIP service {{ include "hyeboard.browserlessName" . }}.
+Ensure the runtime Secret points BROWSERLESS_ENDPOINT at its /chromium WebSocket endpoint.
+{{- end }}
+{{- if .Values.redis.operator.enabled }}
+RedisReplication is enabled. The Redis Operator and its CRD must already be installed,
+and Secret {{ .Values.redis.operator.auth.existingSecret }} must contain key {{ .Values.redis.operator.auth.key }}.
+Use the operator-managed {{ include "hyeboard.redisName" . }}-master Service in HYEB_REDIS_URL.
+{{- end }}
+
+Check rollout status with:
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "hyeboard.apiName" . }}
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "hyeboard.automationWorkerName" . }}
+
+Ingress is {{ ternary "enabled" "disabled" .Values.ingress.enabled }}. Namespace creation is intentionally
+left to Helm's release namespace or the operator; this chart does not render a Namespace resource.

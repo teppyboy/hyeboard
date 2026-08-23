@@ -24,9 +24,14 @@ spec:
         app.kubernetes.io/component: automation-worker
     spec:
       terminationGracePeriodSeconds: 45
+      serviceAccountName: hyeboard-automation-worker
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       topologySpreadConstraints:
@@ -48,7 +53,7 @@ spec:
       containers:
         - name: automation-worker
           image: >-
-            ghcr.io/teppyboy/hyeboard-automation-worker:replace-with-release-tag
+            ghcr.io/im-yuuki/hyeboard-automation-worker:replace-with-release-tag
           imagePullPolicy: IfNotPresent
           ports:
             - name: health
@@ -82,6 +87,18 @@ spec:
                 secretKeyRef:
                   name: hyeboard-runtime
                   key: AUTOMATION_KEY_CURRENT_B64
+            - name: AUTOMATION_KEY_PREVIOUS_ID
+              valueFrom:
+                secretKeyRef:
+                  name: hyeboard-runtime
+                  key: AUTOMATION_KEY_PREVIOUS_ID
+                  optional: true
+            - name: AUTOMATION_KEY_PREVIOUS_B64
+              valueFrom:
+                secretKeyRef:
+                  name: hyeboard-runtime
+                  key: AUTOMATION_KEY_PREVIOUS_B64
+                  optional: true
             - name: AUTOMATION_CONSUMER_NAME
               valueFrom:
                 fieldRef:
@@ -124,3 +141,11 @@ spec:
               drop: [ALL]
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

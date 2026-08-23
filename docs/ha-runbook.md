@@ -1,6 +1,20 @@
 # HA Runbook
 
-This runbook covers the self-hosted HA foundation and the Kubernetes deployment template. The Kubernetes resources assume managed PostgreSQL, Redis, and Browserless services; they do not create database infrastructure.
+This runbook covers self-hosted memory/distributed containers and the Kubernetes deployment templates. Kubernetes keeps PostgreSQL external, can run Browserless in-cluster, and uses the OT-CONTAINER-KIT Redis Operator for production Redis replication and Sentinel failover.
+
+## Prerequisites
+
+For Docker and Compose, install Docker Engine with a running daemon, Docker Compose v2, and BuildKit/buildx. Verify the daemon and tools before using the commands below:
+
+```bash
+docker info
+docker compose version
+docker buildx version
+```
+
+For Kubernetes, install `kubectl` with a Kustomize-capable version, select the intended context, and confirm access with `kubectl cluster-info`. Applying an overlay additionally requires an ingress controller with class `nginx`, a metrics API for HPA, TLS Secrets, permissions to create/update resources in the target namespace, and enough capacity for the selected replica count. The manifests use soft topology spreading, so both single-node test clusters and multi-node production clusters are supported; replicas may co-locate when capacity is limited.
+
+PostgreSQL, Redis, and Browserless must be reachable from the API/worker in distributed mode. Compose starts local instances for its `distributed` profile. Kubernetes staging may use managed/external Redis and Browserless; the production overlay runs RedisReplication and Browserless in-cluster. Browserless is represented by the pinned image `ghcr.io/browserless/chromium:v2.55.4`; this pin is not a claim of Browserless/UET parity.
 
 ## Modes
 
@@ -10,9 +24,44 @@ This runbook covers the self-hosted HA foundation and the Kubernetes deployment 
 
 Do not use `HYEB_HA_MODE=cloudflare` to make a self-hosted process emulate Durable Objects. The Cloudflare entry point selects and installs those bindings.
 
+## Docker Compose
+
+Copy `compose.env.example` to the ignored `compose.env`, generate the required secret values, and validate both profiles before starting a stack:
+
+```bash
+cp compose.env.example compose.env
+docker compose --env-file compose.env --profile memory config --quiet
+docker compose --env-file compose.env --profile distributed config --quiet
+```
+
+The `memory` profile starts only `api-memory` and forces `HYEB_AUTOMATION_EXECUTOR_READY=false`. The `distributed` profile starts `api`, `postgres`, `redis`, `browserless`, and `automation-worker`; only the API port is published to the host. The other services use the private `hyeboard` network. PostgreSQL and Redis data persist in named volumes.
+
+Start and inspect a selected profile as follows:
+
+```bash
+docker compose --env-file compose.env --profile memory up -d --build
+curl -fsS http://127.0.0.1:8787/api/ready
+docker compose --env-file compose.env --profile memory down
+
+docker compose --env-file compose.env --profile distributed up -d --build
+docker compose --env-file compose.env --profile distributed ps
+```
+
+The distributed profile uses `postgres:16.10-alpine`, `redis:7.4.5-alpine`, and `ghcr.io/browserless/chromium:v2.55.4`. Keep `HYEB_AUTOMATION_EXECUTOR_READY=false`; this local stack is not evidence of Browserless/UET parity. Use `docker compose ... down -v` only when intentionally deleting the local PostgreSQL and Redis volumes.
+
 ## Self-Hosted Configuration
 
 `HYEB_SESSION_SECRET` is required for every self-hosted API process and must be at least 32 characters. It is read from the environment only. Keep it, database credentials, Redis credentials, and Browserless tokens out of `config.json`, `.env.example`, logs, and source control.
+
+Generate values with a cryptographically secure source and inject them through the deployment environment or secret manager:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))" # HYEB_SESSION_SECRET
+openssl rand -hex 24                                                   # PostgreSQL password
+openssl rand -base64 32                                                # AUTOMATION_KEY_CURRENT_B64
+```
+
+Use a unique `AUTOMATION_KEY_CURRENT_ID` for the generated automation key. Supply `AUTOMATION_KEY_PREVIOUS_ID` and `AUTOMATION_KEY_PREVIOUS_B64` together only during key rotation. Obtain `BROWSERLESS_TOKEN` from the Browserless operator; do not encode it into `BROWSERLESS_ENDPOINT`.
 
 For memory mode:
 
@@ -99,9 +148,9 @@ The standalone `apps/automation-worker` and `packages/automation-protocol` found
 - Redis Streams consumer groups, pending-message reclaim, job leases, fencing, heartbeats, retries, cancellation, and bounded shutdown drain.
 - A Browserless/Puppeteer provider with reconnect metadata and no token in exposed connection metadata.
 
-The distributed API now enqueues encrypted UET jobs, consumes validated event/result streams, and exposes signed CAPTCHA answer/cancel controls. The executable host CLI bridge in `apps/automation-worker` supplies the UET executor and Browserless/Puppeteer provider, and the UET adapter uses the worker-owned Puppeteer session with ownership checks around browser work. StudentHub's current `Đăng nhập với VNU mail` button uses Google Identity Services with FedCM; FedCM hides the popup target that the worker must drive through VNU Keycloak. Browserless sessions therefore launch Chromium with `--disable-features=FedCm`, restoring the popup-compatible path. `AUTOMATION_EXECUTOR_READY` remains an explicit deployment gate; the bridge does not by itself establish full feature parity.
+The API and worker expose the encrypted queue, event, CAPTCHA-control, Browserless/Puppeteer, and ownership boundaries described above. `HYEB_AUTOMATION_EXECUTOR_READY` remains an explicit deployment gate. The presence of the bridge or a healthy Browserless process is not evidence that automated university login is production-ready, and this repository makes no Browserless/UET parity claim.
 
-In distributed API mode, inline Google browser automation is rejected with `AUTOMATION_BACKEND_UNCONFIGURED`, and the queue backend remains unavailable unless `AUTOMATION_EXECUTOR_READY=true` is explicitly configured. The Browserless image is pinned to `ghcr.io/browserless/chromium:v2.55.4`, was pulled manually, and started successfully; a live Puppeteer CDP smoke test passed against `ws://127.0.0.1:3000/chromium`, including a token query. A real distributed Browserless/UET Google login was attempted with credentials supplied through the local ignored `.env`, local PostgreSQL/Redis, the API, and the automation worker. `/api/ready` reached ready and `pnpm test:ha` passed PostgreSQL 5/5 and Redis 4/4. Login progress reached `0, 10, 35, 35, 60` before HTTP 502 code `GOOGLE_SIGNIN_FAILURE`; the worker logged Puppeteer `Attempted to use detached Frame ...` while waiting for Keycloak `#username`. The real login did not pass. The node-redis stream read-shape fix was committed as `f7c78fd`. Manual credential paths that do not need a browser remain governed by their existing adapter behavior.
+In distributed API mode, inline browser automation is rejected with `AUTOMATION_BACKEND_UNCONFIGURED`, and the queue backend remains unavailable unless `HYEB_AUTOMATION_EXECUTOR_READY=true` is explicitly configured. Keep the flag `false` in Compose, the base Kustomize ConfigMap, and every overlay until a target-environment executor review is complete. Manual credential paths that do not need a browser remain governed by their existing adapter behavior.
 
 Patchright is prohibited in distributed mode. The API rejects `HYEB_BROWSER_PATCHRIGHT=true` in distributed HA mode, and the automation worker rejects `AUTOMATION_EXECUTION_MODE=distributed` with `AUTOMATION_BROWSER_PROVIDER=patchright`. Patchright is available only for local/single-worker execution. Distributed automation must use Browserless/Puppeteer.
 
@@ -130,54 +179,266 @@ pnpm test:ha
 
 The PostgreSQL suite checks shared session revocation, refresh serialization, outage behavior, readiness, and SIGTERM drain across two worker processes. The Redis suite checks cross-process refresh coordination, CAPTCHA relay, Redis outage behavior, readiness/liveness separation, and SIGTERM drain. If Docker or an image is unavailable, the suites report a skip rather than a fake passing integration result.
 
-The latest CI `pnpm test:ha` run passed PostgreSQL 5/5 and Redis 5/5, including automation crash reclaim with a replacement fencing lease; `/api/ready` reached ready during the distributed run. These tests cover the shared-dependency and failure-handling foundation. Browserless/UET login remains deployment-specific and must be validated with the target provider before enabling automated sign-in.
+These tests cover the shared-dependency and failure-handling foundation. They do not validate Browserless/UET parity or authorize enabling the automation executor gate.
 
 ## Kubernetes deployment
 
-The manifests in [`deploy/k8s`](../deploy/k8s) run two API replicas and two automation workers by default. The API Deployment uses `/api/live` for liveness, `/api/ready` for dependency-backed readiness, rolling updates with no unavailable replicas, resource requests, an HPA, and a PDB. Both Deployments prefer different nodes and use best-effort hostname topology spreading; this distributes replicas when nodes are available without blocking HPA overflow on smaller clusters. Cluster validation additionally requires the two ready replicas of each Deployment to occupy two distinct nodes. The example Ingress disables proxy buffering for the long-lived automation SSE route. Their disruption budgets permit at most one unavailable replica, including after scale-up. Worker pods expose `/healthz` and `/readyz` after Redis and Browserless startup checks pass. The worker Deployment has a CPU/memory HPA from 2 to 8 replicas; it is a conservative fallback because native Kubernetes metrics do not measure Redis queue depth.
+The manifests in [`deploy/k8s`](../deploy/k8s) are a deployment template, not a dependency installer. The `base` includes two Deployments, a ClusterIP API Service, readiness/liveness/startup probes, rolling-update policies, resource requests/limits, HPAs, PDBs, non-root ServiceAccounts, generated runtime ConfigMap, and egress NetworkPolicies. The API uses `/api/live` and `/api/ready`; the worker uses `/healthz` and `/readyz`.
 
-Before applying the example overlay:
+The overlays are intentionally different:
+
+| Overlay | Namespace | Hostname | Initial replicas | Image registry |
+| --- | --- | --- | --- | --- |
+| `example` | `hyeboard` | `hyeboard.example.com` | 1 API, 1 worker | `ghcr.io/im-yuuki` |
+| `staging` | `hyeboard-staging` | `staging.hyeboard.example.com` | 2 API, 2 workers | `ghcr.io/im-yuuki` |
+| `production` | `hyeboard-production` | `hyeboard.example.com` | 3 API, 3 workers, 3 Browserless | `registry.internal.example` placeholder |
 
 CI uses `deploy/k8s/overlays/ci` with a disposable three-node Kind cluster. It runs PostgreSQL, Redis, and Browserless inside the cluster, loads the CI images, enables metrics-server for HPA status, and executes the same round-robin/failover validator. This proves the Kubernetes wiring in an ephemeral cluster; it does not replace target-cluster or real UET credential validation.
 
-1. Build and publish both images, then replace the image tags in `deploy/k8s/overlays/example/kustomization.yaml`. From the repository root:
+The base starts `HYEB_AUTOMATION_EXECUTOR_READY=false` and uses distributed mode with Browserless as the configured provider. The setting is not changed by any overlay. Keep it false: a running worker, Browserless endpoint, or healthy rollout does not establish Browserless/UET parity.
+
+### Images and secrets
+
+Build and publish both images with an immutable commit tag. The container workflow uses `sha-${GITHUB_SHA}` and publishes to `ghcr.io/${GITHUB_REPOSITORY_OWNER}/hyeboard-api` and `ghcr.io/${GITHUB_REPOSITORY_OWNER}/hyeboard-automation-worker` for non-PR events:
 
 ```bash
-docker build -t ghcr.io/teppyboy/hyeboard-api:<tag> .
-docker build -t ghcr.io/teppyboy/hyeboard-automation-worker:<tag> -f apps/automation-worker/Dockerfile .
-docker push ghcr.io/teppyboy/hyeboard-api:<tag>
-docker push ghcr.io/teppyboy/hyeboard-automation-worker:<tag>
+export IMAGE_OWNER=im-yuuki
+export IMAGE_TAG=sha-<40-character-commit-sha>
+docker login ghcr.io
+docker build -t "ghcr.io/${IMAGE_OWNER}/hyeboard-api:${IMAGE_TAG}" .
+docker build -f apps/automation-worker/Dockerfile \
+  -t "ghcr.io/${IMAGE_OWNER}/hyeboard-automation-worker:${IMAGE_TAG}" .
+docker push "ghcr.io/${IMAGE_OWNER}/hyeboard-api:${IMAGE_TAG}"
+docker push "ghcr.io/${IMAGE_OWNER}/hyeboard-automation-worker:${IMAGE_TAG}"
 ```
 
-Use immutable release tags, not `latest`, for production.
-2. Provision PostgreSQL, Redis, and Browserless outside this repository. Put their URLs and credentials in a Secret named `hyeboard-runtime`; start from `deploy/k8s/base/secret.example.yaml` without applying it unchanged.
-3. Set the production hostname and TLS Secret in `deploy/k8s/overlays/example/ingress.yaml`.
-4. Set the session epoch and enforcement flag together during the planned session cutover.
-5. Render and inspect the overlay, then apply it:
+After publishing, replace `replace-with-release-tag` in a deployment-specific release copy with the immutable `sha-${GITHUB_SHA}` tag, or use a verified registry digest. Do not use `latest`. The explicit placeholder tag deliberately fails strict rendered-manifest validation until replaced. Production also requires replacing `registry.internal.example` with the real internal registry name.
+
+`base/secret.example.yaml` is a template only and is not listed as a Kustomize resource. Use an external secret manager or External Secrets integration to create `hyeboard-runtime` in each target namespace with these keys:
+
+```text
+HYEB_SESSION_SECRET
+HYEB_POSTGRES_URL
+HYEB_REDIS_URL
+AUTOMATION_KEY_CURRENT_ID
+AUTOMATION_KEY_CURRENT_B64
+AUTOMATION_KEY_PREVIOUS_ID (optional)
+AUTOMATION_KEY_PREVIOUS_B64 (optional)
+BROWSERLESS_ENDPOINT
+BROWSERLESS_TOKEN
+```
+
+For the in-cluster production topology, set `HYEB_REDIS_URL` to the operator-managed primary Service, for example `redis://:<url-encoded-password>@hyeboard-redis-master:6379/0`, and set `BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium`. The separate `hyeboard-redis-auth` Secret contains the same Redis password under the `password` key; do not commit either Secret.
+
+### Install the OpsTree Redis Operator
+
+Install the OT-CONTAINER-KIT Redis Operator once per cluster. It is cluster-scoped infrastructure and is intentionally not installed by either the Hyeboard Helm chart or the application Kustomize overlay. Pin the operator chart version after reviewing the available versions; do not install an unpinned release in production:
+
+```bash
+export OPERATOR_NAMESPACE=ot-operators
+helm repo add ot-helm https://ot-container-kit.github.io/helm-charts
+helm repo update
+helm search repo ot-helm/redis-operator --versions
+export REDIS_OPERATOR_VERSION=<reviewed-operator-chart-version>
+
+helm upgrade --install redis-operator ot-helm/redis-operator \
+  --namespace "$OPERATOR_NAMESPACE" \
+  --create-namespace \
+  --version "$REDIS_OPERATOR_VERSION" \
+  --set featureGates.GenerateConfigInInitContainer=true \
+  --wait --timeout 10m
+
+kubectl -n "$OPERATOR_NAMESPACE" \
+  rollout status deployment/redis-operator --timeout=180s
+kubectl get crd redisreplications.redis.redis.opstreelabs.in
+```
+
+The operator's upstream YAML installer is intended for development; use its Helm chart for a production cluster. Verify the operator version, image provenance, RBAC, CRD version (`redis.redis.opstreelabs.in/v1beta2`), and upgrade policy before installing. The production Hyeboard resource creates three Redis members and three Sentinel pods through this CRD.
+
+Create the Redis auth Secret and Hyeboard runtime Secret in the application namespace before applying either deployment method. Generate a hex password so it is safe to place in a Redis URI without additional URL encoding:
+
+```bash
+export HYEB_K8S_NAMESPACE=hyeboard-production
+kubectl create namespace "$HYEB_K8S_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+export REDIS_PASSWORD="$(openssl rand -hex 32)"
+kubectl -n "$HYEB_K8S_NAMESPACE" create secret generic hyeboard-redis-auth \
+  --from-literal=password="$REDIS_PASSWORD" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+export HYEB_SESSION_SECRET=<32-byte-or-longer-random-secret>
+export HYEB_POSTGRES_URL=<managed-postgresql-url>
+export AUTOMATION_KEY_CURRENT_ID=<unique-key-id>
+export AUTOMATION_KEY_CURRENT_B64=<base64-encoded-32-byte-key>
+export BROWSERLESS_TOKEN=<browserless-token>
+export HYEB_REDIS_URL="redis://:${REDIS_PASSWORD}@hyeboard-redis-master:6379/0"
+export BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium
+
+kubectl -n "$HYEB_K8S_NAMESPACE" create secret generic hyeboard-runtime \
+  --from-literal=HYEB_SESSION_SECRET="$HYEB_SESSION_SECRET" \
+  --from-literal=HYEB_POSTGRES_URL="$HYEB_POSTGRES_URL" \
+  --from-literal=HYEB_REDIS_URL="$HYEB_REDIS_URL" \
+  --from-literal=AUTOMATION_KEY_CURRENT_ID="$AUTOMATION_KEY_CURRENT_ID" \
+  --from-literal=AUTOMATION_KEY_CURRENT_B64="$AUTOMATION_KEY_CURRENT_B64" \
+  --from-literal=BROWSERLESS_ENDPOINT="$BROWSERLESS_ENDPOINT" \
+  --from-literal=BROWSERLESS_TOKEN="$BROWSERLESS_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+For real operations, replace shell variables with an external secret manager or External Secrets integration. Do not save these exports in a tracked file or paste generated Secret YAML into a ticket.
+
+Generate the session secret and automation key with a cryptographically secure generator, and use a unique key ID. Generate a PostgreSQL password separately when the managed database is provisioned. Keep values out of manifests, shell history where practical, logs, and source control. If no secret manager is available, create the Secret out of band with `kubectl` from environment variables; never apply `secret.example.yaml` unchanged.
+
+Staging requires reachable PostgreSQL, Redis, and Browserless endpoints. Production requires PostgreSQL, the OT-CONTAINER-KIT Redis Operator and its `redis.redis.opstreelabs.in/v1beta2` CRD, a `hyeboard-redis-auth` Secret with key `password`, and a StorageClass that can provision three Redis PVCs. Redis, Sentinel, application, and Browserless topology spread is a soft preference, so a smaller test cluster can co-locate replicas. Production Browserless is exposed only through the in-cluster `hyeboard-browserless` ClusterIP and uses `BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium`. Production `HYEB_REDIS_URL` must use the operator-managed `hyeboard-redis-master` Service and include the Redis password in the URL. Add destination restrictions appropriate to the cluster CNI. The Ingress resources require an NGINX ingress controller, the named TLS Secret (`hyeboard-tls`, `hyeboard-staging-tls`, or `hyeboard-production-tls`), and DNS for the selected hostname.
+
+### Render and apply
+
+Run static validation first. It does not require a live cluster:
 
 ```bash
 pnpm test:k8s
-kubectl kustomize deploy/k8s/overlays/example
-kubectl apply -k deploy/k8s/overlays/example
-kubectl rollout status deployment/hyeboard-api -n hyeboard
-kubectl rollout status deployment/hyeboard-automation-worker -n hyeboard
-node scripts/validate-k8s-cluster.mjs --failover
 ```
 
-The example NetworkPolicy restricts API and worker egress to DNS, HTTPS, and the configured PostgreSQL, Redis, and Browserless ports. It leaves ingress open so managed ingress controllers and kubelet probes work across CNI implementations; add an ingress allowlist matching the target cluster before production exposure.
+Replace image tags/digests, provision the runtime/auth Secrets, install the pinned Redis Operator for production, and render the selected overlay to a file for review:
 
-`validate-k8s-cluster.mjs` requires `kubectl` access to the target namespace. It checks both rollouts, two ready replicas per Deployment on distinct nodes, two API Service endpoints, active HPA metrics, one Service-minted mock session against every API pod, twenty in-cluster readiness requests, and—in `--failover` mode—service availability while one API pod is deleted and replaced.
+```bash
+kubectl kustomize deploy/k8s/overlays/staging > /tmp/hyeboard-staging.yaml
+kubectl diff -k deploy/k8s/overlays/staging
+kubectl apply -k deploy/k8s/overlays/staging
+kubectl rollout status deployment/hyeboard-api -n hyeboard-staging --timeout=180s
+kubectl rollout status deployment/hyeboard-automation-worker -n hyeboard-staging --timeout=180s
+```
 
-The Kubernetes resources do not remove the runtime gates below. The example overlay starts with `HYEB_AUTOMATION_EXECUTOR_READY=false`; enable it only after the real Browserless/UET executor gate passes. Run the resources against the target cluster and dependencies before exposing the service to production:
+Use the corresponding overlay and namespace for `example` or `production`. The example overlay has one replica and is not suitable for the multi-replica cluster validator. For production, verify the Redis Operator reports the CRD and reconcile permissions before applying the overlay. For staging or production, after the dependencies and metrics API are ready:
 
-- Two API replicas work under round-robin traffic without sticky sessions.
-- VNU refresh, cross-lookup authority, and generic revocation are shared and survive replica restart.
-- CAPTCHA works across replicas.
-- Browser jobs reclaim safely with fencing once the API queue integration exists.
-- Redis and PostgreSQL outages fail closed where required.
-- Readiness and graceful shutdown are verified, including browser/Redis/PostgreSQL cleanup.
-- The explicit session epoch cutover policy is verified.
-- Patchright cannot be enabled in distributed mode.
-- `pnpm build`, `pnpm test`, Playwright, Node package checks, and the Wrangler dry-run pass.
+```bash
+HYEB_K8S_NAMESPACE=hyeboard-staging \
+  node scripts/validate-k8s-cluster.mjs --failover
+```
 
-Until this gate passes, keep the Kubernetes overlay in staging. Production traffic requires the full multi-replica and failure-injection evidence above.
+The cluster validator needs a working `kubectl` context, two ready replicas of both application Deployments, two ready API Service endpoints, active HPA metrics, and permission to create a temporary `node:22-alpine` probe pod. It accepts a single node; it checks rollouts, readiness, endpoint spread, a mock session against each API pod, repeated readiness requests, and API pod replacement during `--failover`. Separately verify Redis Sentinel failover and Browserless session recovery; the validator does not establish Browserless/UET parity.
+
+### Apply the production Kustomize overlay
+
+The production overlay is the `kubectl` deployment path. It includes Browserless and the `RedisReplication` custom resource. It still expects the Redis Operator, both Secrets, PostgreSQL, DNS/TLS, and real immutable application images to exist. Do not edit tracked placeholders; render a temporary release copy:
+
+```bash
+export IMAGE_TAG=sha-<40-character-commit-sha>
+export IMAGE_REGISTRY=registry.example.internal
+export RELEASE_DIR="$(mktemp -d)"
+trap 'rm -rf "$RELEASE_DIR"' EXIT
+cp -R deploy/k8s "$RELEASE_DIR/k8s"
+
+perl -pi -e "s#registry.internal.example#${IMAGE_REGISTRY}#g; s/replace-with-release-tag/${IMAGE_TAG}/g" \
+  "$RELEASE_DIR/k8s/base/"*.yaml \
+  "$RELEASE_DIR/k8s/overlays/"*/*.yaml
+
+kubectl kustomize "$RELEASE_DIR/k8s/overlays/production" > "$RELEASE_DIR/production.yaml"
+node scripts/validate-k8s.mjs \
+  --rendered="$RELEASE_DIR/production.yaml" \
+  --expected-tag="$IMAGE_TAG"
+kubectl diff -f "$RELEASE_DIR/production.yaml"
+kubectl apply -f "$RELEASE_DIR/production.yaml"
+
+kubectl -n "$HYEB_K8S_NAMESPACE" get redisreplication hyeboard-redis
+kubectl -n "$HYEB_K8S_NAMESPACE" get pods -l app=hyeboard-redis
+kubectl -n "$HYEB_K8S_NAMESPACE" get svc hyeboard-redis-master
+kubectl -n "$HYEB_K8S_NAMESPACE" rollout status deployment/hyeboard-api --timeout=10m
+kubectl -n "$HYEB_K8S_NAMESPACE" rollout status deployment/hyeboard-automation-worker --timeout=10m
+kubectl -n "$HYEB_K8S_NAMESPACE" rollout status deployment/hyeboard-browserless --timeout=10m
+```
+
+The operator's master Service is the endpoint used by the current Node Redis client. After the RedisReplication resource is Ready, verify that `hyeboard-redis-master` selects the current master. Test Sentinel failover in a maintenance window and confirm the Service moves to the promoted member before enabling any production automation gate.
+
+### CI
+
+`.github/workflows/container.yml` builds both Dockerfiles on pull requests and loads them for scanning. On non-PR events it logs in to GHCR, publishes SHA-tagged images, emits SBOM/provenance, and runs the Trivy high/critical vulnerability scan. It does not deploy Kubernetes.
+
+`.github/workflows/ha-k8s.yml` runs `pnpm test:k8s`, `docker compose config --quiet`, the build/package/test gates, the HA integration tests, both Docker builds, and temporary Kustomize renders for all three overlays with the commit SHA substituted for `replace-with-release-tag`. It does not apply an overlay or enable `HYEB_AUTOMATION_EXECUTOR_READY`.
+
+## Helm alternative
+
+The Helm chart is available at [`deploy/helm/hyeboard`](../deploy/helm/hyeboard). It is an alternative to the Kustomize templates above; do not let Helm and Kustomize manage the same workloads in one namespace. The chart can deploy Browserless and render a RedisReplication custom resource when enabled, but it does not install the cluster-scoped Redis Operator, Namespace, or Secrets.
+
+The Helm production prerequisites are Helm 3, `kubectl` access to the selected cluster context, a pinned OT-CONTAINER-KIT Redis Operator/CRD, a StorageClass for Redis PVCs, an ingress controller matching the chart's configured Ingress class, DNS, and a pre-created TLS Secret. PostgreSQL remains external. `values-production.yaml` enables Browserless and the RedisReplication resource; the chart does not install the Redis Operator itself.
+
+Create `hyeboard-runtime` and `hyeboard-redis-auth` in each target namespace before installing the production release. Use an external secret manager or External Secrets integration where available. The runtime Secret must contain:
+
+```text
+HYEB_SESSION_SECRET
+HYEB_POSTGRES_URL
+HYEB_REDIS_URL
+AUTOMATION_KEY_CURRENT_ID
+AUTOMATION_KEY_CURRENT_B64
+AUTOMATION_KEY_PREVIOUS_ID (optional)
+AUTOMATION_KEY_PREVIOUS_B64 (optional)
+BROWSERLESS_ENDPOINT
+BROWSERLESS_TOKEN
+```
+
+Set `images.api.repository`, `images.api.tag`/`digest`, and the corresponding `images.automationWorker.*` values and use an immutable commit SHA tag such as `sha-<40-character-commit-sha>` or a verified registry digest. Never use `latest` or another mutable tag. Put environment-specific values in a local uncommitted file. For the production values, `HYEB_REDIS_URL` uses `<release>-redis-master` and `BROWSERLESS_ENDPOINT` uses `<release>-browserless`.
+
+For a production Helm release, layer `values-production.yaml` with an uncommitted site values file containing the real image registry/tag or digests, ingress hostname/TLS, allowed origins, and any environment-specific scheduling values. The Redis Operator must already be installed and the two Secrets must exist in the release namespace:
+
+```bash
+export HYEB_K8S_NAMESPACE=hyeboard-production
+export RELEASE_NAME=hyeboard
+
+helm lint deploy/helm/hyeboard --strict \
+  --values deploy/helm/hyeboard/values-production.yaml \
+  --values /path/to/values-production-site.yaml
+helm template "$RELEASE_NAME" deploy/helm/hyeboard \
+  --namespace "$HYEB_K8S_NAMESPACE" \
+  --values deploy/helm/hyeboard/values-production.yaml \
+  --values /path/to/values-production-site.yaml \
+  > /tmp/hyeboard-production-helm.yaml
+kubectl diff -f /tmp/hyeboard-production-helm.yaml
+
+helm upgrade --install "$RELEASE_NAME" deploy/helm/hyeboard \
+  --namespace "$HYEB_K8S_NAMESPACE" \
+  --create-namespace \
+  --values deploy/helm/hyeboard/values-production.yaml \
+  --values /path/to/values-production-site.yaml \
+  --wait --atomic --timeout 15m
+
+helm status "$RELEASE_NAME" --namespace "$HYEB_K8S_NAMESPACE"
+kubectl -n "$HYEB_K8S_NAMESPACE" get redisreplication,svc,pods
+kubectl -n "$HYEB_K8S_NAMESPACE" rollout status deployment/${RELEASE_NAME}-api --timeout=10m
+kubectl -n "$HYEB_K8S_NAMESPACE" rollout status deployment/${RELEASE_NAME}-automation-worker --timeout=10m
+kubectl -n "$HYEB_K8S_NAMESPACE" rollout status deployment/${RELEASE_NAME}-browserless --timeout=10m
+```
+
+Do not install the Helm release and apply the Kustomize production overlay in the same namespace. Both paths create the same application resources. Helm `--wait` does not prove the Redis custom resource has reconciled; inspect the RedisReplication status and the `<release>-redis-master` Service separately.
+
+Reference workflow for a staging namespace:
+
+```bash
+helm lint deploy/helm/hyeboard -f /path/to/values-staging.yaml
+helm template hyeboard deploy/helm/hyeboard \
+  --namespace hyeboard-staging \
+  --create-namespace \
+  -f /path/to/values-staging.yaml \
+  > /tmp/hyeboard-staging-helm.yaml
+
+helm install hyeboard deploy/helm/hyeboard \
+  --namespace hyeboard-staging \
+  --create-namespace \
+  -f /path/to/values-staging.yaml \
+  --wait --timeout 10m
+
+helm upgrade --install hyeboard deploy/helm/hyeboard \
+  --namespace hyeboard-staging \
+  --create-namespace \
+  -f /path/to/values-staging.yaml \
+  --wait --atomic --timeout 10m
+
+helm upgrade hyeboard deploy/helm/hyeboard \
+  --namespace hyeboard-staging \
+  -f /path/to/values-staging.yaml \
+  --wait --atomic --timeout 10m
+helm history hyeboard --namespace hyeboard-staging
+helm rollback hyeboard <REVISION> \
+  --namespace hyeboard-staging \
+  --wait --timeout 10m
+```
+
+Review the rendered Ingress, namespace, TLS Secret reference, external-service configuration, image references, and Secret references before installation. Keep `HYEB_AUTOMATION_EXECUTOR_READY=false` in the Helm values and rendered defaults. A successful render, rollout, worker health check, or Browserless connectivity check is not evidence of Browserless/UET parity; enabling the executor remains a separate deployment gate.

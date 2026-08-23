@@ -1,0 +1,99 @@
+{{- if .Values.browserless.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hyeboard.browserlessName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "hyeboard.browserlessName" . }}
+    app.kubernetes.io/component: browserless
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.browserless.replicaCount }}
+  revisionHistoryLimit: {{ .Values.browserless.revisionHistoryLimit }}
+  minReadySeconds: {{ .Values.browserless.minReadySeconds }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "hyeboard.browserlessName" . }}
+      app.kubernetes.io/component: browserless
+  template:
+    metadata:
+      labels:
+        {{- include "hyeboard.labels" . | nindent 8 }}
+        app.kubernetes.io/name: {{ include "hyeboard.browserlessName" . }}
+        app.kubernetes.io/component: browserless
+      annotations:
+        {{- with .Values.browserless.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.browserless.terminationGracePeriodSeconds }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.browserless.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.browserless.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.browserless.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.browserless.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.browserless.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: browserless
+          image: {{ include "hyeboard.image" (dict "image" .Values.browserless.image) }}
+          imagePullPolicy: {{ .Values.browserless.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.browserlessToken }}
+            {{- with .Values.browserless.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            {{- toYaml .Values.browserless.probes.readiness | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.browserless.probes.liveness | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.browserless.probes.startup | nindent 12 }}
+          resources:
+            {{- toYaml .Values.browserless.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.browserless.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.browserless.shmSizeLimit }}
+        - name: tmp
+          emptyDir:
+            {{- toYaml .Values.browserless.tmpVolume | nindent 12 }}
+{{- end }}

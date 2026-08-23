@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hyeboard-redis
+  labels:
+    app.kubernetes.io/name: hyeboard-redis
+    app.kubernetes.io/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      app: hyeboard-redis
+      redis_setup_type: replication
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: api
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: automation-worker
+        - podSelector:
+            matchLabels:
+              app: hyeboard-redis
+              redis_setup_type: replication
+        - podSelector:
+            matchLabels:
+              app: hyeboard-redis
+              redis_setup_type: sentinel
+      ports:
+        - protocol: TCP
+          port: 6379

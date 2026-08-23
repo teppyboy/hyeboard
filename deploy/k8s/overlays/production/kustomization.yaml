@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hyeboard-production
+resources:
+  - ../../base
+  - namespace.yaml
+  - ingress.yaml
+  - browserless-deployment.yaml
+  - browserless-service.yaml
+  - browserless-hpa.yaml
+  - browserless-pdb.yaml
+  - browserless-network-policy.yaml
+  - redis-replication.yaml
+  - redis-network-policy.yaml
+patches:
+  - path: scaling.yaml
+configMapGenerator:
+  - name: hyeboard-runtime
+    behavior: merge
+    literals:
+      - HYEB_ALLOWED_ORIGINS=https://hyeboard.example.com
+images:
+  # Replace the registry and explicit placeholder tags with an immutable release tag.
+  - name: ghcr.io/im-yuuki/hyeboard-api
+    newName: registry.internal.example/hyeboard-api
+    newTag: replace-with-release-tag
+  - name: ghcr.io/im-yuuki/hyeboard-automation-worker
+    newName: registry.internal.example/hyeboard-automation-worker
+    newTag: replace-with-release-tag

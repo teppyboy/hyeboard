@@ -1,0 +1,538 @@
+# The placeholder tags are intentional. Set an immutable release tag or digest
+# before installing in a real environment. A digest takes precedence over tag.
+nameOverride: ""
+fullnameOverride: ""
+
+commonLabels: {}
+imagePullSecrets: []
+
+images:
+  api:
+    repository: ghcr.io/im-yuuki/hyeboard-api
+    tag: replace-with-release-tag
+    digest: ""
+    pullPolicy: IfNotPresent
+  automationWorker:
+    repository: ghcr.io/im-yuuki/hyeboard-automation-worker
+    tag: replace-with-release-tag
+    digest: ""
+    pullPolicy: IfNotPresent
+
+serviceAccounts:
+  api:
+    create: true
+    name: ""
+    annotations: {}
+  automationWorker:
+    create: true
+    name: ""
+    annotations: {}
+
+# This Secret must already exist. The chart deliberately never renders a
+# Secret, so credentials remain in an external secret manager or Kubernetes
+# Secret supplied by the operator.
+secrets:
+  existingSecret: hyeboard-runtime
+  keys:
+    sessionSecret: HYEB_SESSION_SECRET
+    postgresUrl: HYEB_POSTGRES_URL
+    redisUrl: HYEB_REDIS_URL
+    browserlessEndpoint: BROWSERLESS_ENDPOINT
+    browserlessToken: BROWSERLESS_TOKEN
+    automationCurrentId: AUTOMATION_KEY_CURRENT_ID
+    automationCurrentB64: AUTOMATION_KEY_CURRENT_B64
+    automationPreviousId: AUTOMATION_KEY_PREVIOUS_ID
+    automationPreviousB64: AUTOMATION_KEY_PREVIOUS_B64
+
+config:
+  runtime:
+    NODE_ENV: production
+    HOST: 0.0.0.0
+    PORT: "8787"
+    HYEB_ALLOWED_ORIGINS: ""
+    HYEB_HA_MODE: distributed
+    HYEB_HA_SESSION_EPOCH: "0"
+    HYEB_HA_ENFORCE_SESSION_EPOCH: "false"
+    HYEB_SHUTDOWN_TIMEOUT_MS: "30000"
+    HYEB_BROWSER_LOCAL: "false"
+    HYEB_BROWSER_HEADLESS: "true"
+    HYEB_AUTOMATION_EXECUTOR_READY: "false"
+    AUTOMATION_EXECUTION_MODE: distributed
+    AUTOMATION_BROWSER_PROVIDER: browserless
+    AUTOMATION_HEALTH_PORT: "8080"
+    AUTOMATION_HEALTH_HOST: 0.0.0.0
+    AUTOMATION_CONSUMER_GROUP: automation-workers
+    AUTOMATION_CONTROL_CONSUMER_GROUP: automation-control-workers
+    AUTOMATION_JOB_STREAM: hyeboard:automation:jobs
+    AUTOMATION_EVENT_STREAM: hyeboard:automation:events
+    AUTOMATION_CONTROL_STREAM: hyeboard:automation:control
+    AUTOMATION_SHUTDOWN_TIMEOUT_MS: "30000"
+  extraData: {}
+
+api:
+  replicaCount: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  terminationGracePeriodSeconds: 45
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: http
+    annotations: {}
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  probes:
+    readiness:
+      httpGet:
+        path: /api/ready
+        port: http
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+    liveness:
+      httpGet:
+        path: /api/live
+        port: http
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    startup:
+      httpGet:
+        path: /api/live
+        port: http
+      periodSeconds: 2
+      timeoutSeconds: 2
+      failureThreshold: 30
+  lifecycle:
+    preStop:
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - sleep 10
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: api
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: api
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+  tmpVolume: {}
+
+automationWorker:
+  replicaCount: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  terminationGracePeriodSeconds: 45
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+  probes:
+    readiness:
+      httpGet:
+        path: /readyz
+        port: health
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 3
+    liveness:
+      httpGet:
+        path: /healthz
+        port: health
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 6
+    startup:
+      httpGet:
+        path: /healthz
+        port: health
+      periodSeconds: 2
+      timeoutSeconds: 2
+      failureThreshold: 30
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: automation-worker
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: automation-worker
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+  tmpVolume: {}
+
+# Redis is a shared authority for distributed mode. The application chart does
+# not install the cluster-scoped operator; enable this resource only after the
+# OT-CONTAINER-KIT Redis Operator and its CRD are installed in the cluster.
+# The operator's <name>-master Service is the stable write endpoint used by
+# the Node redis client after Sentinel-managed failover.
+redis:
+  operator:
+    enabled: false
+    apiVersion: redis.redis.opstreelabs.in/v1beta2
+    name: hyeboard-redis
+    clusterSize: 3
+    image:
+      repository: quay.io/opstree/redis
+      tag: "7.0.15"
+      pullPolicy: IfNotPresent
+    sentinel:
+      enabled: true
+      size: 3
+      image:
+        repository: quay.io/opstree/redis-sentinel
+        tag: "7.0.15"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      nodeSelector: {}
+      tolerations: []
+      topologySpreadConstraints: []
+    auth:
+      existingSecret: hyeboard-redis-auth
+      key: password
+    storage:
+      storageClassName: ""
+      size: 50Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false
+      runAsNonRoot: true
+    terminationGracePeriodSeconds: 60
+    nodeSelector: {}
+    tolerations: []
+    topologySpreadConstraints: []
+
+# Browserless is application-owned and can safely run in-cluster. It remains
+# disabled by default so external managed Browserless deployments are still a
+# supported choice for environments that need a separate browser fleet.
+browserless:
+  enabled: false
+  replicaCount: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  terminationGracePeriodSeconds: 60
+  image:
+    repository: ghcr.io/browserless/chromium
+    tag: v2.55.4
+    digest: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+    annotations: {}
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+  probes:
+    readiness:
+      tcpSocket:
+        port: http
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+    liveness:
+      tcpSocket:
+        port: http
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    startup:
+      tcpSocket:
+        port: http
+      periodSeconds: 2
+      timeoutSeconds: 3
+      failureThreshold: 60
+  podAnnotations: {}
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: browserless
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: browserless
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+  shmSizeLimit: 2Gi
+  tmpVolume: {}
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 30
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 25
+            periodSeconds: 60
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 75
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+
+hpa:
+  api:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 12
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 30
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 25
+            periodSeconds: 60
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 75
+  automationWorker:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 30
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 25
+            periodSeconds: 60
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 75
+
+pdb:
+  api:
+    enabled: true
+    maxUnavailable: 1
+  automationWorker:
+    enabled: true
+    maxUnavailable: 1
+
+networkPolicy:
+  enabled: true
+  api:
+    egress:
+      - to:
+          - namespaceSelector: {}
+        ports:
+          - protocol: UDP
+            port: 53
+          - protocol: TCP
+            port: 53
+      - ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 5432
+          - protocol: TCP
+            port: 6379
+          - protocol: TCP
+            port: 3000
+  automationWorker:
+    egress:
+      - to:
+          - namespaceSelector: {}
+        ports:
+          - protocol: UDP
+            port: 53
+          - protocol: TCP
+            port: 53
+      - ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 6379
+          - protocol: TCP
+            port: 3000
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-cache: "off"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  hosts:
+    - host: hyeboard.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: hyeboard-tls
+      hosts:
+        - hyeboard.example.com

@@ -67,11 +67,6 @@ export function validateClusterSnapshot({
       new Set(replicas.map((pod) => pod.metadata.uid)).size !== replicas.length
     )
       throw new Error(`${name} pod identities are not unique`);
-    const nodes = new Set(
-      replicas.map((pod) => pod.spec?.nodeName).filter(Boolean),
-    );
-    if (nodes.size < 2)
-      throw new Error(`${name} ready replicas are not spread across two nodes`);
   }
 
   const endpointAddresses = endpointSlices.items

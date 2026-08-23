@@ -1,0 +1,111 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hyeboard.apiName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    {{- include "hyeboard.apiSelectorLabels" . | nindent 4 }}
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hyeboard.apiSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    {{- toYaml .Values.networkPolicy.api.egress | nindent 4 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hyeboard.automationWorkerName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 4 }}
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hyeboard.automationWorkerSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    {{- toYaml .Values.networkPolicy.automationWorker.egress | nindent 4 }}
+{{- if .Values.browserless.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hyeboard.browserlessName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "hyeboard.browserlessName" . }}
+    app.kubernetes.io/component: browserless
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "hyeboard.browserlessName" . }}
+      app.kubernetes.io/component: browserless
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: automation-worker
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 443
+{{- end }}
+{{- if .Values.redis.operator.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "hyeboard.redisName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ include "hyeboard.redisName" . }}
+      redis_setup_type: replication
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: api
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: automation-worker
+        - podSelector:
+            matchLabels:
+              app: {{ include "hyeboard.redisName" . }}
+              redis_setup_type: replication
+        - podSelector:
+            matchLabels:
+              app: {{ include "hyeboard.redisName" . }}
+              redis_setup_type: sentinel
+      ports:
+        - protocol: TCP
+          port: 6379
+{{- end }}
+{{- end }}

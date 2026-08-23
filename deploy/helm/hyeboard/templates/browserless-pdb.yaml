@@ -1,0 +1,17 @@
+{{- if and .Values.browserless.enabled .Values.browserless.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "hyeboard.browserlessName" . }}
+  labels:
+    {{- include "hyeboard.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "hyeboard.browserlessName" . }}
+    app.kubernetes.io/component: browserless
+    {{- include "hyeboard.commonLabels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.browserless.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "hyeboard.browserlessName" . }}
+      app.kubernetes.io/component: browserless
+{{- end }}
