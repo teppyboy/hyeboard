@@ -1,6 +1,6 @@
-import type { DashboardSummary, DocumentItem, ExamSession, Grade, Term, TrainingPoint } from "@hyeboard/schemas";
+import type { DocumentItem, ExamSession, Grade, Term, TrainingPoint } from "@hyeboard/schemas";
 import type { VnuExamCatalogRow, VnuPointDetail, VnuProfile, VnuTranscript } from "@hyeboard/university-adapters/src/vnu/types";
-import { mapExamRow, mapGpaSummary, mapGradeRow, mapProfile, mapSyllabusRow, mapTerms, mapTrainingPoints } from "@hyeboard/university-adapters/src/vnu/mapper";
+import { mapExamRow, mapGradeRow, mapSyllabusRow, mapTerms, mapTrainingPoints } from "@hyeboard/university-adapters/src/vnu/mapper";
 import { isPointDetailPageHtml, parseExamCatalogHtml, parseExamTermOptions, parseExamsHtml, parseGradesHtml, parsePointDetailHtml, parseProfileHtml, parseStudyProgressHtml, parseSyllabusHtml } from "@hyeboard/university-adapters/src/vnu/parser";
 import { ApiError } from "./api-types";
 
@@ -64,17 +64,6 @@ export function createVnuClient(request: AuthenticatedRequest) {
     request<{ html: string }>(`/api/vnu/raw/${page}${queryString(params)}`, { signal });
 
   return {
-    dashboard: async (): Promise<DashboardSummary> => {
-      const [profilePage, gradesPage, progressPage] = await Promise.all([raw("profile"), raw("grades"), raw("progress")]);
-      const profile = parseProfileHtml(profilePage.html);
-      const grades = parseGradesHtml(gradesPage.html);
-      const progress = parseStudyProgressHtml(progressPage.html);
-      const terms = mapTerms(grades);
-      return {
-        student: mapProfile(profile, "vnu"), currentTerm: terms[0], todaySchedule: [], courses: [], assignments: [],
-        grades: grades.rows.map(mapGradeRow), gpa: mapGpaSummary(grades, progress), exams: [], notifications: [],
-      };
-    },
     terms: async (): Promise<Term[]> => mapTerms(parseGradesHtml((await raw("grades")).html)),
     grades: async (): Promise<Grade[]> => parseGradesHtml((await raw("grades")).html).rows.map(mapGradeRow),
     exams: async (termCode?: string): Promise<ExamSession[]> => {
@@ -83,14 +72,15 @@ export function createVnuClient(request: AuthenticatedRequest) {
       if (!option) return [];
       return parseExamsHtml((await raw("exams", { vTermID: option.value })).html).map(mapExamRow);
     },
-    ownProfile: async (): Promise<VnuProfile> => parseProfileHtml((await raw("profile")).html),
-    classCatalog: async (params: { vTermID: string }, signal?: AbortSignal): Promise<VnuExamCatalogRow[]> => parseExamCatalogHtml((await raw("exams", params, signal)).html),
-    pointDetail: async (params: { id: string; Term: string }): Promise<VnuPointDetail> => parsePointDetailHtml((await raw("point-detail", params)).html),
-    crossStudentCode: async (params: { stdId: string }): Promise<VnuCrossStudentCode> => sanitizeCrossStudentCode(await request<VnuCrossStudentCode>(`/api/vnu/cross-lookup/student-code${queryString({ stdId: params.stdId, allowCrossLookup: "true" })}`)),
-    crossStudentId: (params: { stdCode: string }): Promise<VnuCrossStudentId> => request<VnuCrossStudentId>(`/api/vnu/cross-lookup/student-id${queryString({ stdCode: params.stdCode, allowCrossLookup: "true" })}`),
-    crossTranscript: async (input: VnuCrossTranscriptInput): Promise<VnuCrossTranscript> => {
+    ownProfile: async (signal?: AbortSignal): Promise<VnuProfile> => parseProfileHtml((await raw("profile", {}, signal)).html),
+    classCatalog: async (params: { vTermID: string }, signal?: AbortSignal): Promise<VnuExamCatalogRow[]> => parseExamCatalogHtml((await request<{ html: string }>(`/api/vnu/class-lookup/catalog${queryString(params)}`, { signal })).html),
+    classPointDetail: async (params: { id: string; Term: string }, signal?: AbortSignal): Promise<VnuPointDetail> => parsePointDetailHtml((await request<{ html: string }>(`/api/vnu/class-lookup/point-detail${queryString(params)}`, { signal })).html),
+    pointDetail: async (params: { id: string; Term: string }, signal?: AbortSignal): Promise<VnuPointDetail> => parsePointDetailHtml((await raw("point-detail", params, signal)).html),
+    crossStudentCode: async (params: { stdId: string }, signal?: AbortSignal): Promise<VnuCrossStudentCode> => sanitizeCrossStudentCode(await request<VnuCrossStudentCode>(`/api/vnu/cross-lookup/student-code${queryString({ stdId: params.stdId, allowCrossLookup: "true" })}`, { signal })),
+    crossStudentId: (params: { stdCode: string }, signal?: AbortSignal): Promise<VnuCrossStudentId> => request<VnuCrossStudentId>(`/api/vnu/cross-lookup/student-id${queryString({ stdCode: params.stdCode, allowCrossLookup: "true" })}`, { signal }),
+    crossTranscript: async (input: VnuCrossTranscriptInput, signal?: AbortSignal): Promise<VnuCrossTranscript> => {
       const target = input.mode === "stdId" ? { stdId: input.stdId } : { stdCode: input.stdCode };
-      return sanitizeCrossTranscript(await request<VnuTranscript>(`/api/vnu/cross-lookup/transcript${queryString({ ...target, allowCrossLookup: "true" })}`));
+      return sanitizeCrossTranscript(await request<VnuTranscript>(`/api/vnu/cross-lookup/transcript${queryString({ ...target, allowCrossLookup: "true" })}`, { signal }));
     },
     crossDetail: async (permit: string, signal?: AbortSignal): Promise<VnuCrossDetailComponent[]> => {
       const response = await request<{ permit: string; html: string }>("/api/vnu/cross-lookup/detail", { method: "POST", body: JSON.stringify({ allowCrossLookup: true, permit }), signal });

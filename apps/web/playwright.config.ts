@@ -7,6 +7,7 @@ export default defineConfig({
   testMatch: /.*\.spec\.ts/,
   testIgnore: /smoke\.spec\.ts/,
   fullyParallel: true,
+  // Wrangler/Miniflare's loopback ProxyController is unstable under parallel browser load.
   workers: runtime.workers,
   retries: 0,
   reporter: process.env.PLAYWRIGHT_JSON_OUTPUT_FILE ? [["json"]] : [["line"]],

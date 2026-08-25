@@ -14,17 +14,15 @@ export async function startMockedVnuSession(
   const featureNavigationReady = new Promise<void>((resolve) => {
     releaseRawRequests = resolve;
   });
-  const expectedRawPaths = new Set([
-    "/api/vnu/raw/profile",
-    "/api/vnu/raw/grades",
-    "/api/vnu/raw/progress",
+  const expectedDashboardPaths = new Set([
+    "/api/vnu/dashboard",
   ]);
-  const pendingRawRequestPaths = new Set(expectedRawPaths);
+  const pendingDashboardRequestPaths = new Set(expectedDashboardPaths);
   let markAllRawRequestsStarted!: () => void;
   const allRawRequestsStarted = new Promise<void>((resolve) => {
     markAllRawRequestsStarted = resolve;
   });
-  const pendingRawResponsePaths = new Set(expectedRawPaths);
+  const pendingDashboardResponsePaths = new Set(expectedDashboardPaths);
   let markAllRawResponsesFulfilled!: () => void;
   const allRawResponsesFulfilled = new Promise<void>((resolve) => {
     markAllRawResponsesFulfilled = resolve;
@@ -48,16 +46,23 @@ export async function startMockedVnuSession(
       }),
     });
   });
-  await page.route("**/api/vnu/raw/**", async (route) => {
-    const rawPath = new URL(route.request().url()).pathname;
-    if (pendingRawRequestPaths.delete(rawPath) && pendingRawRequestPaths.size === 0) markAllRawRequestsStarted();
+  await page.route("**/api/vnu/dashboard**", async (route) => {
+    const dashboardPath = new URL(route.request().url()).pathname;
+    if (pendingDashboardRequestPaths.delete(dashboardPath) && pendingDashboardRequestPaths.size === 0) markAllRawRequestsStarted();
     await featureNavigationReady;
     await route.fulfill({
       status: error.status,
       contentType: "application/json",
       body: JSON.stringify({ error: { code: error.code, message: error.message } }),
     });
-    if (pendingRawResponsePaths.delete(rawPath) && pendingRawResponsePaths.size === 0) markAllRawResponsesFulfilled();
+    if (pendingDashboardResponsePaths.delete(dashboardPath) && pendingDashboardResponsePaths.size === 0) markAllRawResponsesFulfilled();
+  });
+  await page.route("**/api/vnu/raw/**", async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "VNU_LOGIN_REQUIRED", message: "Synthetic raw request blocked" } }),
+    });
   });
 
   await page.goto("/login");
@@ -84,6 +89,14 @@ export async function seedNewTabDescriptorScenario(
   token: string,
   targetIsActive: boolean,
 ): Promise<void> {
+  await page.route("**/api/universities", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ data: [
+      { id: "mock", capabilities: { profile: true } },
+      { id: "vnu", capabilities: { profile: true, terms: true, timetable: true } },
+    ], error: null }),
+  }));
   await page.goto("/login");
   await page.evaluate(({ accountId, accountToken, survivor, active }) => {
     const target = { id: accountId, universityId: "vnu", token: accountToken, studentCode: "SYNTHETIC-NEW-TAB", addedAt: "2099-01-01T00:00:00.000Z" };
@@ -95,6 +108,11 @@ export async function seedNewTabDescriptorScenario(
 }
 
 export async function seedExpiringNewTabAccount(page: import("@playwright/test").Page): Promise<void> {
+  await page.route("**/api/universities", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ data: [{ id: "vnu", capabilities: { profile: true, terms: true, timetable: true } }], error: null }),
+  }));
   await page.goto("/login");
   await page.evaluate((accountId) => {
     localStorage.setItem("hyeboard.accounts", JSON.stringify([{ id: accountId, universityId: "vnu", token: "synthetic-expiring-new-tab-token", studentCode: "SYNTHETIC-NEW-TAB", addedAt: "2099-01-01T00:00:00.000Z" }]));
@@ -118,7 +136,10 @@ export async function seedVnuReconnectScenario(
   await page.route("**/api/**", (route) => route.abort());
   await page.route("**/api/universities", (route) => {
     counts.universities += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [], error: null }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [
+      { id: "vnu", capabilities: { profile: true, terms: true, timetable: true } },
+      { id: "uet", capabilities: { profile: true, terms: true, timetable: true } },
+    ], error: null }) });
   });
   await page.route("**/api/vnu/timetable**", (route) => {
     counts.vnuTimetable += 1;

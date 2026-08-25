@@ -1,8 +1,9 @@
 import { encryptSession, type EncryptedSessionPayload } from "@hyeboard/core";
 import { DaotaoClient } from "@hyeboard/university-adapters";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createApp, setRuntimeConfig, setVnuProbeBudgetCoordinator } from "./app";
+import { createApp, setFeaturePolicyRuntime, setRuntimeConfig, setVnuProbeBudgetCoordinator } from "./app";
+import { FeaturePolicyRuntime, InProcessFeaturePolicyEvents, MemoryFeaturePolicyStore } from "./feature-policy-store";
 import type { VnuProbeBudgetCoordinator } from "./vnu-probe-budget";
 
 // Self-hosted (Node/Bun) deployments never install a probe-budget
@@ -44,8 +45,17 @@ async function listUniversities(app: ReturnType<typeof createApp>): Promise<Univ
 }
 
 describe("university capability serialization", () => {
+  let policyRuntime: FeaturePolicyRuntime;
+
   beforeEach(() => {
     setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    policyRuntime = new FeaturePolicyRuntime(new MemoryFeaturePolicyStore(), new InProcessFeaturePolicyEvents());
+    setFeaturePolicyRuntime(policyRuntime);
+  });
+
+  afterEach(async () => {
+    setFeaturePolicyRuntime(undefined);
+    await policyRuntime.close();
   });
 
   it("masks crossLookup off without an installed coordinator and keeps the routes fail-closed 503", async () => {
@@ -72,7 +82,7 @@ describe("university capability serialization", () => {
       }));
 
       expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toMatchObject({ error: { code: "VNU_PROBE_BUDGET_UNAVAILABLE" } });
+      await expect(response.json()).resolves.toMatchObject({ error: { code: "FEATURE_DISABLED", details: { capability: "crossLookup" } } });
       expect(transcriptSpy).not.toHaveBeenCalled();
     } finally {
       profileSpy.mockRestore();
@@ -80,12 +90,25 @@ describe("university capability serialization", () => {
     }
   });
 
-  it("omits runtime limits when the authoritative coordinator is unavailable", async () => {
+  it("serializes effective policy without changing the universities response shape", async () => {
+    setVnuProbeBudgetCoordinator({
+      async consume() {}, async reserve() {}, async acquireBrc1Permit() { return { leaseId: "a".repeat(32), expiresAt: Date.now() + 1_000 }; },
+      async releaseBrc1Permit() {}, async issueCrossDetailPermits() {}, async consumeCrossDetailPermit() { throw new Error("not exercised"); }, async releaseCrossDetailLease() {},
+    });
+    await policyRuntime.publish({
+      baseRevision: 0,
+      policy: {
+        global: { capabilities: { grades: { enabled: false } }, limits: { "crossLookup.bulkMaxTargets": 20 } },
+        universities: {},
+      },
+      reason: "Synthetic university serialization policy",
+      actor: { method: "password", subject: "test-admin" },
+    });
     const universities = await listUniversities(createApp(undefined));
-    const vnu = universities.find((university) => university.id === "vnu");
 
-    expect(vnu?.capabilities.crossLookup).toBe(false);
-    expect(vnu?.limits).toBeUndefined();
+    expect(Array.isArray(universities)).toBe(true);
+    expect(universities.every((university) => university.capabilities.grades === false)).toBe(true);
+    expect(universities.find((university) => university.id === "vnu")?.limits?.crossLookup?.bulkMaxTargets).toBe(20);
   });
 
   it("publishes a supplied VNU bulk limit as effective metadata without mutating other universities", async () => {
@@ -122,7 +145,8 @@ describe("university capability serialization", () => {
 
     setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET, VNU_CROSS_LOOKUP_BULK_MAX_TARGETS: "0" });
     const disabledBulkUniversities = await listUniversities(createApp(undefined));
-    expect(disabledBulkUniversities.find((university) => university.id === "vnu")?.limits?.crossLookup?.bulkMaxTargets).toBe(0);
+    expect(disabledBulkUniversities.find((university) => university.id === "vnu")).toMatchObject({ capabilities: { crossLookup: false } });
+    expect(disabledBulkUniversities.find((university) => university.id === "vnu")?.limits).toBeUndefined();
   });
 
   // These cross-detail tests rely on the coordinator installed by the test

@@ -57,7 +57,7 @@ export async function openMockedLookup(
 ): Promise<LookupRequestCounts> {
   const requestCounts: LookupRequestCounts = { exams: 0, studentCode: 0, studentId: 0, transcript: 0 };
   await page.route("**/api/universities", async (route) => {
-    const limits = bulkMaximum === null ? {} : {
+    const limits = bulkMaximum === null ? { limits: { crossLookup: {} } } : {
       limits: {
         crossLookup: {
           bulkMaxTargets: bulkMaximum,
@@ -73,12 +73,15 @@ export async function openMockedLookup(
     const html = `<input name="StdCode" value="${SYNTHETIC_OWN_STUDENT_CODE}"><input name="StdName" value="Synthetic Demo"><input name="hidStdID" value="${SYNTHETIC_OWN_INTERNAL_ID}">`;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { html } }) });
   });
-  await page.route("**/api/vnu/raw/exams**", async (route) => {
+  await page.route("**/api/vnu/dashboard**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { notifications: [], todaySchedule: [], grades: [] }, error: null }) });
+  });
+  await page.route("**/api/vnu/class-lookup/catalog**", async (route) => {
     requestCounts.exams += 1;
     const html = `<table><tr><td>1</td><td>252-SYN9900-99</td><td>Synthetic Export Systems</td><td>31/12/2099</td><td>9(09:00)</td><td>Synthetic</td><td>LAB-99</td><td>99</td><td><input name="hidCrdID" value="${SYNTHETIC_CLASS_ID}"></td></tr></table>`;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { html } }) });
   });
-  await page.route("**/api/vnu/raw/point-detail**", async (route) => {
+  await page.route("**/api/vnu/class-lookup/point-detail**", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { html: `<table><tr><td>STT</td><td>Bản chất kỳ thi</td><td>TS</td><td>Lần thi</td><td>Điểm</td><td>Ghi chú</td></tr><tr><td>1</td><td>Giữa kỳ</td><td>0.4</td><td>1</td><td>8.5</td><td></td></tr><tr><td>2</td><td>Thi cuối kỳ</td><td>0.6</td><td>1</td><td>9</td><td></td></tr><tr><td colspan="6">Tổng điểm: 8.8</td></tr></table>` }, error: null }) });
   });
   await page.route("**/api/vnu/cross-lookup/student-code**", async (route) => {
@@ -115,8 +118,14 @@ export async function openMockedLookup(
       }, error: null }),
     });
   });
+  const termDashboard = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/mock/dashboard" && url.searchParams.has("termCode");
+  });
   await authenticateDemoPage(page, "/lookup");
+  await termDashboard;
   await expect(page.getByRole("heading", { name: "Lookup", exact: true })).toBeVisible();
+  await expect(page.getByTestId("student-record-tools")).toBeVisible();
   return requestCounts;
 }
 
@@ -145,13 +154,13 @@ export async function openMockedVnuLookup(page: import("@playwright/test").Page)
       }]),
     });
   });
-  await page.route("**/api/vnu/raw/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === "/api/vnu/raw/exams") examRequests += 1;
-    const html = path === "/api/vnu/raw/exams"
-      ? `<table><tr><td>1</td><td>252-INT&nbsp;3103-CN7</td><td>Synthetic Search Systems</td><td>31/12/2099</td><td>9(09:00)</td><td>Synthetic</td><td>LAB-SYNTHETIC</td><td>1</td><td><input name="hidCrdID" value="SYNTHETIC-VNU-CLASS-ID"></td></tr></table>`
-      : "<main></main>";
+  await page.route("**/api/vnu/class-lookup/catalog**", async (route) => {
+    examRequests += 1;
+    const html = `<table><tr><td>1</td><td>252-INT&nbsp;3103-CN7</td><td>Synthetic Search Systems</td><td>31/12/2099</td><td>9(09:00)</td><td>Synthetic</td><td>LAB-SYNTHETIC</td><td>1</td><td><input name="hidCrdID" value="SYNTHETIC-VNU-CLASS-ID"></td></tr></table>`;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { html }, error: null }) });
+  });
+  await page.route("**/api/vnu/raw/**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { html: "<main></main>" }, error: null }) });
   });
   await switchDemoShellToVnu(page);
   await page.goto("/lookup");

@@ -8,6 +8,7 @@ const bundle = await rolldown({
   platform: "node",
   external: [
     "cloudflare:workers",
+    "bun:sqlite",
     "elysia/adapter/cloudflare-worker",
     "@elysiajs/node",
     "elysia/adapter/bun",

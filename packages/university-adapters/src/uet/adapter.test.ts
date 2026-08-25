@@ -32,6 +32,20 @@ afterEach(() => {
   configureLogger({ level: "silent", mode: "node" });
 });
 
+describe("uet adapter dashboard policy projection", () => {
+  it("does not start disabled dashboard upstream work", async () => {
+    const adapter = createUetAdapter();
+    const profile = { studentCode: "20200001", fullName: "Synthetic Student" };
+    clientMocks.getProfile.mockResolvedValue(profile);
+    const capabilities = Object.fromEntries(Object.keys(adapter.university.capabilities).map((key) => [key, false]));
+
+    const dashboard = await adapter.getDashboard({ capabilities });
+
+    expect(dashboard).toMatchObject({ todaySchedule: [], courses: [], assignments: [], grades: [], exams: [], notifications: [] });
+    expect(clientMocks.getProfile).not.toHaveBeenCalled();
+  });
+});
+
 describe("uet adapter importSession - Google automation path", () => {
   it("requires a browserBinding when uetGoogleEmail/Password are provided", async () => {
     const adapter = createUetAdapter();

@@ -23,7 +23,7 @@ export function trackApiRequestCounts(page: import("@playwright/test").Page): Ap
   const counts = new Map<string, number>();
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
-    if (path.startsWith("/api/")) counts.set(path, (counts.get(path) ?? 0) + 1);
+    if (path.startsWith("/api/") && path !== "/api/policy/events") counts.set(path, (counts.get(path) ?? 0) + 1);
   });
   return {
     count: (path) => counts.get(path) ?? 0,

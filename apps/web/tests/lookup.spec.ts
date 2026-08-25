@@ -63,6 +63,34 @@ test("lookup groups use progressive modes, accessible labels, and responsive tou
   }
 });
 
+test("lookup never shows the previous account profile while the next account loads @task11", async ({ page }) => {
+  await openMockedLookup(page);
+  await expect(page.getByText(SYNTHETIC_OWN_INTERNAL_ID, { exact: true })).toBeVisible();
+
+  await page.unroute("**/api/vnu/raw/profile");
+  let releaseProfile!: () => void;
+  const profileReleased = new Promise<void>((resolve) => { releaseProfile = resolve; });
+  await page.route("**/api/vnu/raw/profile", async (route) => {
+    expect(route.request().headers().authorization).toBe("Bearer second-account-token");
+    await profileReleased;
+    const html = '<input name="StdCode" value="88000000"><input name="StdName" value="Second Synthetic"><input name="hidStdID" value="88000000000">';
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { html } }) });
+  });
+
+  await page.evaluate(() => {
+    const accounts = JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as Array<Record<string, unknown>>;
+    const second = { id: "second-account", universityId: "mock", token: "second-account-token", studentCode: "88000000", addedAt: new Date().toISOString() };
+    localStorage.setItem("hyeboard.accounts", JSON.stringify([...accounts, second]));
+    localStorage.setItem("hyeboard.activeAccountId", second.id);
+    window.dispatchEvent(new CustomEvent("hyeboard:account-switched"));
+  });
+
+  await expect(page.getByText(SYNTHETIC_OWN_INTERNAL_ID, { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("lookup-own-ids")).toHaveCount(0);
+  releaseProfile();
+  await expect(page.getByText("88000000000", { exact: true })).toBeVisible();
+});
+
 test("lookup renders only own-session point-detail components", async ({ page }) => {
   await openMockedLookup(page);
   await page.getByLabel("Course code").fill("SYN9900");
@@ -371,7 +399,7 @@ test("bulk and safe VNU lookup cancel one shared refresh without late mutations"
       items: body.targets.map((target) => ({ target, status: "ok", result: { studentCode: `CODE-${target}` } })),
     }, error: null }) });
   });
-  await page.route("**/api/vnu/raw/exams**", async (route) => {
+  await page.route("**/api/vnu/class-lookup/catalog**", async (route) => {
     await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ data: null, error: { code: "VNU_SESSION_EXPIRED", message: "Synthetic expiry" } }) });
   });
   await page.route("**/api/vnu/auth/refresh", async (route) => {
@@ -417,7 +445,7 @@ test("bulk and safe VNU lookup cancel one shared refresh without late mutations"
   await expect(bulk.getByRole("button", { name: "Export" })).toBeVisible();
 
   const term = page.getByRole("combobox", { name: "Term" });
-  const safeExpiryResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/vnu/raw/exams" && response.status() === 401);
+  const safeExpiryResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/vnu/class-lookup/catalog" && response.status() === 401);
   await term.click();
   const termOptions = page.getByRole("listbox");
   await termOptions.getByRole("option", { name: "Semester 2, 2025–2026 (supplementary)", exact: true }).click();
@@ -498,7 +526,7 @@ test("bulk resets without stale resurrection while second chunk is gated", async
   await expect(bulk.getByText(targets[0]!)).toHaveCount(0);
 });
 
-test("bulk clears account results and aborts gated work on session freshness change", async ({ page }) => {
+test("bulk clears account results and aborts gated work on account freshness change", async ({ page }) => {
   let releaseSecond!: () => void;
   let markSecondStarted!: () => void;
   const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
@@ -548,6 +576,135 @@ test("bulk clears account results and aborts gated work on session freshness cha
   expect(chunks).toHaveLength(2);
   await expect(page.getByTestId("bulk-lookup").getByRole("button", { name: "Export" })).toHaveCount(0);
   await expect(page.getByTestId("bulk-lookup").getByText(targets[0]!)).toHaveCount(0);
+});
+
+test("same-account session refresh clears lookup collections and blocks late bulk results @task14", async ({ page }) => {
+  let releaseSecond!: () => void;
+  const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
+  let markSecondStarted!: () => void;
+  const secondStarted = new Promise<void>((resolve) => { markSecondStarted = resolve; });
+  let markSecondHandled!: () => void;
+  const secondHandled = new Promise<void>((resolve) => { markSecondHandled = resolve; });
+  let bulkRequests = 0;
+  await page.route("**/api/vnu/cross-lookup/bulk", async (route) => {
+    bulkRequests += 1;
+    if (bulkRequests === 2) {
+      markSecondStarted();
+      await secondGate;
+    }
+    try { await fulfillBulkSuccess(route, []); } catch { /* Old session generation aborted. */ }
+    finally { if (bulkRequests === 2) markSecondHandled(); }
+  });
+  await page.route("**/api/vnu/cross-lookup/transcript**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: {
+      header: { studentCode: SYNTHETIC_TARGET_STUDENT_CODE, studentName: "Synthetic Target", className: "SYNTHETIC-99" },
+      totals: { totalCredits: 3, accumulatedCredits: 3, gpa4: 4 },
+      terms: [{ maHK: "252", rows: [{ courseCode: "SYN9901", courseName: "Synthetic Foundations", credits: 3, grade10: 9, letterGrade: "A", grade4: 4 }] }],
+    }, error: null }) });
+  });
+  await openMockedVnuLookup(page);
+
+  await page.getByLabel("Course code").fill("SYN9900");
+  await page.getByRole("button", { name: "Transcript", exact: true }).click();
+  const transcript = page.getByTestId("cross-transcript");
+  await transcript.getByLabel("Target internal student ID").fill(SYNTHETIC_TARGET_INTERNAL_ID);
+  await transcript.getByRole("button", { name: "View transcript" }).click();
+  await expect(transcript.getByText("Synthetic Target", { exact: true })).toBeVisible();
+
+  const bulk = page.getByTestId("bulk-lookup");
+  const targets = Array.from({ length: 6 }, (_, index) => `9900000080${index + 1}`);
+  await bulk.getByLabel("Targets, one per line").fill(targets.join("\n"));
+  await bulk.getByRole("button", { name: "Run bulk lookup" }).click();
+  await secondStarted;
+  await expect(bulk.getByText(targets[0]!, { exact: true })).toBeVisible();
+  await expect(bulk.getByRole("button", { name: "Export" })).toBeVisible();
+
+  await page.evaluate(() => {
+    const accountId = localStorage.getItem("hyeboard.activeAccountId");
+    if (!accountId) throw new Error("Synthetic active account missing");
+    window.dispatchEvent(new CustomEvent("hyeboard:vnu-refresh-committed", { detail: { accountId } }));
+  });
+
+  const refreshedBulk = page.getByTestId("bulk-lookup");
+  await expect(page.getByLabel("Course code")).toHaveValue("");
+  await page.getByRole("button", { name: "Transcript", exact: true }).click();
+  await expect(page.getByTestId("cross-transcript").getByLabel("Target internal student ID")).toHaveValue("");
+  await expect(page.getByTestId("cross-transcript").getByText("Synthetic Target", { exact: true })).toHaveCount(0);
+  await expect(refreshedBulk.getByLabel("Targets, one per line")).toHaveValue("");
+  await expect(refreshedBulk.getByRole("button", { name: "Export" })).toHaveCount(0);
+  await expect(refreshedBulk.locator("#bulk-lookup-progress-label")).toHaveCount(0);
+  await expect(refreshedBulk.getByText(targets[0]!, { exact: true })).toHaveCount(0);
+
+  releaseSecond();
+  await secondHandled;
+  expect(bulkRequests).toBe(2);
+  await expect(refreshedBulk.getByLabel("Targets, one per line")).toHaveValue("");
+  await expect(refreshedBulk.getByRole("button", { name: "Export" })).toHaveCount(0);
+  await expect(refreshedBulk.getByText(targets[0]!, { exact: true })).toHaveCount(0);
+});
+
+for (const lifecycle of ["session refresh", "account switch", "unmount"] as const) test(`${lifecycle} aborts pending own and cross lookups without stale render @task14`, async ({ page }) => {
+  let markOwnStarted!: () => void;
+  let markCrossStarted!: () => void;
+  let releaseOwn!: () => void;
+  let releaseCross!: () => void;
+  const ownStarted = new Promise<void>((resolve) => { markOwnStarted = resolve; });
+  const crossStarted = new Promise<void>((resolve) => { markCrossStarted = resolve; });
+  const ownGate = new Promise<void>((resolve) => { releaseOwn = resolve; });
+  const crossGate = new Promise<void>((resolve) => { releaseCross = resolve; });
+  await page.addInitScript(() => {
+    const abortedPaths: string[] = [];
+    Object.defineProperty(window, "__task14AbortedPaths", { value: abortedPaths, configurable: true });
+    const originalFetch = window.fetch.bind(window);
+    Object.defineProperty(window, "fetch", { configurable: true, value: (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href).pathname;
+      init?.signal?.addEventListener("abort", () => abortedPaths.push(path), { once: true });
+      return originalFetch(input, init);
+    } });
+  });
+  await openMockedLookup(page);
+  await page.unroute("**/api/vnu/class-lookup/catalog**");
+  await page.unroute("**/api/vnu/cross-lookup/student-code**");
+  await page.route("**/api/vnu/class-lookup/catalog**", async (route) => {
+    markOwnStarted();
+    await ownGate;
+    try { await route.fulfill({ status: 200, contentType: "application/json", json: { data: { html: "<main>stale-own</main>" }, error: null } }); } catch { /* Cancelled request. */ }
+  });
+  await page.route("**/api/vnu/cross-lookup/student-code**", async (route) => {
+    markCrossStarted();
+    await crossGate;
+    try { await route.fulfill({ status: 200, contentType: "application/json", json: { data: { studentCode: "STALE-CODE" }, error: null } }); } catch { /* Cancelled request. */ }
+  });
+
+  await page.getByLabel("Term").click();
+  await page.getByRole("option").first().click();
+  const codeSection = page.getByTestId("cross-student-code");
+  await codeSection.getByLabel("Target internal student ID").fill(SYNTHETIC_TARGET_INTERNAL_ID);
+  await codeSection.getByRole("button", { name: "Look up" }).click();
+  await Promise.all([ownStarted, crossStarted]);
+
+  if (lifecycle === "session refresh") {
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("hyeboard:account-switched")));
+  } else if (lifecycle === "account switch") {
+    await page.evaluate(() => {
+      const accounts = JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as Array<Record<string, unknown>>;
+      const next = { id: "task14-next-account", universityId: "mock", token: "task14-next-token", studentCode: "88000000", addedAt: new Date().toISOString() };
+      localStorage.setItem("hyeboard.accounts", JSON.stringify([...accounts, next]));
+      localStorage.setItem("hyeboard.activeAccountId", next.id);
+      window.dispatchEvent(new CustomEvent("hyeboard:account-switched"));
+    });
+  } else {
+    await page.getByRole("link", { name: "Settings" }).click();
+  }
+
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __task14AbortedPaths: string[] }).__task14AbortedPaths)).toEqual(expect.arrayContaining([
+    "/api/vnu/class-lookup/catalog",
+    "/api/vnu/cross-lookup/student-code",
+  ]));
+  releaseOwn();
+  releaseCross();
+  await expect(page.getByText("STALE-CODE", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("stale-own", { exact: true })).toHaveCount(0);
 });
 
 test("bulk bounds rendered rows and pages through every result", async ({ page }) => {
@@ -625,7 +782,7 @@ test("lookup successful single results export both formats without refetch and c
   const forwardRow = page.getByTestId("lookup-results").locator(".list-row").filter({ hasText: "Synthetic Export Systems" });
   await expect(forwardRow).toBeVisible();
   const forwardDocument = await expectExportFormats(page, "class-forward", apiRequestCount, {
-    sourcePath: "/api/vnu/raw/exams",
+    sourcePath: "/api/vnu/class-lookup/catalog",
     assertCsv: expectClassCsvMatchesJson,
   });
   expect(forwardDocument).toMatchObject({
@@ -640,7 +797,7 @@ test("lookup successful single results export both formats without refetch and c
   await page.getByRole("option", { name: "Semester 2, 2025–2026 (supplementary)" }).click();
   await reverseSection.getByLabel("Internal class ID").fill(SYNTHETIC_CLASS_ID);
   const reverseDocument = await expectExportFormats(page, "class-reverse", apiRequestCount, {
-    sourcePath: "/api/vnu/raw/exams",
+    sourcePath: "/api/vnu/class-lookup/catalog",
     assertCsv: expectClassCsvMatchesJson,
   });
   expect(reverseDocument).toMatchObject({
@@ -758,7 +915,7 @@ test("VNU class lookup matches compact and spaced codes and exports preserved di
   expect(examRequests()).toBe(requestsAfterCompactSearch);
 
   const exported = await expectExportFormats(page, "class-forward", apiRequestCount, {
-    sourcePath: "/api/vnu/raw/exams",
+    sourcePath: "/api/vnu/class-lookup/catalog",
     assertCsv: expectClassCsvMatchesJson,
   });
   expect(exported).toMatchObject({

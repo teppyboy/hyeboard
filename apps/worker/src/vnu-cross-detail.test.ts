@@ -159,6 +159,12 @@ describe("readVnuCrossDetailBody", () => {
     }
   });
 
+  it("applies the supplied effective row ceiling", async () => {
+    const permit = (seed: string) => `${seed.repeat(32)}.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAA`;
+    await expect(readVnuCrossDetailBody(jsonRequest({ allowCrossLookup: true, permits: [permit("a"), permit("b")] }), "bulk", 1))
+      .rejects.toMatchObject({ code: "VNU_CROSS_DETAIL_BODY_INVALID", status: 400 });
+  });
+
   it("accepts a bounded bulk permit batch and rejects oversize batches", async () => {
     const permit = (seed: string) => `${seed.repeat(32)}.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAA`;
     const permits = ["a", "b", "c"].map(permit);

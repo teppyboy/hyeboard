@@ -7,7 +7,7 @@ describe("Playwright runtime config", () => {
       host: "127.0.0.1",
       vitePort: 5173,
       workerPort: 8787,
-      workers: 4,
+      workers: 1,
       baseUrl: "http://127.0.0.1:5173",
       proxyTarget: "http://127.0.0.1:8787",
     });
@@ -19,8 +19,8 @@ describe("Playwright runtime config", () => {
   });
 
   it.each([
-    [{ PW_WORKERS: "3" }, "PW_WORKERS must be between 4 and 6"],
-    [{ PW_WORKERS: "7" }, "PW_WORKERS must be between 4 and 6"],
+    [{ PW_WORKERS: "0" }, "PW_WORKERS must be between 1 and 6"],
+    [{ PW_WORKERS: "7" }, "PW_WORKERS must be between 1 and 6"],
     [{ PW_WORKERS: "4.5" }, "PW_WORKERS must be an integer"],
     [{ PW_VITE_PORT: "8787" }, "PW_VITE_PORT and PW_WORKER_PORT must differ"],
     [{ PW_VITE_PORT: "0" }, "PW_VITE_PORT must be between 1 and 65535"],

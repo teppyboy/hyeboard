@@ -1,5 +1,6 @@
 import { configureLogger, getLogger } from "@hyeboard/core";
-import { createApp, setAppCache, setCaptchaRelayCoordinator, setDistributedAutomationBackend, setRateLimitCoordinator, setRuntimeConfig, setSessionRevocationStore, setVnuImportSingleFlight, setVnuProbeBudgetCoordinator, setVnuRefreshControlCoordinator, type AppCache, type RuntimeConfig } from "./app";
+import { createApp, setAdminLoginRateLimit, setAppCache, setCaptchaRelayCoordinator, setDistributedAutomationBackend, setFeaturePolicyRuntime, setRateLimitCoordinator, setRuntimeConfig, setSessionRevocationStore, setVnuImportSingleFlight, setVnuProbeBudgetCoordinator, setVnuRefreshControlCoordinator, type AppCache, type RuntimeConfig } from "./app";
+import { FeaturePolicyRuntime, InProcessFeaturePolicyEvents, type FeaturePolicyEvents, type FeaturePolicyStore } from "./feature-policy-store";
 import { LocalCaptchaRelayCoordinator } from "./captcha-relay";
 import { registerStaticAssets } from "./serve-static";
 import { normalizeSelfHostedInteger } from "./vnu-runtime-config";
@@ -50,6 +51,17 @@ export function selfHostedRuntimeConfig(
     HYEB_POSTGRES_URL: environment.HYEB_POSTGRES_URL ?? fileConfig.HYEB_POSTGRES_URL,
     HYEB_REDIS_URL: environment.HYEB_REDIS_URL ?? fileConfig.HYEB_REDIS_URL,
     HYEB_SHUTDOWN_TIMEOUT_MS: environment.HYEB_SHUTDOWN_TIMEOUT_MS ?? fileConfig.HYEB_SHUTDOWN_TIMEOUT_MS,
+    HYEB_ADMIN_SESSION_SECRET: environment.HYEB_ADMIN_SESSION_SECRET,
+    HYEB_ADMIN_SESSION_TTL_SECONDS: environment.HYEB_ADMIN_SESSION_TTL_SECONDS ?? fileConfig.HYEB_ADMIN_SESSION_TTL_SECONDS,
+    HYEB_ADMIN_PASSWORD_HASH: environment.HYEB_ADMIN_PASSWORD_HASH,
+    HYEB_ADMIN_PUBLIC_ORIGIN: environment.HYEB_ADMIN_PUBLIC_ORIGIN ?? fileConfig.HYEB_ADMIN_PUBLIC_ORIGIN,
+    HYEB_ADMIN_DB_PATH: environment.HYEB_ADMIN_DB_PATH ?? fileConfig.HYEB_ADMIN_DB_PATH,
+    HYEB_ADMIN_GITHUB_CLIENT_ID: environment.HYEB_ADMIN_GITHUB_CLIENT_ID ?? fileConfig.HYEB_ADMIN_GITHUB_CLIENT_ID,
+    HYEB_ADMIN_GITHUB_CLIENT_SECRET: environment.HYEB_ADMIN_GITHUB_CLIENT_SECRET,
+    HYEB_ADMIN_GITHUB_IDS: environment.HYEB_ADMIN_GITHUB_IDS ?? fileConfig.HYEB_ADMIN_GITHUB_IDS,
+    HYEB_ADMIN_DISCORD_CLIENT_ID: environment.HYEB_ADMIN_DISCORD_CLIENT_ID ?? fileConfig.HYEB_ADMIN_DISCORD_CLIENT_ID,
+    HYEB_ADMIN_DISCORD_CLIENT_SECRET: environment.HYEB_ADMIN_DISCORD_CLIENT_SECRET,
+    HYEB_ADMIN_DISCORD_IDS: environment.HYEB_ADMIN_DISCORD_IDS ?? fileConfig.HYEB_ADMIN_DISCORD_IDS,
     AUTOMATION_JOB_STREAM: environment.AUTOMATION_JOB_STREAM ?? fileConfig.AUTOMATION_JOB_STREAM,
     AUTOMATION_EVENT_STREAM: environment.AUTOMATION_EVENT_STREAM ?? fileConfig.AUTOMATION_EVENT_STREAM,
     AUTOMATION_CONTROL_STREAM: environment.AUTOMATION_CONTROL_STREAM ?? fileConfig.AUTOMATION_CONTROL_STREAM,
@@ -118,6 +130,15 @@ export async function loadConfigFile(): Promise<RuntimeConfig> {
       if (typeof cfg.ha.session_epoch === "number") result.HYEB_HA_SESSION_EPOCH = String(cfg.ha.session_epoch);
       if (typeof cfg.ha.enforce_session_epoch === "boolean") result.HYEB_HA_ENFORCE_SESSION_EPOCH = String(cfg.ha.enforce_session_epoch);
     }
+    if (cfg.admin && typeof cfg.admin === "object" && !Array.isArray(cfg.admin)) {
+      if (typeof cfg.admin.session_ttl_seconds === "number") result.HYEB_ADMIN_SESSION_TTL_SECONDS = String(cfg.admin.session_ttl_seconds);
+      if (typeof cfg.admin.db_path === "string" && cfg.admin.db_path !== "") result.HYEB_ADMIN_DB_PATH = cfg.admin.db_path;
+      if (typeof cfg.admin.github_client_id === "string" && cfg.admin.github_client_id !== "") result.HYEB_ADMIN_GITHUB_CLIENT_ID = cfg.admin.github_client_id;
+      if (typeof cfg.admin.github_ids === "string" && cfg.admin.github_ids !== "") result.HYEB_ADMIN_GITHUB_IDS = cfg.admin.github_ids;
+      if (typeof cfg.admin.discord_client_id === "string" && cfg.admin.discord_client_id !== "") result.HYEB_ADMIN_DISCORD_CLIENT_ID = cfg.admin.discord_client_id;
+      if (typeof cfg.admin.discord_ids === "string" && cfg.admin.discord_ids !== "") result.HYEB_ADMIN_DISCORD_IDS = cfg.admin.discord_ids;
+      if (typeof cfg.admin.public_origin === "string" && cfg.admin.public_origin !== "") result.HYEB_ADMIN_PUBLIC_ORIGIN = cfg.admin.public_origin;
+    }
     if (typeof cfg.log_level === "string") result.HYEB_LOG_LEVEL = cfg.log_level;
     if (typeof cfg.host === "string") result.HOST = cfg.host;
     if (typeof cfg.port === "number") result.PORT = String(cfg.port);
@@ -176,6 +197,7 @@ export async function start(): Promise<unknown> {
       const { fileURLToPath } = await import("node:url");
       const envPath = fileURLToPath(new URL("../.env", import.meta.url));
       try {
+        // SAFETY: Node 20.6+ exposes loadEnvFile; the catch below handles older runtimes.
         (process as unknown as { loadEnvFile: (path?: string) => void }).loadEnvFile(envPath);
       } catch {
         // .env not present -- fine, real env vars are expected instead.
@@ -228,16 +250,21 @@ export async function start(): Promise<unknown> {
     setVnuImportSingleFlight(undefined);
     setSessionRevocationStore(undefined);
     setVnuRefreshControlCoordinator(undefined);
+    setFeaturePolicyRuntime(undefined);
+    setAdminLoginRateLimit(undefined);
 
     const dependencyNames = [
-      "postgres", "postgresMigrations", "sessionRevocation", "vnuRefreshCoordinator",
-      "redis", "cache", "captchaRelayCoordinator", "probeBudgetCoordinator",
+      "postgres", "postgresMigrations", "sessionRevocation", "vnuRefreshCoordinator", "policyStore",
+      "redis", "cache", "captchaRelayCoordinator", "probeBudgetCoordinator", "policyEvents",
     ];
     const dependencies = haConfig.mode === "distributed"
       ? Object.fromEntries(dependencyNames.map((name) => [name, "unavailable" as const]))
       : undefined;
     let postgresPool: { close(): Promise<void> } | undefined;
     let closeRedisResources: (() => Promise<void>) | undefined;
+    let featurePolicyStore: FeaturePolicyStore | undefined;
+    let featurePolicyEvents: FeaturePolicyEvents | undefined;
+    let featurePolicyRuntime: FeaturePolicyRuntime | undefined;
     let stopServer: (() => Promise<void>) | undefined;
     const shutdownTimeout = Number(config.HYEB_SHUTDOWN_TIMEOUT_MS);
     const lifecycle = createHaLifecycle({
@@ -246,18 +273,38 @@ export async function start(): Promise<unknown> {
       shutdownTimeoutMs: Number.isFinite(shutdownTimeout) && shutdownTimeout >= 0 ? shutdownTimeout : undefined,
       onDrain: async () => { await stopServer?.(); },
       onStop: async () => {
+        const policyCleanup = featurePolicyRuntime
+          ? featurePolicyRuntime.close()
+          : Promise.all([featurePolicyStore?.close?.(), featurePolicyEvents?.close?.()]).then(() => undefined);
+        const [policy] = await Promise.allSettled([policyCleanup]);
         const [browser, redis, postgres] = await Promise.allSettled([
           import("@hyeboard/university-adapters").then(({ closeCachedBrowserSessions }) => closeCachedBrowserSessions()),
           closeRedisResources?.(),
           postgresPool?.close(),
         ]);
+        if (policy.status === "rejected") getLogger().warn({ dependency: "featurePolicy" }, "feature policy cleanup failed during shutdown");
         if (browser.status === "rejected") getLogger().warn({ dependency: "browser" }, "browser cleanup failed during shutdown");
         if (redis.status === "rejected") getLogger().warn({ dependency: "redis" }, "Redis cleanup failed during shutdown");
         if (postgres.status === "rejected") getLogger().warn({ dependency: "postgres" }, "PostgreSQL cleanup failed during shutdown");
       },
     });
 
-    if (haConfig.mode === "distributed") {
+    const installFeaturePolicyRuntime = () => {
+      if (featurePolicyRuntime || !featurePolicyStore || !featurePolicyEvents) return;
+      featurePolicyRuntime = new FeaturePolicyRuntime(featurePolicyStore, featurePolicyEvents);
+      setFeaturePolicyRuntime(featurePolicyRuntime);
+    };
+
+    if (haConfig.mode === "memory") {
+      const sqlite = await import("./node/sqlite/feature-policy-store");
+      const { dirname, join } = await import("node:path");
+      const { mkdir } = await import("node:fs/promises");
+      const databasePath = config.HYEB_ADMIN_DB_PATH ?? join(process.cwd(), "data", "admin.sqlite");
+      await mkdir(dirname(databasePath), { recursive: true });
+      featurePolicyStore = await sqlite.openSqliteFeaturePolicyStore(databasePath);
+      featurePolicyEvents = new InProcessFeaturePolicyEvents();
+      installFeaturePolicyRuntime();
+    } else if (haConfig.mode === "distributed") {
       const postgresUrl = config.HYEB_POSTGRES_URL ?? config.DATABASE_URL;
       const redisUrl = config.HYEB_REDIS_URL ?? config.REDIS_URL;
 
@@ -269,10 +316,12 @@ export async function start(): Promise<unknown> {
           await postgres.runPostgresMigrations(pool);
           setSessionRevocationStore(new postgres.PostgresSessionRevocationStore(pool, config.HYEB_SESSION_SECRET ?? ""));
           setVnuRefreshControlCoordinator(new postgres.PostgresVnuRefreshControlCoordinator(pool));
-          lifecycle.setDependencyStatuses({ postgres: "ready", postgresMigrations: "ready", sessionRevocation: "ready", vnuRefreshCoordinator: "ready" });
+          featurePolicyStore = new postgres.PostgresFeaturePolicyStore(pool);
+          installFeaturePolicyRuntime();
+          lifecycle.setDependencyStatuses({ postgres: "ready", postgresMigrations: "ready", sessionRevocation: "ready", vnuRefreshCoordinator: "ready", policyStore: "ready" });
         } catch (error) {
           getLogger().error({ dependency: "postgres", errorName: error instanceof Error ? error.name : typeof error }, "PostgreSQL HA initialization failed");
-          lifecycle.setDependencyStatuses({ postgres: "unavailable", postgresMigrations: "unavailable", sessionRevocation: "unavailable", vnuRefreshCoordinator: "unavailable" });
+          lifecycle.setDependencyStatuses({ postgres: "unavailable", postgresMigrations: "unavailable", sessionRevocation: "unavailable", vnuRefreshCoordinator: "unavailable", policyStore: "unavailable" });
           await postgresPool?.close().catch(() => undefined);
           postgresPool = undefined;
         }
@@ -284,43 +333,53 @@ export async function start(): Promise<unknown> {
           const clients = redis.createRedisClients({ url: redisUrl });
           await redis.connectRedis(clients);
           closeRedisResources = () => redis.closeRedis(clients);
+          // SAFETY: node-redis implements the narrower command interfaces used by these coordinators.
           const client = clients.client as unknown as RedisCommandClient;
+          const redisFeaturePolicyEvents = new redis.RedisFeaturePolicyEvents(clients.client, clients.subscriber);
+          await redisFeaturePolicyEvents.start();
+          featurePolicyEvents = redisFeaturePolicyEvents;
           setAppCache(redisAppCache(new redis.RedisJsonCache({ client })));
           setRateLimitCoordinator({
             consumeFixedWindow: (key, amount, windowMs, limit) => redis.consumeFixedWindow(client, key, amount, windowMs, limit),
           });
-          setVnuImportSingleFlight(new redis.RedisSingleFlight({
-            client,
-            blocking: clients.blocking as unknown as RedisBlockingClient,
-          }));
-          setCaptchaRelayCoordinator(new redis.RedisCaptchaRelayCoordinator({ client, blocking: clients.blocking as unknown as RedisBlockingClient }));
+          // SAFETY: node-redis's blocking pool supplies the narrow blocking command surface.
+          const blocking = clients.blocking as unknown as RedisBlockingClient;
+          setVnuImportSingleFlight(new redis.RedisSingleFlight({ client, blocking }));
+          setCaptchaRelayCoordinator(new redis.RedisCaptchaRelayCoordinator({ client, blocking }));
           const probeCoordinator = new redis.RedisVnuProbeBudgetCoordinator({ client });
           setVnuProbeBudgetCoordinator(probeCoordinator);
           try {
             const automation = await import("./node/automation");
+            // SAFETY: node-redis implements the automation backend's narrow Redis command surface.
+            const automationClient = clients.client as unknown as AutomationRedisClient;
             const backend = automation.createDistributedAutomationBackend(
-              clients.client as unknown as AutomationRedisClient,
+              automationClient,
               config.HYEB_SESSION_SECRET ?? "",
               process.env,
             );
             setDistributedAutomationBackend(backend);
+            installFeaturePolicyRuntime();
             lifecycle.setDependencyStatuses({
               redis: "ready",
               cache: "ready",
               captchaRelayCoordinator: "ready",
               probeBudgetCoordinator: "ready",
+              policyEvents: "ready",
             });
           } catch (error) {
             setDistributedAutomationBackend(undefined);
             getLogger().error({ dependency: "automation", errorName: error instanceof Error ? error.name : typeof error }, "Distributed automation initialization failed");
-            lifecycle.setDependencyStatuses({ redis: "ready", cache: "ready", captchaRelayCoordinator: "ready", probeBudgetCoordinator: "ready" });
+            installFeaturePolicyRuntime();
+            lifecycle.setDependencyStatuses({ redis: "ready", cache: "ready", captchaRelayCoordinator: "ready", probeBudgetCoordinator: "ready", policyEvents: "ready" });
           }
         } catch (error) {
           setRateLimitCoordinator(undefined);
           setVnuImportSingleFlight(undefined);
           setDistributedAutomationBackend(undefined);
           getLogger().error({ dependency: "redis", errorName: error instanceof Error ? error.name : typeof error }, "Redis HA initialization failed");
-          lifecycle.setDependencyStatuses({ redis: "unavailable", cache: "unavailable", captchaRelayCoordinator: "unavailable", probeBudgetCoordinator: "unavailable" });
+          lifecycle.setDependencyStatuses({ redis: "unavailable", cache: "unavailable", captchaRelayCoordinator: "unavailable", probeBudgetCoordinator: "unavailable", policyEvents: "unavailable" });
+          await featurePolicyEvents?.close?.().catch(() => undefined);
+          featurePolicyEvents = undefined;
           await closeRedisResources?.().catch(() => undefined);
           closeRedisResources = undefined;
         }
@@ -335,7 +394,13 @@ export async function start(): Promise<unknown> {
     const adapter = isBun
       ? (await import("elysia/adapter/bun")).BunAdapter
       : (await import("@elysiajs/node")).node();
-    const app = createApp(adapter, { lifecycle });
+    let app: ReturnType<typeof createApp>;
+    app = createApp(adapter, {
+      lifecycle,
+      clientIp: isBun
+        ? (request) => app.server?.requestIP(request)?.address
+        : (request) => (request as Request & { runtime?: { node?: { req?: { socket?: { remoteAddress?: string } } } } }).runtime?.node?.req?.socket?.remoteAddress,
+    });
 
     const { fileURLToPath } = await import("node:url");
     const distDir = process.env.HYEB_STATIC_DIR ?? fileConfig.HYEB_STATIC_DIR ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
@@ -353,6 +418,7 @@ export async function start(): Promise<unknown> {
     // refresh can reuse it instead of a full re-login. Close all of them on
     // shutdown so a restart/redeploy doesn't leak orphaned Chrome processes.
     stopServer = async () => { await app.stop(); };
+    // SAFETY: self-hosted startup runs under Node or Bun, both exposing exit and signal handlers.
     const nodeProcess = process as unknown as { exit: (code: number) => void; on: (event: string, handler: () => void) => void };
     const shutdown = createGracefulShutdown({ lifecycle, exit: (code) => nodeProcess.exit(code) });
     nodeProcess.on("SIGINT", () => void shutdown());

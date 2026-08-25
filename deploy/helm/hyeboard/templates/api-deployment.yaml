@@ -1,3 +1,4 @@
+# {{ include "hyeboard.validateApiExtraEnv" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -70,6 +71,29 @@ spec:
                 secretKeyRef:
                   name: {{ include "hyeboard.secretName" . }}
                   key: {{ .Values.secrets.keys.sessionSecret }}
+            - name: HYEB_ADMIN_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.adminSessionSecret }}
+            - name: HYEB_ADMIN_PASSWORD_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.adminPasswordHash }}
+                  optional: true
+            - name: HYEB_ADMIN_GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.adminGithubClientSecret }}
+                  optional: true
+            - name: HYEB_ADMIN_DISCORD_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hyeboard.secretName" . }}
+                  key: {{ .Values.secrets.keys.adminDiscordClientSecret }}
+                  optional: true
             - name: HYEB_POSTGRES_URL
               valueFrom:
                 secretKeyRef:

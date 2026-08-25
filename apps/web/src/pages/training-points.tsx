@@ -13,7 +13,7 @@ function TrainingPointRow({ item }: { item: TrainingPoint }) {
 export function TrainingPointsPage() {
   const state = useHyeboard();
   const { t } = useLocale();
-  const query = useFeatureQuery("training-points", () => api.trainingPoints(state.universityId));
+  const query = useFeatureQuery("training-points", () => api.trainingPoints(state.universityId), { capability: "trainingPoints" });
   return (
     <FeatureFrame title={t.trainingPoints.title} description={t.trainingPoints.description} query={query}>
       {(items) => items.length

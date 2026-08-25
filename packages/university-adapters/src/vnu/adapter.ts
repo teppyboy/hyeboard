@@ -52,11 +52,11 @@ function client(request: AdapterRequest): DaotaoClient {
 }
 
 async function loadGrades(request: AdapterRequest) {
-  return parseGradesHtml(await client(request).getGradesHtml());
+  return parseGradesHtml(await client(request).getGradesHtml(request.signal));
 }
 
 async function loadProgress(request: AdapterRequest) {
-  return parseStudyProgressHtml(await client(request).getStudyProgressHtml());
+  return parseStudyProgressHtml(await client(request).getStudyProgressHtml(request.signal));
 }
 
 export function createVnuAdapter(): UniversityAdapter {
@@ -92,30 +92,29 @@ export function createVnuAdapter(): UniversityAdapter {
       return { universityId: "vnu", studentCode: profile.studentCode, expiresAt, session };
     },
     async getStudentProfile(request) {
-      const profile = parseProfileHtml(await client(request).getProfileHtml());
+      const profile = parseProfileHtml(await client(request).getProfileHtml(request.signal));
       return mapProfile(profile, university.id);
     },
     async getTerms(request) {
       return mapTerms(await loadGrades(request));
     },
     async getDashboard(request) {
-      const [student, grades, progress, tuition] = await Promise.all([
-        this.getStudentProfile(request),
-        loadGrades(request),
-        loadProgress(request),
-        Promise.resolve(undefined),
+      const capabilities = request.capabilities ?? university.capabilities;
+      const [student, grades, progress] = await Promise.all([
+        capabilities.profile ? this.getStudentProfile(request) : Promise.resolve(undefined),
+        capabilities.terms || capabilities.grades ? loadGrades(request) : Promise.resolve(undefined),
+        capabilities.grades ? loadProgress(request) : Promise.resolve(undefined),
       ]);
-      const terms = mapTerms(grades);
+      const terms = grades ? mapTerms(grades) : [];
       return {
         student,
-        currentTerm: terms[0],
+        currentTerm: capabilities.terms ? terms[0] : undefined,
         todaySchedule: [],
         courses: [],
         assignments: [],
-        grades: grades.rows.map(mapGradeRow),
-        gpa: mapGpaSummary(grades, progress),
+        grades: capabilities.grades && grades ? grades.rows.map(mapGradeRow) : [],
+        gpa: capabilities.grades && grades && progress ? mapGpaSummary(grades, progress) : undefined,
         exams: [],
-        tuition,
         notifications: [],
       };
     },
@@ -144,18 +143,18 @@ export function createVnuAdapter(): UniversityAdapter {
     },
     async getExams(request) {
       const daotao = client(request);
-      const profile = parseProfileHtml(await daotao.getProfileHtml());
+      const profile = parseProfileHtml(await daotao.getProfileHtml(request.signal));
       if (!/^\d{1,11}$/.test(profile.internalStudentId ?? "") || !/^\d+$/.test(profile.internalUnivId ?? "")) {
         throw incompleteVnuProfile();
       }
-      const baseHtml = await daotao.getExamBaseHtml();
+      const baseHtml = await daotao.getExamBaseHtml(request.signal);
       const termOptions = parseExamTermOptions(baseHtml);
       const requestedTerm = request.termCode;
       const option = requestedTerm
         ? termOptions.find((o) => o.label.startsWith(`${requestedTerm}.`))
         : (termOptions.find((o) => o.selected) ?? termOptions[0]);
       if (!option) return [];
-      const html = await daotao.getExamsHtml({ selUniv: profile.internalUnivId!, selStd: profile.internalStudentId!, vTermID: option.value });
+      const html = await daotao.getExamsHtml({ selUniv: profile.internalUnivId!, selStd: profile.internalStudentId!, vTermID: option.value }, request.signal);
       return parseExamsHtml(html).map(mapExamRow);
     },
     async getAttendance() {
@@ -171,7 +170,7 @@ export function createVnuAdapter(): UniversityAdapter {
       return [];
     },
     async getDocuments(request) {
-      const html = await client(request).getSyllabusHtml();
+      const html = await client(request).getSyllabusHtml(request.signal);
       return parseSyllabusHtml(html).map(mapSyllabusRow);
     },
     async getTuition() {

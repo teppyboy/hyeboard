@@ -15,6 +15,141 @@ for (const viewport of REFERENCE_VIEWPORTS.slice(2)) {
   });
 }
 
+test("account switch clears the previous term before feature requests", async ({ page }) => {
+  await authenticateDemoPage(page);
+  const firstAccount = await page.evaluate(() => {
+    const accounts = JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as Array<{ id: string; token: string }>;
+    return accounts[0]!;
+  });
+  const imported = await page.request.post("/api/mock/auth/import-session", { data: { studentCode: "SECOND-MOCK" } });
+  const secondAuth = await imported.json() as { data: { token: string } };
+  const secondAccount = { id: crypto.randomUUID(), universityId: "mock", token: secondAuth.data.token, studentCode: "SECOND-MOCK", addedAt: new Date().toISOString() };
+  await page.evaluate((account) => {
+    const accounts = JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as unknown[];
+    localStorage.setItem("hyeboard.accounts", JSON.stringify([...accounts, account]));
+  }, secondAccount);
+
+  const dashboardTerms: Array<{ account: "first" | "second"; term: string | null }> = [];
+  const timetableTerms: Array<{ account: "first" | "second"; term: string | null }> = [];
+  const examTerms: Array<{ account: "first" | "second"; term: string | null }> = [];
+  const requestAccount = (authorization?: string) => authorization === `Bearer ${secondAccount.token}`
+    ? "second"
+    : authorization === `Bearer ${firstAccount.token}` ? "first" : undefined;
+  await page.route("**/api/mock/dashboard**", async (route) => {
+    const account = requestAccount(route.request().headers().authorization);
+    if (!account) return route.continue();
+    dashboardTerms.push({ account, term: new URL(route.request().url()).searchParams.get("termCode") });
+    if (account === "first") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json() as { data: { currentTerm?: { id: string; code: string; name: string } } };
+    await route.fulfill({ response, json: { ...payload, data: { ...payload.data, currentTerm: { id: "new-term", code: "NEW-TERM", name: "New account term" } } } });
+  });
+  await page.route("**/api/mock/timetable**", async (route) => {
+    const account = requestAccount(route.request().headers().authorization);
+    if (account) timetableTerms.push({ account, term: new URL(route.request().url()).searchParams.get("termCode") });
+    await route.continue();
+  });
+  await page.route("**/api/mock/exams**", async (route) => {
+    const account = requestAccount(route.request().headers().authorization);
+    if (account) examTerms.push({ account, term: new URL(route.request().url()).searchParams.get("termCode") });
+    await route.continue();
+  });
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Open account menu" })).toBeVisible();
+  await page.goto("/exams");
+  await page.getByRole("combobox", { name: "Term" }).click();
+  await page.getByRole("option", { name: "2024-2025 II" }).click();
+  await expect.poll(() => examTerms).toContainEqual({ account: "first", term: "20242" });
+
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByTestId("account-switch-item").filter({ hasText: "SECOND-MOCK" }).click();
+
+  await expect.poll(() => dashboardTerms).toContainEqual({ account: "second", term: null });
+  await expect.poll(() => examTerms).toContainEqual({ account: "second", term: "NEW-TERM" });
+  expect(dashboardTerms).not.toContainEqual({ account: "second", term: "20251" });
+  expect(examTerms).not.toContainEqual({ account: "second", term: "20242" });
+
+  await page.goto("/timetable");
+  await expect.poll(() => timetableTerms).toContainEqual({ account: "second", term: "NEW-TERM" });
+  expect(timetableTerms).not.toContainEqual({ account: "second", term: "20251" });
+  await page.goto("/exams");
+  await page.getByRole("combobox", { name: "Term" }).click();
+  await page.getByRole("option", { name: "2024-2025 II" }).click();
+  await expect.poll(() => examTerms).toContainEqual({ account: "second", term: "20242" });
+
+  const beforeRemoval = examTerms.length;
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("button", { name: "Remove SECOND-MOCK" }).click();
+  await expect.poll(() => dashboardTerms).toContainEqual({ account: "first", term: null });
+  await expect.poll(() => examTerms.slice(beforeRemoval)).toContainEqual({ account: "first", term: "20251" });
+  expect(examTerms.slice(beforeRemoval)).not.toContainEqual({ account: "first", term: "20242" });
+  expect(examTerms.slice(beforeRemoval)).not.toContainEqual({ account: "first", term: "NEW-TERM" });
+
+  await page.goto("/timetable");
+  await expect.poll(() => timetableTerms).toContainEqual({ account: "first", term: "20251" });
+  expect(timetableTerms).not.toContainEqual({ account: "first", term: "NEW-TERM" });
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("page-local document and grade controls reset across account switch and removal auto-switch", async ({ page }) => {
+  await authenticateDemoPage(page);
+  const firstAccount = await page.evaluate(() => {
+    const accounts = JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as Array<{ id: string; token: string }>;
+    return accounts[0]!;
+  });
+  const imported = await page.request.post("/api/mock/auth/import-session", { data: { studentCode: "SECOND-MOCK" } });
+  const secondAuth = await imported.json() as { data: { token: string } };
+  const secondAccount = { id: crypto.randomUUID(), universityId: "mock", token: secondAuth.data.token, studentCode: "SECOND-MOCK", addedAt: new Date().toISOString() };
+  await page.evaluate((account) => {
+    const accounts = JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as unknown[];
+    localStorage.setItem("hyeboard.accounts", JSON.stringify([...accounts, account]));
+  }, secondAccount);
+  await page.route("**/api/mock/documents", async (route) => {
+    const second = route.request().headers().authorization === `Bearer ${secondAccount.token}`;
+    await route.fulfill({ status: 200, contentType: "application/json", json: { data: [{ id: second ? "doc-b" : "doc-a", name: second ? "Account B handbook.pdf" : "Account A private outline.pdf" }], error: null } });
+  });
+  await page.route("**/api/mock/grades", async (route) => {
+    const second = route.request().headers().authorization === `Bearer ${secondAccount.token}`;
+    await route.fulfill({ status: 200, contentType: "application/json", json: { data: second ? [
+      { id: "b-old", courseCode: "B101", courseName: "Account B older grade", termCode: "20242", credits: 3, point10: 8, point4: 3.5 },
+      { id: "b-new", courseCode: "B102", courseName: "Account B newest grade", termCode: "20251", credits: 3, point10: 9, point4: 4 },
+    ] : [
+      { id: "a-old", courseCode: "A101", courseName: "Account A older grade", termCode: "20242", credits: 3, point10: 8, point4: 3.5 },
+      { id: "a-new", courseCode: "A102", courseName: "Account A newest grade", termCode: "20251", credits: 3, point10: 9, point4: 4 },
+    ], error: null } });
+  });
+
+  await page.goto("/grades");
+  await expect(page.getByText("Account A newest grade")).toBeVisible();
+  await page.getByRole("combobox", { name: "Term" }).click();
+  await page.getByRole("option", { name: "Semester 2, 2024–2025" }).click();
+  await expect(page.getByText("Account A older grade")).toBeVisible();
+
+  await page.goto("/documents");
+  const search = page.getByLabel("Search documents");
+  await expect(page.getByText("Account A private outline.pdf")).toBeVisible();
+  await search.fill("private");
+
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByTestId("account-switch-item").filter({ hasText: "SECOND-MOCK" }).click();
+  await expect(search).toHaveValue("");
+  await expect(page.getByText("Account B handbook.pdf")).toBeVisible();
+  await expect(page.getByText("Account A private outline.pdf")).toHaveCount(0);
+  await page.goto("/grades");
+  await expect(page.getByText("Account B newest grade")).toBeVisible();
+  await expect(page.getByText("Account B older grade")).toHaveCount(0);
+  await page.goto("/documents");
+
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("button", { name: "Remove SECOND-MOCK" }).click();
+  await expect(search).toHaveValue("");
+  await expect(page.getByText("Account A private outline.pdf")).toBeVisible();
+  await expect(page.getByText("Account B handbook.pdf")).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem("hyeboard.activeAccountId"))).toBe(firstAccount.id);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
 test("account menu opens and signs out", async ({ authenticatedPage: page }) => {
   const accountButton = page.getByRole("button", { name: "Open account menu" });
   await accountButton.click();
@@ -40,6 +175,200 @@ test("friendly demo login opens dashboard", async ({ page }) => {
   await expect(page.getByTestId("dashboard-courses")).toBeVisible();
   await expect(page.getByTestId("dashboard-notifications")).toBeVisible();
   await expect(page.locator(".stat-card")).toHaveCount(0);
+});
+
+test("missing effective metadata hides capability navigation and search but keeps Settings", async ({ page }) => {
+  await page.route("**/api/universities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [], error: null }) }));
+  await authenticateDemoPage(page);
+
+  await expect(page.getByRole("link", { name: "Dashboard" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Grades" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Documents & Services" })).toHaveCount(0);
+
+  const search = page.getByRole("textbox", { name: "Search pages" });
+  await search.fill("Grades");
+  await expect(page.getByRole("button", { name: "Grades" })).toHaveCount(0);
+  await search.fill("Settings");
+  await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();
+});
+
+test("policy metadata refetch hides capability UI while pending", async ({ page }) => {
+  let universityReads = 0;
+  let releaseRevision!: () => void;
+  let releaseRefetch!: () => void;
+  let markRefetchStarted!: () => void;
+  const revisionReleased = new Promise<void>((resolve) => { releaseRevision = resolve; });
+  const refetchReleased = new Promise<void>((resolve) => { releaseRefetch = resolve; });
+  const refetchStarted = new Promise<void>((resolve) => { markRefetchStarted = resolve; });
+  await page.route("**/api/universities", async (route) => {
+    universityReads += 1;
+    if (universityReads > 1) {
+      markRefetchStarted();
+      await refetchReleased;
+    }
+    await route.continue();
+  });
+  await page.route("**/api/policy/events", async (route) => {
+    await revisionReleased;
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: revision\ndata: 1\n\n" });
+  });
+  await authenticateDemoPage(page);
+  await expect(page.getByRole("link", { name: "Grades" })).toBeVisible();
+
+  releaseRevision();
+  await refetchStarted;
+  await expect(page.getByRole("link", { name: "Grades" })).toHaveCount(0);
+  await expect(page.getByTestId("dashboard-summary")).toHaveCount(0);
+  await expect(page.getByTestId("dashboard-schedule")).toHaveCount(0);
+  releaseRefetch();
+});
+
+test("failed policy metadata refetch keeps capability UI and feature data unavailable", async ({ page }) => {
+  let universityReads = 0;
+  let releaseRevision!: () => void;
+  const revisionReleased = new Promise<void>((resolve) => { releaseRevision = resolve; });
+  await page.route("**/api/universities", async (route) => {
+    universityReads += 1;
+    if (universityReads === 1) return route.continue();
+    return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ data: null, error: { code: "INTERNAL_ERROR", message: "Synthetic metadata failure" } }) });
+  });
+  await page.route("**/api/policy/events", async (route) => {
+    await revisionReleased;
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: revision\ndata: 1\n\n" });
+  });
+  await authenticateDemoPage(page, "/courses");
+  await expect(page.getByRole("link", { name: "Grades" })).toBeVisible();
+  await expect(page.getByText("Data Structures and Algorithms")).toBeVisible();
+
+  releaseRevision();
+  await expect.poll(() => universityReads).toBe(3);
+  await expect(page.getByRole("link", { name: "Grades" })).toHaveCount(0);
+  await expect(page.getByText("Data Structures and Algorithms")).toHaveCount(0);
+  await expect(page.getByText("Feature availability is unavailable. Try again shortly.")).toBeVisible();
+});
+
+test("direct feature routes hide cached collections across account switches and metadata gaps while requests continue", async ({ page }) => {
+  let universityReads = 0;
+  let courseReads = 0;
+  let releaseRevision!: () => void;
+  let releaseRefetch!: () => void;
+  let markRefetchStarted!: () => void;
+  const revisionReleased = new Promise<void>((resolve) => { releaseRevision = resolve; });
+  const refetchReleased = new Promise<void>((resolve) => { releaseRefetch = resolve; });
+  const refetchStarted = new Promise<void>((resolve) => { markRefetchStarted = resolve; });
+  await page.route("**/api/universities", async (route) => {
+    universityReads += 1;
+    if (universityReads > 1) {
+      markRefetchStarted();
+      await refetchReleased;
+    }
+    await route.continue();
+  });
+  await page.route("**/api/mock/courses", async (route) => {
+    courseReads += 1;
+    await route.continue();
+  });
+  await page.route("**/api/policy/events", async (route) => {
+    await revisionReleased;
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: revision\ndata: 1\n\n" });
+  });
+  await authenticateDemoPage(page, "/courses");
+  await expect(page.getByText("Data Structures and Algorithms")).toBeVisible();
+
+  releaseRevision();
+  await refetchStarted;
+  await page.evaluate(() => {
+    const accounts = JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as Array<Record<string, unknown>>;
+    const switched = accounts.map((account) => ({ ...account, id: crypto.randomUUID() }));
+    localStorage.setItem("hyeboard.accounts", JSON.stringify(switched));
+    localStorage.setItem("hyeboard.activeAccountId", String(switched[0]?.id));
+    window.dispatchEvent(new CustomEvent("hyeboard:account-switched"));
+  });
+  await expect.poll(() => courseReads).toBeGreaterThan(1);
+  await expect(page.getByText("Data Structures and Algorithms")).toHaveCount(0);
+  await expect(page.locator(".animate-pulse").first()).toBeVisible();
+  releaseRefetch();
+  await expect(page.getByText("Data Structures and Algorithms")).toBeVisible();
+});
+
+test("effective dashboard capabilities remove disabled stats and panels", async ({ page }) => {
+  await page.route("**/api/universities", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json() as { data: Array<{ id: string; capabilities: Record<string, boolean> }>; error: null };
+    const data = payload.data.map((university) => university.id === "mock" ? {
+      ...university,
+      capabilities: { ...university.capabilities, assignments: false, grades: false },
+    } : university);
+    await route.fulfill({ response, json: { ...payload, data } });
+  });
+  await authenticateDemoPage(page);
+
+  const summary = page.getByTestId("dashboard-summary");
+  await expect(summary.getByText("GPA", { exact: true })).toHaveCount(0);
+  await expect(summary.getByText("Assignments", { exact: true })).toHaveCount(0);
+  await expect(summary.getByText("Credits", { exact: true })).toBeVisible();
+  await expect(summary.getByText("Tuition", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("dashboard-assignments")).toHaveCount(0);
+  await expect(page.getByTestId("dashboard-schedule")).toBeVisible();
+  await expect(page.getByTestId("dashboard-courses")).toBeVisible();
+  await expect(page.getByTestId("dashboard-notifications")).toBeVisible();
+});
+
+test("document subfeatures honor effective flags and skip disabled requests", async ({ page }) => {
+  let newsRequests = 0;
+  let serviceRequests = 0;
+  await page.route("**/api/universities", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json() as { data: Array<{ id: string; capabilities: Record<string, boolean> }>; error: null };
+    const data = payload.data.map((university) => university.id === "mock" ? {
+      ...university,
+      capabilities: { ...university.capabilities, news: false, requests: false },
+    } : university);
+    await route.fulfill({ response, json: { ...payload, data } });
+  });
+  await page.route("**/api/mock/news", (route) => { newsRequests += 1; return route.continue(); });
+  await page.route("**/api/mock/requests", (route) => { serviceRequests += 1; return route.continue(); });
+  await authenticateDemoPage(page, "/documents");
+
+  await expect(page.getByRole("heading", { name: "Documents", exact: true })).toBeVisible();
+  await expect(page.getByText("Course outline.pdf")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "News", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Requests", exact: true })).toBeVisible();
+  await expect(page.getByText("This section is not supported for the selected university.")).toHaveCount(2);
+  expect(newsRequests).toBe(0);
+  expect(serviceRequests).toBe(0);
+});
+
+test("lookup requires effective flags and resolved limits", async ({ page }) => {
+  await page.route("**/api/universities", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ data: [{
+      id: "vnu",
+      name: "Synthetic VNU",
+      shortName: "VNU",
+      capabilities: {
+        profile: true, terms: true, timetable: false, courses: false, assignments: false,
+        grades: true, exams: true, attendance: false, notifications: false, documents: false,
+        tuition: false, news: false, trainingPoints: false, requests: false, classLookup: false,
+        crossLookup: true,
+      },
+    }], error: null }),
+  }));
+  await authenticateDemoPage(page);
+  await page.evaluate(() => {
+    const accounts = JSON.parse(localStorage.getItem("hyeboard.accounts") ?? "[]") as Array<Record<string, unknown>>;
+    localStorage.setItem("hyeboard.accounts", JSON.stringify(accounts.map((account) => ({ ...account, universityId: "vnu" }))));
+    localStorage.setItem("hyeboard.universityId", "vnu");
+    window.dispatchEvent(new CustomEvent("hyeboard:account-switched"));
+  });
+  await page.goto("/lookup");
+
+  await expect(page.getByRole("heading", { name: "Lookup", exact: true })).toBeVisible();
+  await expect(page.getByTestId("class-identifier-tools")).toHaveCount(0);
+  await expect(page.getByTestId("student-record-tools")).toHaveCount(0);
+  await expect(page.getByTestId("bulk-lookup")).toHaveCount(0);
 });
 
 test("dashboard summary strip stays contained on mobile @webkit", async ({ authenticatedPage: page }) => {

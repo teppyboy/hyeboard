@@ -80,3 +80,104 @@ jobs:
           pnpm --filter @hyeboard/web exec playwright install
           --with-deps chromium webkit
       - run: pnpm --filter @hyeboard/web exec playwright test --retries=1
+
+  kubernetes-ha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+      - uses: helm/kind-action@v1.12.0
+        with:
+          config: .github/kind-ha-config.yaml
+          cluster_name: hyeboard-ha
+      - run: |
+          docker build --tag hyeboard-api:ci .
+          docker build --tag hyeboard-automation-worker:ci \
+            --file apps/automation-worker/Dockerfile .
+      - run: |
+          docker pull postgres:16-alpine
+          docker pull redis:7-alpine
+          docker pull ghcr.io/browserless/chromium:v2.55.4
+          docker pull node:22-alpine
+          kind load docker-image \
+            hyeboard-api:ci \
+            hyeboard-automation-worker:ci \
+            postgres:16-alpine \
+            redis:7-alpine \
+            ghcr.io/browserless/chromium:v2.55.4 \
+            node:22-alpine \
+            --name hyeboard-ha
+      - run: |
+          metrics_base=https://github.com/kubernetes-sigs
+          metrics_manifest="$metrics_base/metrics-server/releases/download/v0.7.2/components.yaml"
+          kubectl apply -f "$metrics_manifest"
+          kubectl patch deployment metrics-server \
+            -n kube-system \
+            --type=json \
+            -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+          kubectl wait \
+            --for=condition=Available \
+            deployment/metrics-server \
+            -n kube-system \
+            --timeout=180s
+      - run: kubectl apply -f deploy/k8s/overlays/ci/namespace.yaml
+      - run: |
+          session_secret=ci-only-session-secret-012345678901234567890123456789
+          admin_session_secret=ci-only-admin-session-secret-01234567890123456789012345
+          postgres_url=postgresql://hyeboard:hyeboard@postgres:5432/hyeboard
+          key_b64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          kubectl -n hyeboard create secret generic hyeboard-runtime \
+            --from-literal=HYEB_SESSION_SECRET="$session_secret" \
+            --from-literal=HYEB_ADMIN_SESSION_SECRET="$admin_session_secret" \
+            --from-literal=HYEB_POSTGRES_URL="$postgres_url" \
+            --from-literal=HYEB_REDIS_URL=redis://redis:6379 \
+            --from-literal=AUTOMATION_KEY_CURRENT_ID=ci-current \
+            --from-literal=AUTOMATION_KEY_CURRENT_B64="$key_b64" \
+            --from-literal=BROWSERLESS_ENDPOINT=ws://browserless:3000/chromium \
+            --from-literal=BROWSERLESS_TOKEN=ci-browserless-token
+      - run: |
+          kubectl apply -n hyeboard \
+            -f deploy/k8s/overlays/ci/dependencies.yaml
+          kubectl rollout status deployment/postgres \
+            -n hyeboard --timeout=30s
+          kubectl rollout status deployment/redis \
+            -n hyeboard --timeout=30s
+          kubectl rollout status deployment/browserless \
+            -n hyeboard --timeout=30s
+      - run: kubectl apply -k deploy/k8s/overlays/ci
+      - run: |
+          kubectl rollout status deployment/hyeboard-api \
+            -n hyeboard --timeout=30s
+          kubectl rollout status deployment/hyeboard-automation-worker \
+            -n hyeboard --timeout=30s
+      - run: |
+          hpa_filter='[.items[].status.conditions[]? |
+            select(.type == "ScalingActive" and .status == "True")] |
+            length == 2'
+          for attempt in $(seq 1 60); do
+            if kubectl get --raw /apis/metrics.k8s.io/v1beta1 \
+              >/dev/null 2>&1 && \
+              kubectl get hpa -n hyeboard -o json | \
+              jq -e "$hpa_filter" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          kubectl get hpa -n hyeboard -o yaml
+          exit 1
+      - run: node scripts/validate-k8s-cluster.mjs --failover
+        env:
+          HYEB_K8S_NAMESPACE: hyeboard
+          HYEB_K8S_PROBE_IMAGE: node:22-alpine
+      - if: failure()
+        run: |
+          kubectl get pods -n hyeboard -o wide || true
+          kubectl get events -n hyeboard \
+            --sort-by=.lastTimestamp || true
+      - if: always()
+        run: >-
+          kubectl delete namespace hyeboard --ignore-not-found=true
+          --wait=true --timeout=180s

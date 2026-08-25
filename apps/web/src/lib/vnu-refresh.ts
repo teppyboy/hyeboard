@@ -12,6 +12,7 @@ const TERMINAL_REFRESH_CODES = new Set([
 ]);
 const SAFE_RAW_PATH = /^\/api\/vnu\/raw\/(profile|grades|progress|exam-base|exams|syllabus|point-detail)$/;
 const SAFE_FEATURE_PATH = /^\/api\/vnu\/(dashboard|terms|timetable|courses|assignments|grades|exams|documents|tuition|news|training-points|requests)$/;
+const SAFE_CLASS_LOOKUP_PATH = /^\/api\/vnu\/class-lookup\/(catalog|point-detail)$/;
 
 export function storeVnuRefreshGrant(accountId: string, grant: string): void {
   sessionStorage.setItem(`${REFRESH_GRANT_PREFIX}${accountId}`, grant);
@@ -46,7 +47,7 @@ export function requestPolicyFor(input: { method: string; pathname: string }): V
   if (method !== "GET") return "never";
   if (pathname.startsWith("/api/vnu/auth/")) return "never";
   if (pathname.startsWith("/api/vnu/cross-lookup/")) return "refresh-no-replay";
-  if (SAFE_RAW_PATH.test(pathname) || SAFE_FEATURE_PATH.test(pathname)) return "safe-replay";
+  if (SAFE_RAW_PATH.test(pathname) || SAFE_FEATURE_PATH.test(pathname) || SAFE_CLASS_LOOKUP_PATH.test(pathname)) return "safe-replay";
   return "never";
 }
 
@@ -131,8 +132,8 @@ function createFlight(account: StoredAccount, grant: string, deps: VnuRefreshDep
   return flight;
 }
 
-function abortReason(signal: AbortSignal | undefined): unknown {
-  return signal?.reason ?? new DOMException("VNU refresh cancelled", "AbortError");
+function abortReason(signal: AbortSignal | undefined): Error {
+  return signal?.reason instanceof Error ? signal.reason : new DOMException("VNU refresh cancelled", "AbortError");
 }
 
 export function runVnuRefresh(

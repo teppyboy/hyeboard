@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, cancelVnuRefreshForAccount, commitVnuRefresh, getActiveAccount, isSessionDeathCode, listAccounts, shouldInvalidateVnuRefreshQuery, shouldRetryQuery, switchAccount, VNU_REFRESH_COMMITTED_EVENT, VNU_REFRESH_STATUS_EVENT, type StoredAccount } from "./api";
+import { api, ApiError, cancelVnuRefreshForAccount, commitVnuRefresh, getActiveAccount, isSessionDeathCode, listAccounts, SESSION_TOKEN_ROTATED_EVENT, shouldInvalidateVnuRefreshQuery, shouldRetryQuery, switchAccount, VNU_REFRESH_COMMITTED_EVENT, VNU_REFRESH_STATUS_EVENT, type StoredAccount } from "./api";
 import { ApiError as SharedApiError, markVnuRefreshAttempted, wasVnuRefreshAttempted } from "./api-types";
 import { readVnuRefreshGrant, storeVnuRefreshGrant, VNU_REQUEST_NOT_REPLAYED } from "./vnu-refresh";
 
@@ -134,6 +134,38 @@ describe("UET raw client mapping", () => {
   });
 });
 
+describe("VNU dashboard API mapping", () => {
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", new MemoryStorage());
+    vi.stubGlobal("sessionStorage", new MemoryStorage());
+    vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+    vi.stubGlobal("CustomEvent", class { constructor(readonly type: string) {} });
+    seedAccount();
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("routes the VNU dashboard through the API endpoint without raw page requests", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonOk({
+      student: undefined,
+      currentTerm: undefined,
+      todaySchedule: [],
+      courses: [],
+      assignments: [],
+      grades: [],
+      exams: [],
+      notifications: [],
+    })));
+
+    await expect(api.dashboard("vnu", "251")).resolves.toMatchObject({ todaySchedule: [], grades: [] });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith("/api/vnu/dashboard?termCode=251", expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer stored-session-token" }),
+    }));
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/vnu/raw/"), expect.anything());
+  });
+});
+
 describe("frontend session-death policy", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", new MemoryStorage());
@@ -177,6 +209,14 @@ describe("frontend session-death policy", () => {
     await expect(requestCrossLookup()).rejects.toMatchObject({ code: undefined, status: 401 });
     expect(listAccounts()).toEqual([ACCOUNT]);
     expect(getActiveAccount()).toEqual(ACCOUNT);
+  });
+
+  it("keeps stored state for FEATURE_DISABLED", async () => {
+    rejectNextRequest("FEATURE_DISABLED", 503);
+
+    await expect(api.courses(ACCOUNT.universityId)).rejects.toMatchObject({ code: "FEATURE_DISABLED", status: 503 });
+    expect(listAccounts()).toContainEqual(expect.objectContaining({ id: ACCOUNT.id }));
+    expect(isSessionDeathCode("FEATURE_DISABLED")).toBe(false);
   });
 
   it.each(["MISSING_SESSION", "SESSION_EXPIRED", "INVALID_SESSION"])("clears stored state for genuine session-death code %s", async (code) => {
@@ -341,6 +381,10 @@ describe("frontend session-death policy", () => {
     await requestCrossLookup();
 
     expect(getActiveAccount()).toEqual({ ...ACCOUNT, token: "same-account-refreshed-token" });
+    expect(vi.mocked(window.dispatchEvent).mock.calls.map(([event]) => ({
+      type: event.type,
+      detail: (event as CustomEvent<unknown>).detail,
+    }))).toContainEqual({ type: SESSION_TOKEN_ROTATED_EVENT, detail: { accountId: ACCOUNT.id } });
   });
 
   it("re-exports one ApiError identity and keeps refresh marker private", () => {
@@ -442,7 +486,7 @@ describe("frontend session-death policy", () => {
     const committedEvents = vi.mocked(window.dispatchEvent).mock.calls
       .map(([event]) => event as unknown as { type: string; detail: unknown })
       .filter((event) => event.type === VNU_REFRESH_COMMITTED_EVENT);
-    expect(committedEvents).toEqual([{ type: VNU_REFRESH_COMMITTED_EVENT, detail: { accountId: ACCOUNT.id } }]);
+    expect(committedEvents).toEqual([{ type: VNU_REFRESH_COMMITTED_EVENT, detail: { accountId: ACCOUNT.id, preserveFeatureState: true } }]);
   });
 
   it.each([
@@ -512,6 +556,43 @@ describe("frontend session-death policy", () => {
     expect(fetchMock.mock.calls.filter(([url]) => !String(url).includes("/api/vnu/auth/refresh"))).toHaveLength(1);
   });
 
+  it("does not refresh or replay an aborted lookup", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = api.vnuCrossTranscript({ mode: "stdId", stdId: "1001" }, controller.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    controller.abort(new DOMException("lookup cancelled", "AbortError"));
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replay a safe lookup aborted after refresh succeeds", async () => {
+    storeVnuRefreshGrant(ACCOUNT.id, "opaque-grant-alpha");
+    const controller = new AbortController();
+    let releaseRefresh!: (response: Response) => void;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonError("VNU_SESSION_EXPIRED", 401))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { releaseRefresh = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = api.vnuClassCatalog({ vTermID: "1" }, controller.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    controller.abort(new DOMException("lookup cancelled", "AbortError"));
+    releaseRefresh(jsonOk({
+      token: "late-token",
+      refreshGrant: "late-grant",
+      session: { universityId: "vnu", studentCode: ACCOUNT.studentCode, expiresAt: "2036-01-01T08:00:00.000Z", authenticated: true },
+    }));
+
+    await expect(pending).rejects.toMatchObject({ code: "VNU_REFRESH_CANCELLED" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("joins two safe GET waiters to one held refresh and replays each exactly once", async () => {
     storeVnuRefreshGrant(ACCOUNT.id, "opaque-grant-alpha");
     const rotatedAuth = {
@@ -532,7 +613,7 @@ describe("frontend session-death policy", () => {
       if (path === "/api/vnu/auth/refresh") {
         return refreshResponse;
       }
-      if (path === "/api/vnu/raw/exams") {
+      if (path === "/api/vnu/class-lookup/catalog") {
         safeGets += 1;
         if (safeGets <= 2) return jsonError("VNU_SESSION_EXPIRED", 401);
         return jsonOk({ html: "<main></main>" });
@@ -558,11 +639,11 @@ describe("frontend session-death policy", () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([[], []]);
     expect(calls.filter((call) => call.path === "/api/vnu/auth/refresh")).toHaveLength(1);
-    expect(calls.filter((call) => call.path === "/api/vnu/raw/exams")).toEqual([
-      { path: "/api/vnu/raw/exams", method: "GET", token: `Bearer ${ACCOUNT.token}` },
-      { path: "/api/vnu/raw/exams", method: "GET", token: `Bearer ${ACCOUNT.token}` },
-      { path: "/api/vnu/raw/exams", method: "GET", token: `Bearer ${rotatedAuth.token}` },
-      { path: "/api/vnu/raw/exams", method: "GET", token: `Bearer ${rotatedAuth.token}` },
+    expect(calls.filter((call) => call.path === "/api/vnu/class-lookup/catalog")).toEqual([
+      { path: "/api/vnu/class-lookup/catalog", method: "GET", token: `Bearer ${ACCOUNT.token}` },
+      { path: "/api/vnu/class-lookup/catalog", method: "GET", token: `Bearer ${ACCOUNT.token}` },
+      { path: "/api/vnu/class-lookup/catalog", method: "GET", token: `Bearer ${rotatedAuth.token}` },
+      { path: "/api/vnu/class-lookup/catalog", method: "GET", token: `Bearer ${rotatedAuth.token}` },
     ]);
     expect(listAccounts()).toContainEqual(expect.objectContaining({ id: ACCOUNT.id, token: rotatedAuth.token }));
     expect(readVnuRefreshGrant(ACCOUNT.id)).toBe(rotatedAuth.refreshGrant);
@@ -590,7 +671,7 @@ describe("frontend session-death policy", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), "https://hyeboard.invalid").pathname;
       requestAuthorizations.push({ path, authorization: new Headers(init?.headers).get("Authorization") });
-      if (path === "/api/vnu/raw/exams") {
+      if (path === "/api/vnu/class-lookup/catalog") {
         safeGetCount += 1;
         if (safeGetCount <= 3) return jsonError("VNU_SESSION_EXPIRED", 401);
         return jsonOk({ html: "<main></main>" });
@@ -637,11 +718,11 @@ describe("frontend session-death policy", () => {
 
     expect(safeGetCount).toBe(4);
     expect(refreshCallCount).toBe(2);
-    expect(requestAuthorizations.filter(({ path }) => path === "/api/vnu/raw/exams")).toEqual([
-      { path: "/api/vnu/raw/exams", authorization: `Bearer ${ACCOUNT.token}` },
-      { path: "/api/vnu/raw/exams", authorization: `Bearer ${ACCOUNT.token}` },
-      { path: "/api/vnu/raw/exams", authorization: `Bearer ${ACCOUNT.token}` },
-      { path: "/api/vnu/raw/exams", authorization: "Bearer fresh-rotated-token" },
+    expect(requestAuthorizations.filter(({ path }) => path === "/api/vnu/class-lookup/catalog")).toEqual([
+      { path: "/api/vnu/class-lookup/catalog", authorization: `Bearer ${ACCOUNT.token}` },
+      { path: "/api/vnu/class-lookup/catalog", authorization: `Bearer ${ACCOUNT.token}` },
+      { path: "/api/vnu/class-lookup/catalog", authorization: `Bearer ${ACCOUNT.token}` },
+      { path: "/api/vnu/class-lookup/catalog", authorization: "Bearer fresh-rotated-token" },
     ]);
     expect(listAccounts()).toContainEqual(expect.objectContaining({ id: ACCOUNT.id, token: "fresh-rotated-token" }));
     expect(readVnuRefreshGrant(ACCOUNT.id)).toBe("fresh-rotated-grant");
@@ -650,7 +731,8 @@ describe("frontend session-death policy", () => {
       detail: (event as unknown as { detail: unknown }).detail,
     }))).toEqual([
       { type: VNU_REFRESH_STATUS_EVENT, detail: { accountId: ACCOUNT.id, state: "reconnecting" } },
-      { type: VNU_REFRESH_COMMITTED_EVENT, detail: { accountId: ACCOUNT.id } },
+      { type: SESSION_TOKEN_ROTATED_EVENT, detail: { accountId: ACCOUNT.id } },
+      { type: VNU_REFRESH_COMMITTED_EVENT, detail: { accountId: ACCOUNT.id, preserveFeatureState: true } },
       { type: VNU_REFRESH_STATUS_EVENT, detail: { accountId: ACCOUNT.id, state: "idle" } },
     ]);
   });

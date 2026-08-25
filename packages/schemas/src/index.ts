@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { capabilityKeys, capabilityKeySchema } from "./capabilities";
 
 export const universityThemeSchema = z.object({
   primary: z.string(),
@@ -6,32 +7,11 @@ export const universityThemeSchema = z.object({
   soft: z.string(),
 });
 
-export const universityCapabilitiesSchema = z.object({
-  profile: z.boolean(),
-  terms: z.boolean(),
-  timetable: z.boolean(),
-  courses: z.boolean(),
-  assignments: z.boolean(),
-  grades: z.boolean(),
-  exams: z.boolean(),
-  attendance: z.boolean(),
-  notifications: z.boolean(),
-  documents: z.boolean(),
-  tuition: z.boolean(),
-  news: z.boolean(),
-  trainingPoints: z.boolean(),
-  requests: z.boolean(),
-  // Class-code + class-number -> portal-internal class id resolver, plus the
-  // student's own internal id alongside their student code. Only verified
-  // against daotao.vnu.edu.vn's HTML shapes so far — must stay false for
-  // every other adapter until a real captured shape backs it too.
-  classLookup: z.boolean(),
-  // Lookup of ANOTHER student's data by internal id. Only honest where the
-  // upstream genuinely fails to session-bind the target id (live-verified
-  // IDOR on daotao.vnu.edu.vn's ListPoint/listpoint_Brc1.asp) AND the
-  // deployment is authorized to expose it — must stay false everywhere else.
-  crossLookup: z.boolean(),
-});
+export const universityCapabilitiesSchema = z.object(
+  Object.fromEntries(capabilityKeys.map((key) => [key, z.boolean()])) as {
+    [K in (typeof capabilityKeys)[number]]: z.ZodBoolean;
+  },
+);
 
 export const universityLimitsSchema = z.object({
   crossLookup: z.object({
@@ -258,6 +238,10 @@ export const apiErrorDetailsSchema = z.object({
   retryAfterSeconds: z.number().int().positive().optional(),
   limit: z.number().int().positive().optional(),
   windowSeconds: z.number().int().positive().optional(),
+  capability: capabilityKeySchema.optional(),
+  currentRevision: z.number().int().nonnegative().optional(),
+  targetRevision: z.number().int().positive().optional(),
+  path: z.string().max(256).optional(),
 }).strict();
 
 export const authResultSchema = z.object({
@@ -303,3 +287,6 @@ export type AuthResult = z.infer<typeof authResultSchema>;
 // the full value through apiErrorDetailsSchema before exposing it on the wire.
 export type ApiError = { code: string; message: string; details?: unknown };
 export type ApiResponse<T> = { data: T | null; error: ApiError | null; meta?: Record<string, unknown> };
+
+export * from "./capabilities";
+export * from "./feature-policy";

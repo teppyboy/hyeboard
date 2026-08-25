@@ -52,7 +52,9 @@ RUN apt-get update \
   && rm -rf /usr/local/lib/node_modules/npm \
   && rm -f /usr/local/bin/npm /usr/local/bin/npx \
   && groupadd --system --gid 10001 hyeboard \
-  && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent hyeboard
+  && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent hyeboard \
+  && mkdir -p /app/data \
+  && chown 10001:10001 /app/data
 USER 10001:10001
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

@@ -1,5 +1,4 @@
 import type { ExamSession } from "@hyeboard/schemas";
-import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +8,7 @@ import { DataTable, Empty, FeatureFrame } from "@/components/shared";
 import { api } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
 import { formatExamDetail } from "@/lib/presentation";
-import { useHyeboard } from "@/state";
+import { useFeatureQuery, useHyeboard } from "@/state";
 
 function examDateKey(exam: ExamSession) {
   return (exam.startTime ?? exam.examDate).slice(0, 10);
@@ -22,6 +21,17 @@ function examTime(exam: ExamSession) {
 function formatDateOnly(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+}
+
+type SelectedExamTerm = { accountId: string | null; sessionNonce: number; code: string };
+
+export function effectiveExamTerm(
+  selected: SelectedExamTerm | undefined,
+  accountId: string | null,
+  sessionNonce: number,
+  currentTerm: string | undefined,
+): string | undefined {
+  return selected?.accountId === accountId && selected.sessionNonce === sessionNonce ? selected.code : currentTerm;
 }
 
 function ExamList({ items }: { items: ExamSession[] }) {
@@ -64,15 +74,15 @@ export function ExamsPage() {
   const state = useHyeboard();
   const { t } = useLocale();
   const [view, setView] = useState<"list" | "calendar">("list");
-  const [selectedTerm, setSelectedTerm] = useState<string | undefined>(undefined);
-  const terms = useQuery({
+  const [selectedTerm, setSelectedTerm] = useState<SelectedExamTerm>();
+  const terms = useFeatureQuery("terms", () => api.terms(state.universityId), {
+    capability: "terms",
     queryKey: ["terms", state.universityId, state.sessionNonce],
-    queryFn: async () => { await state.ensureSession(); return api.terms(state.universityId); },
   });
-  const effectiveTerm = selectedTerm ?? state.termCode;
-  const query = useQuery({
+  const effectiveTerm = effectiveExamTerm(selectedTerm, state.activeAccountId, state.sessionNonce, state.termCode);
+  const query = useFeatureQuery("exams", () => api.exams(state.universityId, effectiveTerm), {
+    capability: "exams",
     queryKey: ["exams", state.universityId, effectiveTerm, state.sessionNonce],
-    queryFn: async () => { await state.ensureSession(); return api.exams(state.universityId, effectiveTerm); },
   });
   return (
     <FeatureFrame title={t.exams.title} description={t.exams.description} query={query}>
@@ -80,7 +90,7 @@ export function ExamsPage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             {terms.data?.length ? (
-              <Select value={effectiveTerm ?? ""} onValueChange={(value) => setSelectedTerm(value)}>
+              <Select value={effectiveTerm ?? ""} onValueChange={(code) => setSelectedTerm({ accountId: state.activeAccountId, sessionNonce: state.sessionNonce, code })}>
                 <SelectTrigger className="h-9 w-[220px]" aria-label={t.exams.term}><SelectValue placeholder={t.exams.term} /></SelectTrigger>
                 <SelectContent>
                   {terms.data.map((term) => <SelectItem key={term.code} value={term.code}>{term.name}</SelectItem>)}

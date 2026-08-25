@@ -7,7 +7,7 @@ test("VNU new tab without a grant expires to empty manual login", async ({ page,
   const expiryTab = await context.newPage();
   let refreshRequests = 0;
   await expiryTab.route("**/api/**", (route) => route.abort());
-  await expiryTab.route("**/api/universities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [], error: null }) }));
+  await expiryTab.route("**/api/universities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [{ id: "vnu", capabilities: { profile: true, terms: true, timetable: true } }], error: null }) }));
   await expiryTab.route("**/api/vnu/timetable**", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ data: null, error: { code: "VNU_SESSION_EXPIRED", message: "Synthetic new-tab expiry" } }) }));
   await expiryTab.route("**/api/vnu/auth/refresh", (route) => {
     refreshRequests += 1;
@@ -223,7 +223,7 @@ test("VNU active Settings logout uses its grant and one alert while 503 retains 
 
 test("VNU reconnect cancelled by failed revoke leaves one alert and no stale reconnecting status", async ({ page, isMobile }) => {
   await page.route("**/api/**", (route) => route.abort());
-  await page.route("**/api/universities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [], error: null }) }));
+  await page.route("**/api/universities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [{ id: "vnu", capabilities: { profile: true, terms: true, timetable: true } }], error: null }) }));
   await page.route("**/api/vnu/timetable**", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ data: null, error: { code: "VNU_SESSION_EXPIRED", message: "Synthetic expiry" } }) }));
   let markRefreshEntered!: () => void;
   const refreshEntered = new Promise<void>((resolve) => { markRefreshEntered = resolve; });
@@ -429,6 +429,14 @@ test("VNU remove older failure stays inert after a newer account action succeeds
 
 test("VNU remove pending failure stays inert after account switch", async ({ page }) => {
   await page.route("**/api/**", (route) => route.abort());
+  await page.route("**/api/universities", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ data: [
+      { id: "mock", capabilities: { profile: true } },
+      { id: "vnu", capabilities: { profile: true } },
+    ], error: null }),
+  }));
   let markLogoutEntered!: () => void;
   const logoutEntered = new Promise<void>((resolve) => { markLogoutEntered = resolve; });
   let releaseLogout!: () => void;
@@ -480,8 +488,8 @@ test("concurrent VNU expiry leaves a switched inactive origin inert", async ({ p
   await page.getByTestId("account-switch-item").filter({ hasText: "(MOCK)" }).click();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("hyeboard.activeAccountId"))).toBe(survivingAccount?.id);
 
-  const releasedRawPaths = ["/api/vnu/raw/profile", "/api/vnu/raw/grades", "/api/vnu/raw/progress", "/api/vnu/raw/syllabus"];
-  const rawRequestSettlements = releasedRawPaths.map((path) => Promise.race([
+  const releasedDashboardPaths = ["/api/vnu/dashboard"];
+  const dashboardRequestSettlements = releasedDashboardPaths.map((path) => Promise.race([
     page.waitForEvent("requestfinished", { predicate: (request) => new URL(request.url()).pathname === path }),
     page.waitForEvent("requestfailed", { predicate: (request) => new URL(request.url()).pathname === path }),
   ]));
@@ -489,7 +497,7 @@ test("concurrent VNU expiry leaves a switched inactive origin inert", async ({ p
   await Promise.all([
     mockedSession.allRawResponsesFulfilled,
     expect(harmlessExtraRawRequest).resolves.toBe(401),
-    ...rawRequestSettlements,
+    ...dashboardRequestSettlements,
   ]);
   await page.getByRole("button", { name: "Open account menu" }).click();
   const activeSurvivor = page.locator('[data-testid="account-switch-item"]:visible').filter({ hasText: survivingAccount?.studentCode });

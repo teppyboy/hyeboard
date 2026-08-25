@@ -16,13 +16,16 @@ import type {
   TrainingPoint,
   TuitionStatus,
   University,
+  UniversityCapabilities,
 } from "@hyeboard/schemas";
 import type { EncryptedSessionPayload, GoogleSessionCookie } from "@hyeboard/core";
 
 export type AdapterRequest = {
+  signal?: AbortSignal;
   session?: EncryptedSessionPayload;
   termCode?: string;
   limit?: number;
+  capabilities?: Partial<UniversityCapabilities>;
 };
 
 export type LoginImportInput = {

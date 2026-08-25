@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createRedisClient, type RedisBlockingClient, type RedisCommandClient, type RedisMultiLike } from "./client";
+import { describe, expect, it, vi } from "vitest";
+import { createRedisClient, createRedisClients, type RedisBlockingClient, type RedisCommandClient, type RedisMultiLike, type RedisPublishClient, type RedisSubscribeClient } from "./client";
 import { cacheKey, captchaRelayKey, captchaRelaySignalKey, crossDetailLeaseKey, crossDetailPermitKey, crossDetailWindowKey, refreshStateKey } from "./keys";
 import { RedisJsonCache } from "./cache";
 import { RedisCaptchaRelayCoordinator } from "./captcha-relay-coordinator";
@@ -7,6 +7,8 @@ import { RedisSingleFlight } from "./single-flight";
 import { RedisVnuProbeBudgetCoordinator } from "./vnu-probe-budget-coordinator";
 import { RedisVnuRefreshControlCoordinator } from "./vnu-refresh-coordinator";
 import type { LinkedPair } from "../../vnu-refresh-control";
+import { MAX_FEATURE_POLICY_SSE_SUBSCRIBERS } from "../../feature-policy-store";
+import { FEATURE_POLICY_REVISION_CHANNEL, RedisFeaturePolicyEvents } from "./feature-policy-events";
 
 class FakeRedis implements RedisBlockingClient {
   readonly values = new Map<string, string>();
@@ -61,12 +63,41 @@ class FakeRedis implements RedisBlockingClient {
   }
 }
 
+class FakeRedisPubSub implements RedisPublishClient, RedisSubscribeClient {
+  listener?: (message: string) => void;
+  subscribed?: string;
+  unsubscribed?: string;
+  publishFails = false;
+
+  async publish(channel: string, message: string): Promise<number> {
+    if (this.publishFails) throw new Error("Redis unavailable");
+    if (channel === this.subscribed) this.listener?.(message);
+    return this.listener === undefined ? 0 : 1;
+  }
+
+  async subscribe(channel: string, listener: (message: string) => void): Promise<void> {
+    this.subscribed = channel;
+    this.listener = listener;
+  }
+
+  async unsubscribe(channel: string): Promise<void> {
+    this.unsubscribed = channel;
+    this.listener = undefined;
+  }
+
+  receive(message: string): void {
+    this.listener?.(message);
+  }
+}
+
 const PAIR: LinkedPair = { accessTokenId: "A".repeat(22), accessExpiresAt: Date.now() + 600_000, grantId: "B".repeat(22), grantExpiresAt: Date.now() + 900_000 };
 
 describe("Redis HA primitives", () => {
   it("exposes node-redis clients through the narrow injectable interfaces", () => {
     const client: RedisCommandClient = createRedisClient();
+    const clients = createRedisClients();
     expect(client).toBeDefined();
+    expect(clients.subscriber).not.toBe(clients.client);
   });
 
   it("uses versioned opaque hash-tagged keys and rejects non-opaque identities", () => {
@@ -159,5 +190,91 @@ describe("Redis HA primitives", () => {
     await expect(singleFlight.run("student-import", async () => { calls += 1; return { imported: true }; })).resolves.toEqual({ imported: true });
     await expect(singleFlight.run("student-import", async () => { calls += 1; return { imported: false }; })).resolves.toEqual({ imported: true });
     expect(calls).toBe(1);
+  });
+});
+
+describe("RedisFeaturePolicyEvents", () => {
+  it("fans out only newer canonical nonnegative revisions once", async () => {
+    const redis = new FakeRedisPubSub();
+    const events = new RedisFeaturePolicyEvents(redis, redis);
+    const first: number[] = [];
+    const second: number[] = [];
+    events.subscribe((revision) => first.push(revision));
+    events.subscribe((revision) => second.push(revision));
+    await events.start();
+
+    expect(redis.subscribed).toBe(FEATURE_POLICY_REVISION_CHANNEL);
+    for (const message of ["0", "0", "-1", "2.0", "02", "wat", "9007199254740992", "1", "1", "0", "2"]) redis.receive(message);
+    expect(first).toEqual([0, 1, 2]);
+    expect(second).toEqual([0, 1, 2]);
+    await events.publish(3);
+    expect(first).toEqual([0, 1, 2, 3]);
+    redis.publishFails = true;
+    await expect(events.publish(4)).rejects.toThrow("Redis unavailable");
+    expect(first).toEqual([0, 1, 2, 3, 4]);
+    await events.close();
+    expect(redis.unsubscribed).toBe(FEATURE_POLICY_REVISION_CHANNEL);
+  });
+
+  it("caps streams and reuses a slot after cancellation", async () => {
+    const redis = new FakeRedisPubSub();
+    const events = new RedisFeaturePolicyEvents(redis, redis);
+    const streams = await Promise.all(Array.from(
+      { length: MAX_FEATURE_POLICY_SSE_SUBSCRIBERS },
+      () => events.stream(undefined, new AbortController().signal),
+    ));
+
+    await expect(events.stream(undefined, new AbortController().signal)).rejects.toMatchObject({
+      code: "FEATURE_POLICY_STREAM_LIMITED",
+      status: 503,
+    });
+    await streams[0]!.body!.cancel();
+    const reused = await events.stream(undefined, new AbortController().signal);
+    expect(reused.status).toBe(200);
+    await reused.body!.cancel();
+    await events.close();
+  });
+
+  it("reconciles the current revision on reconnect without duplicating an already-seen revision", async () => {
+    const redis = new FakeRedisPubSub();
+    const events = new RedisFeaturePolicyEvents(redis, redis);
+    await events.start();
+
+    const missed = await events.stream(1, new AbortController().signal, 2);
+    const missedReader = missed.body!.getReader();
+    expect(new TextDecoder().decode((await missedReader.read()).value)).toBe("event: revision\ndata: 2\n\n");
+    await missedReader.cancel();
+
+    const current = await events.stream(2, new AbortController().signal, 2);
+    const reader = current.body!.getReader();
+    const pending = reader.read();
+    redis.receive("2");
+    redis.receive("3");
+    expect(new TextDecoder().decode((await pending).value)).toBe("event: revision\ndata: 3\n\n");
+    await reader.cancel();
+    await events.close();
+  });
+
+  it("streams revisions with heartbeats and removes listeners on abort", async () => {
+    vi.useFakeTimers();
+    try {
+      const redis = new FakeRedisPubSub();
+      const events = new RedisFeaturePolicyEvents(redis, redis);
+      await events.start();
+      const controller = new AbortController();
+      const response = await events.stream(1, controller.signal);
+      const reader = response.body!.getReader();
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe(": heartbeat\n\n");
+      redis.receive("2");
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("event: revision\ndata: 2\n\n");
+      controller.abort();
+      await expect(reader.read()).resolves.toMatchObject({ done: true });
+      redis.receive("3");
+      await events.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

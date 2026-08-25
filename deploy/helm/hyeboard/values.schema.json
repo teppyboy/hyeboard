@@ -49,6 +49,10 @@
           "type": "object",
           "required": [
             "sessionSecret",
+            "adminSessionSecret",
+            "adminPasswordHash",
+            "adminGithubClientSecret",
+            "adminDiscordClientSecret",
             "postgresUrl",
             "redisUrl",
             "browserlessEndpoint",
@@ -61,6 +65,10 @@
           "additionalProperties": false,
           "properties": {
             "sessionSecret": { "$ref": "#/definitions/envKey" },
+            "adminSessionSecret": { "$ref": "#/definitions/envKey" },
+            "adminPasswordHash": { "$ref": "#/definitions/envKey" },
+            "adminGithubClientSecret": { "$ref": "#/definitions/envKey" },
+            "adminDiscordClientSecret": { "$ref": "#/definitions/envKey" },
             "postgresUrl": { "$ref": "#/definitions/envKey" },
             "redisUrl": { "$ref": "#/definitions/envKey" },
             "browserlessEndpoint": { "$ref": "#/definitions/envKey" },
@@ -99,11 +107,22 @@
       "properties": {
         "runtime": {
           "type": "object",
-          "additionalProperties": { "type": ["string", "number", "boolean"] }
+          "propertyNames": { "$ref": "#/definitions/nonSecretConfigMapKey" },
+          "properties": {
+            "HYEB_ADMIN_SESSION_TTL_SECONDS": { "$ref": "#/definitions/adminSessionTtl" },
+            "HYEB_ADMIN_PUBLIC_ORIGIN": { "$ref": "#/definitions/adminPublicOrigin" },
+            "HYEB_ADMIN_GITHUB_CLIENT_ID": { "$ref": "#/definitions/adminOAuthClientId" },
+            "HYEB_ADMIN_GITHUB_IDS": { "$ref": "#/definitions/adminOAuthIdAllowlist" },
+            "HYEB_ADMIN_DISCORD_CLIENT_ID": { "$ref": "#/definitions/adminOAuthClientId" },
+            "HYEB_ADMIN_DISCORD_IDS": { "$ref": "#/definitions/adminOAuthIdAllowlist" },
+            "HYEB_ADMIN_DB_PATH": false
+          },
+          "additionalProperties": { "$ref": "#/definitions/runtimePrimitive" }
         },
         "extraData": {
           "type": "object",
-          "additionalProperties": { "type": ["string", "number", "boolean"] }
+          "propertyNames": { "$ref": "#/definitions/nonSecretConfigMapKey" },
+          "additionalProperties": { "$ref": "#/definitions/runtimePrimitive" }
         }
       }
     },
@@ -161,6 +180,53 @@
     "ingress"
   ],
   "definitions": {
+    "runtimePrimitive": {
+      "type": ["string", "number", "boolean"]
+    },
+    "nonSecretConfigMapKey": {
+      "type": "string",
+      "not": {
+        "pattern": "^(?:HYEB_ADMIN_DB_PATH|HYEB_SESSION_SECRET|HYEB_ADMIN_SESSION_SECRET|HYEB_ADMIN_PASSWORD_HASH|HYEB_ADMIN_GITHUB_CLIENT_SECRET|HYEB_ADMIN_DISCORD_CLIENT_SECRET|DATABASE_URL|HYEB_POSTGRES_URL|REDIS_URL|HYEB_REDIS_URL|AUTOMATION_KEY_CURRENT_ID|AUTOMATION_KEY_CURRENT_B64|AUTOMATION_KEY_PREVIOUS_ID|AUTOMATION_KEY_PREVIOUS_B64|BROWSERLESS_ENDPOINT|BROWSERLESS_TOKEN)$"
+      }
+    },
+    "extraEnvName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "not": {
+        "pattern": "^(?:HYEB_ADMIN_DB_PATH|HYEB_SESSION_SECRET|HYEB_ADMIN_SESSION_SECRET|HYEB_ADMIN_PASSWORD_HASH|HYEB_ADMIN_GITHUB_CLIENT_SECRET|HYEB_ADMIN_DISCORD_CLIENT_SECRET|DATABASE_URL|HYEB_POSTGRES_URL|REDIS_URL|HYEB_REDIS_URL|AUTOMATION_KEY_CURRENT_ID|AUTOMATION_KEY_CURRENT_B64|AUTOMATION_KEY_PREVIOUS_ID|AUTOMATION_KEY_PREVIOUS_B64|BROWSERLESS_ENDPOINT|BROWSERLESS_TOKEN)$"
+      }
+    },
+    "envVar": {
+      "description": "Kubernetes EnvVar. Chart-managed and secret environment names are rejected; chart secrets must use secrets.existingSecret.",
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/definitions/extraEnvName" },
+        "value": { "type": "string" },
+        "valueFrom": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false,
+      "not": { "required": ["value", "valueFrom"] }
+    },
+    "adminSessionTtl": {
+      "type": "string",
+      "pattern": "^(?:[1-9]|[1-9][0-9]{1,3}|[1-7][0-9]{4}|8[0-5][0-9]{3}|86[0-3][0-9]{2}|86400)$"
+    },
+    "adminPublicOrigin": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^(?:https://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\\[[0-9A-Fa-f:.]+\\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?|http://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?)$"
+    },
+    "adminOAuthClientId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "adminOAuthIdAllowlist": {
+      "description": "Comma-separated canonical positive numeric IDs. Duplicate IDs are rejected by the runtime parser.",
+      "type": "string",
+      "pattern": "^\\s*[1-9][0-9]*\\s*(?:,\\s*[1-9][0-9]*\\s*)*$"
+    },
     "envKey": {
       "type": "string",
       "minLength": 1,
@@ -279,6 +345,7 @@
           "type": "object",
           "required": ["service", "lifecycle"],
           "properties": {
+            "extraEnv": { "type": "array", "items": { "$ref": "#/definitions/envVar" } },
             "service": {
               "type": "object",
               "required": ["type", "port", "targetPort", "annotations"],

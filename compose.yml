@@ -70,7 +70,21 @@ services:
       HYEB_HA_NODE_ID: ${HYEB_HA_NODE_ID:-compose-api}
       HYEB_ALLOWED_ORIGINS: ${HYEB_ALLOWED_ORIGINS:-http://localhost:8787}
       HYEB_SESSION_SECRET: ${HYEB_SESSION_SECRET:-}
-      HYEB_POSTGRES_URL: postgresql://hyeboard:${POSTGRES_PASSWORD:-}@postgres:5432/hyeboard
+      HYEB_ADMIN_SESSION_SECRET: ${HYEB_ADMIN_SESSION_SECRET:-}
+      HYEB_ADMIN_SESSION_TTL_SECONDS: ${HYEB_ADMIN_SESSION_TTL_SECONDS:-3600}
+      HYEB_ADMIN_PASSWORD_HASH: ${HYEB_ADMIN_PASSWORD_HASH:-}
+      HYEB_ADMIN_GITHUB_CLIENT_ID: ${HYEB_ADMIN_GITHUB_CLIENT_ID:-}
+      HYEB_ADMIN_GITHUB_CLIENT_SECRET: >-
+        ${HYEB_ADMIN_GITHUB_CLIENT_SECRET:-}
+      HYEB_ADMIN_GITHUB_IDS: ${HYEB_ADMIN_GITHUB_IDS:-}
+      HYEB_ADMIN_DISCORD_CLIENT_ID: ${HYEB_ADMIN_DISCORD_CLIENT_ID:-}
+      HYEB_ADMIN_DISCORD_CLIENT_SECRET: >-
+        ${HYEB_ADMIN_DISCORD_CLIENT_SECRET:-}
+      HYEB_ADMIN_DISCORD_IDS: ${HYEB_ADMIN_DISCORD_IDS:-}
+      HYEB_ADMIN_PUBLIC_ORIGIN: >-
+        ${HYEB_ADMIN_PUBLIC_ORIGIN:-http://localhost:8787}
+      HYEB_POSTGRES_URL: >-
+        postgresql://hyeboard:${POSTGRES_PASSWORD:-}@postgres:5432/hyeboard
       HYEB_REDIS_URL: redis://redis:6379/0
       AUTOMATION_KEY_CURRENT_ID: ${AUTOMATION_KEY_CURRENT_ID:-}
       AUTOMATION_KEY_CURRENT_B64: ${AUTOMATION_KEY_CURRENT_B64:-}
@@ -95,7 +109,23 @@ services:
       HYEB_HA_MODE: memory
       HYEB_ALLOWED_ORIGINS: ${HYEB_ALLOWED_ORIGINS:-http://localhost:8787}
       HYEB_SESSION_SECRET: ${HYEB_SESSION_SECRET:-}
+      HYEB_ADMIN_SESSION_SECRET: ${HYEB_ADMIN_SESSION_SECRET:-}
+      HYEB_ADMIN_SESSION_TTL_SECONDS: ${HYEB_ADMIN_SESSION_TTL_SECONDS:-3600}
+      HYEB_ADMIN_DB_PATH: ${HYEB_ADMIN_DB_PATH:-./data/admin.sqlite}
+      HYEB_ADMIN_PASSWORD_HASH: ${HYEB_ADMIN_PASSWORD_HASH:-}
+      HYEB_ADMIN_GITHUB_CLIENT_ID: ${HYEB_ADMIN_GITHUB_CLIENT_ID:-}
+      HYEB_ADMIN_GITHUB_CLIENT_SECRET: >-
+        ${HYEB_ADMIN_GITHUB_CLIENT_SECRET:-}
+      HYEB_ADMIN_GITHUB_IDS: ${HYEB_ADMIN_GITHUB_IDS:-}
+      HYEB_ADMIN_DISCORD_CLIENT_ID: ${HYEB_ADMIN_DISCORD_CLIENT_ID:-}
+      HYEB_ADMIN_DISCORD_CLIENT_SECRET: >-
+        ${HYEB_ADMIN_DISCORD_CLIENT_SECRET:-}
+      HYEB_ADMIN_DISCORD_IDS: ${HYEB_ADMIN_DISCORD_IDS:-}
+      HYEB_ADMIN_PUBLIC_ORIGIN: >-
+        ${HYEB_ADMIN_PUBLIC_ORIGIN:-http://localhost:8787}
       HYEB_AUTOMATION_EXECUTOR_READY: "false"
+    volumes:
+      - hyeboard-admin:/app/data
     ports:
       - "${API_PORT:-8787}:8787"
 
@@ -143,7 +173,12 @@ services:
       TOKEN: ${BROWSERLESS_TOKEN:-}
     shm_size: 2gb
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/pressure?token=' + process.env.TOKEN).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:3000/pressure?token=' +
+          process.env.TOKEN).then(r => process.exit(r.ok ? 0 : 1))
+          .catch(() => process.exit(1))"
       interval: 10s
       timeout: 5s
       start_period: 15s
@@ -153,6 +188,7 @@ services:
       - hyeboard
 
 volumes:
+  hyeboard-admin:
   hyeboard-postgres:
   hyeboard-redis:
 

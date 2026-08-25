@@ -13,6 +13,10 @@ export default defineConfig({
             className: "CaptchaRelayDurableObject",
             useSQLite: true,
           },
+          FEATURE_POLICY: {
+            className: "FeaturePolicyDurableObject",
+            useSQLite: true,
+          },
           VNU_PROBE_BUDGET: {
             className: "VnuProbeBudgetDurableObject",
             useSQLite: true,

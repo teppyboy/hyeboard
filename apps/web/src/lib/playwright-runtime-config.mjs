@@ -1,7 +1,7 @@
 const DEFAULT_VITE_HOST = "127.0.0.1";
 const DEFAULT_VITE_PORT = 5173;
 const DEFAULT_WORKER_PORT = 8787;
-const DEFAULT_WORKERS = 4;
+const DEFAULT_WORKERS = 1;
 
 function parseInteger(name, rawValue, fallback) {
   const value = rawValue === undefined ? fallback : Number(rawValue);
@@ -43,7 +43,7 @@ export function parsePlaywrightRuntimeConfig(environment = {}) {
   const workers = parseInteger("PW_WORKERS", environment.PW_WORKERS, DEFAULT_WORKERS);
 
   if (vitePort === workerPort) throw new Error("PW_VITE_PORT and PW_WORKER_PORT must differ");
-  if (workers < 4 || workers > 6) throw new Error("PW_WORKERS must be between 4 and 6");
+  if (workers < 1 || workers > 6) throw new Error("PW_WORKERS must be between 1 and 6");
 
   return Object.freeze({
     host,

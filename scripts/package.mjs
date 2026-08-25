@@ -23,6 +23,15 @@ const VNU_CONFIG_KEYS = [
 ];
 
 const HA_CONFIG_KEYS = ["mode", "node_id", "session_epoch", "enforce_session_epoch"];
+const ADMIN_CONFIG_KEYS = [
+  "session_ttl_seconds",
+  "db_path",
+  "github_client_id",
+  "github_ids",
+  "discord_client_id",
+  "discord_ids",
+  "public_origin",
+];
 const FORBIDDEN_CONFIG_KEYS = new Set([
   "HYEB_SESSION_SECRET",
   "DATABASE_URL",
@@ -70,6 +79,7 @@ export function createPackagedConfig(sourceConfig) {
     },
     vnu: copyRequiredSection(sourceConfig, "vnu", VNU_CONFIG_KEYS),
     ha: copyRequiredSection(sourceConfig, "ha", HA_CONFIG_KEYS),
+    admin: copyRequiredSection(sourceConfig, "admin", ADMIN_CONFIG_KEYS),
     log_level: sourceConfig.log_level,
     host: sourceConfig.host,
     port: sourceConfig.port,
@@ -100,6 +110,9 @@ export function assertPackagedConfig(config) {
   if (config.browser?.ws_endpoint !== "") throw new Error("Packaged config must not contain a browser URL");
   for (const key of HA_CONFIG_KEYS) {
     if (!Object.hasOwn(config.ha ?? {}, key)) throw new Error(`Packaged config is missing ha.${key}`);
+  }
+  for (const key of ADMIN_CONFIG_KEYS) {
+    if (!Object.hasOwn(config.admin ?? {}, key)) throw new Error(`Packaged config is missing admin.${key}`);
   }
   for (const key of VNU_CONFIG_KEYS) {
     if (!Object.hasOwn(config.vnu ?? {}, key)) throw new Error(`Packaged config is missing vnu.${key}`);

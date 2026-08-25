@@ -43,6 +43,10 @@
         "class_name": "CaptchaRelayDurableObject"
       },
       {
+        "name": "FEATURE_POLICY",
+        "class_name": "FeaturePolicyDurableObject"
+      },
+      {
         "name": "VNU_PROBE_BUDGET",
         "class_name": "VnuProbeBudgetDurableObject"
       },
@@ -64,9 +68,13 @@
     {
       "tag": "v3",
       "new_sqlite_classes": ["VnuRefreshControlDurableObject"]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": ["FeaturePolicyDurableObject"]
     }
   ],
   "secrets": {
-    "required": ["HYEB_SESSION_SECRET"]
+    "required": ["HYEB_SESSION_SECRET", "HYEB_ADMIN_SESSION_SECRET"]
   }
 }

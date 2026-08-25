@@ -35,6 +35,32 @@ describe("createHaLifecycle", () => {
     expect(lifecycle.liveness()).toMatchObject({ alive: true, state: "ready" });
   });
 
+  it("stays degraded while policy authority or propagation is unavailable", async () => {
+    const lifecycle = createHaLifecycle({
+      config,
+      dependencies: { policyStore: "ready", policyEvents: "unavailable" },
+    });
+
+    await lifecycle.start();
+    await expect(lifecycle.readiness()).resolves.toMatchObject({
+      state: "degraded",
+      dependencies: { policyStore: "ready", policyEvents: "unavailable" },
+    });
+    lifecycle.setDependencyStatuses({ policyStore: "unavailable", policyEvents: "ready" });
+    await expect(lifecycle.readiness()).resolves.toMatchObject({ state: "degraded" });
+    lifecycle.setDependencyStatus("policyStore", "ready");
+    await expect(lifecycle.readiness()).resolves.toMatchObject({ state: "ready" });
+  });
+
+  it("does not advertise distributed dependencies in memory mode", async () => {
+    const lifecycle = createHaLifecycle({
+      config: { ...config, mode: "memory" },
+    });
+
+    await lifecycle.start();
+    await expect(lifecycle.readiness()).resolves.toEqual(expect.not.objectContaining({ dependencies: expect.anything() }));
+  });
+
   it("turns thrown dependency probes into unavailable without leaking the error", async () => {
     const lifecycle = createHaLifecycle({
       config,

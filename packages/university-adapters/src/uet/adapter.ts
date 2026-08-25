@@ -271,28 +271,30 @@ export function createUetAdapter(): UniversityAdapter {
     async getStudentProfile(request) { return mapStudent(await studenthub(request).getProfile()); },
     async getTerms(request) { return (await studenthub(request).getTerms()).map(mapTerm); },
     async getDashboard(request): Promise<DashboardSummary> {
+      const capabilities = request.capabilities ?? university.capabilities;
       const today = todayInVietnam();
-      const studentPromise = this.getStudentProfile(request);
+      const studentPromise = capabilities.profile ? this.getStudentProfile(request) : Promise.resolve(undefined);
       const [studentR, termsR, timetableR, todayScheduleR, courseCountR, coursesR, assignmentsR, gradesR, gpaR, examsR, tuitionR, notificationsR] = await Promise.allSettled([
         studentPromise,
-        this.getTerms(request),
-        this.getTimetable(request),
-        studenthub(request).getScheduleAlert(today),
-        studenthub(request).getCourseCount(),
-        this.getCourses(request),
-        this.getAssignments(request),
-        this.getGrades(request),
-        this.getGpaSummary(request),
-        this.getExams(request),
-        this.getTuition(request),
-        loadNotifications(request, studentPromise),
+        capabilities.terms ? this.getTerms(request) : Promise.resolve([]),
+        capabilities.timetable ? this.getTimetable(request) : Promise.resolve([]),
+        capabilities.timetable ? studenthub(request).getScheduleAlert(today) : Promise.resolve([]),
+        capabilities.courses ? studenthub(request).getCourseCount() : Promise.resolve(undefined),
+        capabilities.courses ? this.getCourses(request) : Promise.resolve([]),
+        capabilities.assignments ? this.getAssignments(request) : Promise.resolve([]),
+        capabilities.grades ? this.getGrades(request) : Promise.resolve([]),
+        capabilities.grades ? this.getGpaSummary(request) : Promise.resolve(undefined),
+        capabilities.exams ? this.getExams(request) : Promise.resolve([]),
+        capabilities.tuition ? this.getTuition(request) : Promise.resolve(undefined),
+        capabilities.notifications ? loadNotifications(request, studentPromise) : Promise.resolve([]),
       ]);
-      const allResults = [studentR, termsR, timetableR, todayScheduleR, courseCountR, coursesR, assignmentsR, gradesR, gpaR, examsR, tuitionR, notificationsR];
+      const allResults = [studentR, termsR, timetableR, todayScheduleR, courseCountR, coursesR, assignmentsR, gradesR, gpaR, examsR, tuitionR, notificationsR]
+        .filter((_result, index) => [capabilities.profile, capabilities.terms, capabilities.timetable, capabilities.timetable, capabilities.courses, capabilities.courses, capabilities.assignments, capabilities.grades, capabilities.grades, capabilities.exams, capabilities.tuition, capabilities.notifications][index]);
       // If every single upstream call failed, the session itself is broken
       // (expired/invalid token) - surface a real error instead of silently
       // rendering an all-empty dashboard, so the user sees the same
       // "sign in again" guidance every other feature page already shows.
-      if (allResults.every((result) => result.status === "rejected")) {
+      if (allResults.length > 0 && allResults.every((result) => result.status === "rejected")) {
         const firstReason = studentR.status === "rejected" ? studentR.reason : undefined;
         throw firstReason instanceof HyeboardError ? firstReason : new HyeboardError("UET_UPSTREAM_UNAVAILABLE", "Could not reach the connected university services with the saved session. Sign in again.", 401);
       }

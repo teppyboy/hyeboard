@@ -10,15 +10,21 @@ import {
 import { RootLayout } from "@/components/layout";
 import { getSessionToken } from "@/lib/api";
 import { LoginPage } from "@/pages/login";
+import { HyeboardProvider } from "@/state";
 
 const rootRoute = createRootRoute({ component: Outlet });
-const loginRoute = createRoute({
+const studentRoute = createRoute({
   getParentRoute: () => rootRoute,
+  id: "student",
+  component: () => <HyeboardProvider><Outlet /></HyeboardProvider>,
+});
+const loginRoute = createRoute({
+  getParentRoute: () => studentRoute,
   path: "/login",
   component: LoginPage,
 });
 const appRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => studentRoute,
   id: "app",
   component: RootLayout,
   beforeLoad: () => {
@@ -36,9 +42,36 @@ const indexRoute = createRoute({
   path: "/",
   component: lazyPage(() => import("@/pages/dashboard"), "DashboardPage"),
 });
+const adminLoginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin/login",
+  component: lazyPage(() => import("@/pages/admin-login"), "AdminLoginPage"),
+});
+const adminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin",
+  component: lazyPage(() => import("@/components/admin/admin-layout"), "AdminLayout"),
+});
+const adminIndexRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/",
+  component: lazyPage(() => import("@/pages/admin-control"), "AdminControlPage"),
+});
+const adminHistoryRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/history",
+  component: lazyPage(() => import("@/pages/admin-history"), "AdminHistoryPage"),
+});
+const adminAuthRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/auth",
+  component: lazyPage(() => import("@/pages/admin-auth"), "AdminAuthPage"),
+});
+
 const routeTree = rootRoute.addChildren([
-  loginRoute,
-  appRoute.addChildren([
+  studentRoute.addChildren([
+    loginRoute,
+    appRoute.addChildren([
     indexRoute,
     createRoute({
       getParentRoute: () => appRoute,
@@ -96,7 +129,10 @@ const routeTree = rootRoute.addChildren([
       path: "/settings",
       component: lazyPage(() => import("@/pages/settings"), "SettingsPage"),
     }),
+    ]),
   ]),
+  adminLoginRoute,
+  adminRoute.addChildren([adminIndexRoute, adminHistoryRoute, adminAuthRoute]),
 ]);
 
 export const router = createRouter({ routeTree });

@@ -1,5 +1,5 @@
 import { configureLogger, createVnuRefreshGrant, decryptSession, decryptSessionForVnuLogout, decryptVnuRefreshGrant, encryptSession, encryptVnuRefreshGrant, HyeboardError, VNU_REFRESH_GRANT_MAX_LENGTH, type EncryptedSessionPayload } from "@hyeboard/core";
-import { DaotaoClient, parseGradesHtml } from "@hyeboard/university-adapters";
+import { DaotaoClient, listUniversities, parseGradesHtml } from "@hyeboard/university-adapters";
 import { StudentHubClient } from "@hyeboard/university-adapters/src/uet/studenthub-client";
 import { authResultSchema } from "@hyeboard/schemas";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,8 +14,9 @@ vi.mock("@hyeboard/university-adapters", async (importOriginal) => {
   return { ...actual, getAdapter: adapterMocks.getAdapter };
 });
 
-import { createApp, createCaptchaRelayToken, requestLogPath, resolveSession, setAppCache, setCaptchaRelayCoordinator, setDistributedAutomationBackend, setRateLimitCoordinator, setRuntimeConfig, setVnuImportSingleFlight, setVnuProbeBudgetCoordinator, setVnuRefreshControlCoordinator, type RuntimeConfig } from "./app";
+import { createApp, createCaptchaRelayToken, requestLogPath, resolveSession, setAppCache, setCaptchaRelayCoordinator, setDistributedAutomationBackend, setFeaturePolicyRuntime, setRateLimitCoordinator, setRuntimeConfig, setVnuImportSingleFlight, setVnuProbeBudgetCoordinator, setVnuRefreshControlCoordinator, type RuntimeConfig } from "./app";
 import { LocalCaptchaRelayCoordinator, type CaptchaRelayCoordinator } from "./captcha-relay";
+import { FeaturePolicyRuntime, InProcessFeaturePolicyEvents, MemoryFeaturePolicyStore } from "./feature-policy-store";
 import { selfHostedRuntimeConfig } from "./start";
 import type { VnuProbeBudgetCoordinator } from "./vnu-probe-budget";
 import { createVnuCrossDetailMinter } from "./vnu-cross-detail";
@@ -53,6 +54,18 @@ const VNU_AUTH_BODY_MAX_BYTES = VNU_REFRESH_GRANT_MAX_LENGTH
 const VNU_STUDENT_CODE = "SYNTHETIC-STUDENT-001";
 const SYNTHETIC_VNU_CODE = 99_000_001;
 const SYNTHETIC_VNU_STD_ID = 99_000_000_001;
+let policyRuntime: FeaturePolicyRuntime;
+
+beforeEach(() => {
+  policyRuntime = new FeaturePolicyRuntime(new MemoryFeaturePolicyStore(), new InProcessFeaturePolicyEvents());
+  setFeaturePolicyRuntime(policyRuntime);
+});
+
+afterEach(async () => {
+  setFeaturePolicyRuntime(undefined);
+  await policyRuntime.close();
+});
+
 const SENTINELS = [
   "PARENT_USERNAME_SENTINEL",
   "PARENT_PASSWORD_SENTINEL",
@@ -106,6 +119,19 @@ function rawUetSession(): EncryptedSessionPayload {
     studenthub: { kind: "bearer", value: "SYNTHETIC_STUDENTHUB_TOKEN", expiresAt: "2099-01-01T00:00:00.000Z" },
     expiresAt: "2099-01-01T00:00:00.000Z",
   };
+}
+
+function mockSession(): EncryptedSessionPayload {
+  return { version: 1, universityId: "mock", studentCode: "SYNTHETIC-MOCK", expiresAt: "2099-01-01T00:00:00.000Z" };
+}
+
+async function disableCapability(capability: "profile" | "terms" | "courses" | "grades" | "classLookup" | "crossLookup"): Promise<void> {
+  await policyRuntime.publish({
+    baseRevision: 0,
+    policy: { global: { capabilities: { [capability]: { enabled: false } }, limits: {} }, universities: {} },
+    reason: `Disable ${capability} for policy enforcement test`,
+    actor: { method: "password", subject: "test-admin" },
+  });
 }
 
 type CoordinatorVnuImportResponse = {
@@ -725,6 +751,268 @@ function chunkedJsonRequest(path: string, token: string, chunks: string[], onPul
   } as RequestInit & { duplex: "half" });
 }
 
+describe("feature policy enforcement", () => {
+  it("keeps session status usable while profile is disabled and omits the student identifier", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("profile");
+    adapterMocks.getAdapter.mockReturnValue({});
+    const session = mockSession();
+    const token = await encryptSession(session, SESSION_SECRET);
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/auth/session", {
+      headers: { Authorization: `Bearer ${token}` },
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      data: {
+        universityId: session.universityId,
+        expiresAt: session.expiresAt,
+        authenticated: true,
+      },
+      error: null,
+    });
+  });
+
+  it("omits the student identifier when profile capability evidence is missing", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    adapterMocks.getAdapter.mockReturnValue({});
+    const session = mockSession();
+    const token = await encryptSession(session, SESSION_SECRET);
+    const university = listUniversities().find(({ id }) => id === session.universityId)!;
+    const profile = university.capabilities.profile;
+    delete (university.capabilities as Partial<typeof university.capabilities>).profile;
+
+    try {
+      const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/auth/session", {
+        headers: { Authorization: `Bearer ${token}` },
+      }));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        data: {
+          universityId: session.universityId,
+          expiresAt: session.expiresAt,
+          authenticated: true,
+        },
+        error: null,
+      });
+    } finally {
+      university.capabilities.profile = profile;
+    }
+  });
+
+  it("preserves the student identifier when effective profile capability is enabled", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    adapterMocks.getAdapter.mockReturnValue({});
+    const session = mockSession();
+    const token = await encryptSession(session, SESSION_SECRET);
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/auth/session", {
+      headers: { Authorization: `Bearer ${token}` },
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        universityId: session.universityId,
+        studentCode: session.studentCode,
+        expiresAt: session.expiresAt,
+        authenticated: true,
+      },
+      error: null,
+    });
+  });
+
+  it("keeps successful auth issuance identity metadata when profile is disabled", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("profile");
+    const session = mockSession();
+    adapterMocks.getAdapter.mockReturnValue({ importSession: vi.fn().mockResolvedValue({
+      universityId: session.universityId,
+      studentCode: session.studentCode,
+      expiresAt: session.expiresAt,
+      session,
+    }) });
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/auth/import-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { session: { studentCode: session.studentCode } } });
+  });
+
+  it("keeps expired-session rejection unchanged when profile is disabled", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("profile");
+    adapterMocks.getAdapter.mockReturnValue({});
+    const token = await encryptSession({ ...mockSession(), expiresAt: "2000-01-01T00:00:00.000Z" }, SESSION_SECRET);
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/auth/session", {
+      headers: { Authorization: `Bearer ${token}` },
+    }));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "SESSION_EXPIRED" } });
+  });
+
+  it.each([
+    ["courses", "/api/mock/courses", "getCourses"],
+    ["grades", "/api/mock/grades", "getGrades"],
+  ] as const)("rejects disabled %s before adapter work", async (capability, path, method) => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability(capability);
+    const upstream = vi.fn();
+    adapterMocks.getAdapter.mockReturnValue({ [method]: upstream });
+    const token = await encryptSession(mockSession(), SESSION_SECRET);
+
+    const response = await createApp(undefined).handle(new Request(`http://localhost${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "FEATURE_DISABLED", details: { capability } } });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("blocks lookup-only routes while keeping exams raw access independent", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("classLookup");
+    const token = await encryptSession(vnuSession(), SESSION_SECRET);
+    const profileSpy = vi.spyOn(DaotaoClient.prototype, "getProfileHtml").mockResolvedValue(`<input name="hidStdID" value="${SYNTHETIC_VNU_STD_ID}"><input name="StdCode" value="${SYNTHETIC_VNU_CODE}"><select name="UnivID"><option value="1" selected>VNU</option></select>`);
+    const examsSpy = vi.spyOn(DaotaoClient.prototype, "getExamsHtml").mockResolvedValue("<html>SYNTHETIC_EXAMS</html>");
+    try {
+      const lookup = await createApp(undefined).handle(new Request("http://localhost/api/vnu/class-lookup/catalog?vTermID=1", { headers: { Authorization: `Bearer ${token}` } }));
+      expect(lookup.status).toBe(503);
+      await expect(lookup.json()).resolves.toMatchObject({ error: { code: "FEATURE_DISABLED", details: { capability: "classLookup" } } });
+      expect(profileSpy).not.toHaveBeenCalled();
+      expect(examsSpy).not.toHaveBeenCalled();
+
+      const exams = await createApp(undefined).handle(new Request("http://localhost/api/vnu/raw/exams?vTermID=1", { headers: { Authorization: `Bearer ${token}` } }));
+      expect(exams.status).toBe(200);
+      expect(examsSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      profileSpy.mockRestore();
+      examsSpy.mockRestore();
+    }
+  });
+
+  it("blocks lookup-only point detail while grades raw and point detail remain grades-gated", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("classLookup");
+    const token = await encryptSession(vnuSession(), SESSION_SECRET);
+    const selector = "00000000001";
+    const gradesSpy = vi.spyOn(DaotaoClient.prototype, "getGradesHtml").mockResolvedValue(`<table>
+      <tr><td>HỌC KỲ 1. MÃ HỌC KỲ 251</td></tr>
+      <tr><td>1</td><td>INT1001</td><td>Synthetic Course</td><td>3</td><td>8</td><td>B</td><td>3</td><td><img onclick="detailPoint('123456','8','${selector}','42')"></td></tr>
+    </table>`);
+    const pointSpy = vi.spyOn(DaotaoClient.prototype, "getPointDetailHtml").mockResolvedValue("<table>SYNTHETIC_POINT_DETAIL</table>");
+    try {
+      const lookup = await createApp(undefined).handle(new Request("http://localhost/api/vnu/class-lookup/point-detail?id=123456&Term=42", { headers: { Authorization: `Bearer ${token}` } }));
+      expect(lookup.status).toBe(503);
+      expect(lookup.headers.get("Cache-Control")).toBe("no-store, private");
+      await expect(lookup.json()).resolves.toMatchObject({ error: { code: "FEATURE_DISABLED", details: { capability: "classLookup" } } });
+      expect(gradesSpy).not.toHaveBeenCalled();
+      expect(pointSpy).not.toHaveBeenCalled();
+
+      const grades = await createApp(undefined).handle(new Request("http://localhost/api/vnu/raw/grades", { headers: { Authorization: `Bearer ${token}` } }));
+      expect(grades.status).toBe(200);
+
+      const detail = await createApp(undefined).handle(new Request("http://localhost/api/vnu/raw/point-detail?id=123456&Term=42", { headers: { Authorization: `Bearer ${token}` } }));
+      expect(detail.status).toBe(200);
+      expect(gradesSpy).toHaveBeenCalledTimes(1);
+      expect(pointSpy).toHaveBeenCalledWith({ id: "123456", stdId: selector, term: "42" }, expect.any(AbortSignal));
+    } finally {
+      gradesSpy.mockRestore();
+      pointSpy.mockRestore();
+    }
+  });
+
+  it("keeps raw grades and point detail unavailable when grades are disabled", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("grades");
+    const token = await encryptSession(vnuSession(), SESSION_SECRET);
+    const gradesSpy = vi.spyOn(DaotaoClient.prototype, "getGradesHtml");
+    const pointSpy = vi.spyOn(DaotaoClient.prototype, "getPointDetailHtml");
+    try {
+      for (const path of ["/api/vnu/raw/grades", "/api/vnu/raw/point-detail?id=123456&Term=42"]) {
+        const response = await createApp(undefined).handle(new Request(`http://localhost${path}`, { headers: { Authorization: `Bearer ${token}` } }));
+        expect(response.status).toBe(503);
+        await expect(response.json()).resolves.toMatchObject({ error: { code: "FEATURE_DISABLED", details: { capability: "grades" } } });
+      }
+      expect(gradesSpy).not.toHaveBeenCalled();
+      expect(pointSpy).not.toHaveBeenCalled();
+    } finally {
+      gradesSpy.mockRestore();
+      pointSpy.mockRestore();
+    }
+  });
+
+  it("rejects disabled crossLookup before specialized VNU upstream work", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("crossLookup");
+    const token = await encryptSession(vnuSession(), SESSION_SECRET);
+    const profileSpy = vi.spyOn(DaotaoClient.prototype, "getProfileHtml");
+    const transcriptSpy = vi.spyOn(DaotaoClient.prototype, "getTranscriptByStdIdHtml");
+    try {
+      const response = await createApp(undefined).handle(new Request("http://localhost/api/vnu/cross-lookup/student-code?stdId=1002&allowCrossLookup=true", { headers: { Authorization: `Bearer ${token}` } }));
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: { code: "FEATURE_DISABLED", details: { capability: "crossLookup" } } });
+      expect(profileSpy).not.toHaveBeenCalled();
+      expect(transcriptSpy).not.toHaveBeenCalled();
+    } finally {
+      profileSpy.mockRestore();
+      transcriptSpy.mockRestore();
+    }
+  });
+
+  it("removes dashboard profile at the API while preserving enabled current term independently", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("profile");
+    const getDashboard = vi.fn(async () => ({
+      student: { id: "student-pii", fullName: "Student PII", universityId: "mock", studentCode: "STUDENT-PII" },
+      currentTerm: { id: "term", code: "term", name: "Term" },
+      todaySchedule: [],
+      courses: [],
+      assignments: [],
+      grades: [],
+      exams: [],
+      notifications: [],
+    }));
+    adapterMocks.getAdapter.mockReturnValue({ getDashboard });
+    const token = await encryptSession(mockSession(), SESSION_SECRET);
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/dashboard", { headers: { Authorization: `Bearer ${token}` } }));
+    const body = await response.json() as { data: Record<string, unknown> };
+
+    expect(response.status).toBe(200);
+    expect(body.data).not.toHaveProperty("student");
+    expect(JSON.stringify(body.data)).not.toContain("Student PII");
+    expect(JSON.stringify(body.data)).not.toContain("STUDENT-PII");
+    expect(body.data.currentTerm).toEqual({ id: "term", code: "term", name: "Term" });
+    expect(getDashboard).toHaveBeenCalledWith(expect.objectContaining({ capabilities: expect.objectContaining({ profile: false, terms: true }) }));
+  });
+
+  it("projects disabled dashboard capabilities before adapter work", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    await disableCapability("grades");
+    const getDashboard = vi.fn(async ({ capabilities }: { capabilities: Record<string, boolean> }) => {
+      expect(capabilities.grades).toBe(false);
+      return { todaySchedule: [], courses: [], assignments: [], grades: [{ id: "leak", courseCode: "X", courseName: "Leak" }], exams: [], notifications: [] };
+    });
+    adapterMocks.getAdapter.mockReturnValue({ getDashboard });
+    const token = await encryptSession(mockSession(), SESSION_SECRET);
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/dashboard", { headers: { Authorization: `Bearer ${token}` } }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { grades: [] } });
+    expect(getDashboard).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("request-log privacy", () => {
   it("requestLogPath strips query identifiers and opt-in values", () => {
     expect(requestLogPath("https://hyeboard.test/api/vnu/cross-lookup/student-id?stdCode=99000002&allowCrossLookup=true"))
@@ -1008,6 +1296,46 @@ describe("VNU access authority", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not cache VNU raw HTML resolved after request cancellation", async () => {
+    const cache = new TestCache(() => Date.now());
+    const putSpy = vi.spyOn(cache, "put");
+    vi.stubGlobal("caches", { default: cache });
+    const firstFetch = enteredOperation<string>();
+    const gradesSpy = vi.spyOn(DaotaoClient.prototype, "getGradesHtml")
+      .mockImplementationOnce(async (signal?: AbortSignal) => {
+        expect(signal).toBe(firstRequest.signal);
+        firstFetch.markEntered();
+        return firstFetch.result;
+      })
+      .mockResolvedValueOnce("<html>SYNTHETIC_RETRY_GRADES</html>");
+    const token = await encryptSession(normalizedVnuSession(), SESSION_SECRET);
+    const app = createApp(undefined);
+    const controller = new AbortController();
+    const firstRequest = new Request("http://localhost/api/vnu/raw/grades", {
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const firstResponsePromise = app.handle(firstRequest);
+    await firstFetch.entered;
+    controller.abort(new DOMException("SYNTHETIC_RAW_ABORT", "AbortError"));
+    firstFetch.release("<html>SYNTHETIC_CANCELLED_GRADES</html>");
+    const firstResponse = await firstResponsePromise;
+
+    expect(firstResponse.status).toBe(500);
+    expect(cache.rawUrls()).toEqual([]);
+    expect(putSpy).not.toHaveBeenCalled();
+
+    const secondResponse = await getVnuRawPage(app, token);
+    expect(secondResponse.status).toBe(200);
+    await expect(secondResponse.json()).resolves.toEqual({ data: { html: "<html>SYNTHETIC_RETRY_GRADES</html>" }, error: null });
+    expect(gradesSpy).toHaveBeenCalledTimes(2);
+    expect(cache.rawUrls()).toHaveLength(1);
+
+    gradesSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("fails descriptor-bearing self-hosted sessions closed", async () => {
     setVnuRefreshControlCoordinator(undefined);
     const token = await encryptSession(descriptorVnuSession(), SESSION_SECRET);
@@ -1059,6 +1387,24 @@ describe("JSON error detail boundary", () => {
 
     const payload = await rejectedImport(details);
     expect((payload.error as Record<string, unknown>).details).toBeUndefined();
+  });
+
+  it("sanitizes unexpected import-session SSE failures", async () => {
+    const sentinel = "PRIVATE_UPSTREAM_COOKIE_TOKEN_STUDENT_SENTINEL";
+    adapterMocks.importSession.mockRejectedValue(new Error(sentinel));
+    adapterMocks.getAdapter.mockReturnValue({ importSession: adapterMocks.importSession });
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/uet/auth/import-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uetGoogleEmail: "student@example.test", uetGooglePassword: "PRIVATE_PASSWORD" }),
+    }));
+    const text = await response.text();
+
+    expect(text).toContain("event: error");
+    expect(text).toContain('"code":"GOOGLE_SIGNIN_FAILURE"');
+    expect(text).toContain('"message":"Google sign-in did not complete. Try again."');
+    expect(text).not.toContain(sentinel);
   });
 
   it("rejects empty access-token and refresh-grant wire values", () => {
@@ -1153,6 +1499,98 @@ describe("VNU recoverability classification", () => {
   });
 });
 
+describe("import-session cache protection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET });
+    adapterMocks.getAdapter.mockReturnValue({ importSession: adapterMocks.importSession });
+  });
+
+  it("marks fast JSON responses no-store", async () => {
+    adapterMocks.importSession.mockResolvedValue({
+      universityId: "mock",
+      studentCode: "SYNTHETIC-MOCK",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      session: mockSession(),
+    });
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/auth/import-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("marks UET SSE responses no-store while preserving stream transforms", async () => {
+    adapterMocks.importSession.mockResolvedValue({
+      universityId: "uet",
+      studentCode: "SYNTHETIC-UET",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      session: rawUetSession(),
+    });
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/uet/auth/import-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uetGoogleEmail: "PH00000001", uetGooglePassword: "fake-password" }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
+    await response.body?.cancel();
+  });
+
+  it("does not mint a token when a non-VNU JSON import resolves after cancellation", async () => {
+    const gate = enteredOperation<{
+      universityId: string;
+      studentCode: string;
+      expiresAt: string;
+      session: EncryptedSessionPayload;
+    }>();
+    adapterMocks.importSession.mockImplementationOnce(async () => {
+      gate.markEntered();
+      return gate.result;
+    });
+    const controller = new AbortController();
+    const request = new Request("http://localhost/api/mock/auth/import-session", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    const responsePromise = createApp(undefined).handle(request);
+    await gate.entered;
+    controller.abort(new DOMException("SYNTHETIC_MOCK_IMPORT_ABORT", "AbortError"));
+    gate.release({
+      universityId: "mock",
+      studentCode: "SYNTHETIC-MOCK",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      session: mockSession(),
+    });
+
+    const response = await responsePromise;
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ data: null, error: { code: "INTERNAL_ERROR", message: "Unexpected API error" } });
+  });
+
+  it("marks failed JSON responses no-store", async () => {
+    adapterMocks.importSession.mockRejectedValue(new HyeboardError("SYNTHETIC_REJECTION", "Safe synthetic rejection", 429));
+
+    const response = await createApp(undefined).handle(new Request("http://localhost/api/mock/auth/import-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }));
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+});
+
 describe("lazy parent session refresh", () => {
   let logOutput: string[];
 
@@ -1194,6 +1632,37 @@ describe("lazy parent session refresh", () => {
     expect(resolved.refreshedToken).toBeTypeOf("string");
     await expect(decryptSession(resolved.refreshedToken!, SESSION_SECRET)).resolves.toEqual(refreshedSession);
     expect(logOutput.join("\n")).toBe("");
+  });
+
+  it("does not mint a refreshed UET token when the adapter resolves after cancellation", async () => {
+    const refreshedSession = {
+      ...parentSession(),
+      studenthub: { kind: "bearer" as const, value: "NEW_ACCESS_TOKEN_SENTINEL", expiresAt: "2098-01-01T00:00:00.000Z" },
+    };
+    const gate = enteredOperation<{
+      universityId: string;
+      studentCode: string;
+      expiresAt: string;
+      session: EncryptedSessionPayload;
+    }>();
+    adapterMocks.importSession.mockImplementationOnce(async () => {
+      gate.markEntered();
+      return gate.result;
+    });
+    const token = await encryptSession(parentSession(), SESSION_SECRET);
+    const controller = new AbortController();
+
+    const resolving = resolveSession({ Authorization: `Bearer ${token}` }, controller.signal);
+    await gate.entered;
+    controller.abort(new DOMException("SYNTHETIC_UET_REFRESH_ABORT", "AbortError"));
+    gate.release({
+      universityId: "uet",
+      studentCode: refreshedSession.studentCode!,
+      expiresAt: refreshedSession.expiresAt,
+      session: refreshedSession,
+    });
+
+    await expect(resolving).rejects.toMatchObject({ code: "GOOGLE_REFRESH_FAILED", status: 401 });
   });
 
   it.each([
@@ -1476,6 +1945,42 @@ describe("VNU import session cache", () => {
     configureLogger({ level: "silent", mode: "node" });
   });
 
+  it("does not issue credentials or cache a VNU import resolved after request cancellation", async () => {
+    const importGate = enteredOperation<ReturnType<typeof importedVnu>>();
+    const putSpy = vi.spyOn(cache, "put");
+    adapterMocks.importSession
+      .mockImplementationOnce(async () => {
+        importGate.markEntered();
+        return importGate.result;
+      })
+      .mockResolvedValueOnce(importedVnu());
+    const controller = new AbortController();
+    const firstRequest = new Request("http://localhost/api/vnu/auth/import-session", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vnuUsername: "SYNTHETIC_VNU_USER", vnuPassword: "SYNTHETIC_VNU_PASSWORD" }),
+    });
+
+    const firstResponsePromise = app.handle(firstRequest);
+    await importGate.entered;
+    controller.abort(new DOMException("SYNTHETIC_IMPORT_ABORT", "AbortError"));
+    importGate.release(importedVnu());
+    const firstResponse = await firstResponsePromise;
+
+    expect(firstResponse.status).toBe(500);
+    await expect(firstResponse.json()).resolves.toEqual({ data: null, error: { code: "INTERNAL_ERROR", message: "Unexpected API error" } });
+    expect(refreshControl.activations).toEqual([]);
+    expect(cache.importUrls()).toEqual([]);
+    expect(putSpy).not.toHaveBeenCalled();
+
+    const retry = await requestVnuImport(app);
+    expect(retry.status).toBe(200);
+    expect(adapterMocks.importSession).toHaveBeenCalledTimes(2);
+    expect(refreshControl.activations).toHaveLength(1);
+    expect(cache.importUrls()).toHaveLength(1);
+  });
+
   it("normalizes the username and activates a linked access/grant pair before returning artifacts", async () => {
     const response = await app.handle(new Request("http://localhost/api/vnu/auth/import-session", {
       method: "POST",
@@ -1545,6 +2050,58 @@ describe("VNU import session cache", () => {
     expect(runCalls).toBe(2);
     expect(adapterMocks.importSession).toHaveBeenCalledOnce();
     expect(await responses[0]!.clone().json()).toEqual(await responses[1]!.clone().json());
+  });
+
+  it("does not return a shared distributed import result to an aborted follower", async () => {
+    setRuntimeConfig({ HYEB_SESSION_SECRET: SESSION_SECRET, HYEB_HA_MODE: "distributed" });
+    setAppCache(cache);
+    const importGate = enteredOperation<ReturnType<typeof importedVnu>>();
+    adapterMocks.importSession.mockImplementation(async () => {
+      importGate.markEntered();
+      return importGate.result;
+    });
+    let shared: Promise<unknown> | undefined;
+    let runCalls = 0;
+    setVnuImportSingleFlight({
+      run: async <T>(_key: string, work: () => Promise<T>): Promise<T> => {
+        runCalls += 1;
+        shared ??= work();
+        return await shared as T;
+      },
+    });
+    const requestImport = (signal?: AbortSignal) => app.handle(new Request("http://localhost/api/vnu/auth/import-session", {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vnuUsername: "SYNTHETIC-VNU-USER", vnuPassword: "SYNTHETIC-PASSWORD-BYTES" }),
+    }));
+
+    const leader = requestImport();
+    await importGate.entered;
+    const followerController = new AbortController();
+    const follower = requestImport(followerController.signal);
+    await vi.waitFor(() => expect(runCalls).toBe(2));
+    followerController.abort(new DOMException("SYNTHETIC_FOLLOWER_ABORT", "AbortError"));
+    importGate.release(importedVnu());
+
+    const leaderResponse = await leader;
+    const followerResponse = await follower;
+    const followerText = await followerResponse.text();
+    expect(leaderResponse.status).toBe(200);
+    expect(followerResponse.status).toBe(500);
+    expect(JSON.parse(followerText)).toEqual({ data: null, error: { code: "INTERNAL_ERROR", message: "Unexpected API error" } });
+    expect(followerText).not.toMatch(/token|grant|session|SYNTHETIC-PASSWORD-BYTES/i);
+    expect(adapterMocks.importSession).toHaveBeenCalledOnce();
+    expect(refreshControl.activations).toHaveLength(1);
+    expect(refreshControl.mutationCount).toBe(1);
+    expect(cache.importUrls()).toHaveLength(1);
+
+    const liveResponse = await requestImport();
+    expect(liveResponse.status).toBe(200);
+    expect(adapterMocks.importSession).toHaveBeenCalledOnce();
+    expect(refreshControl.activations).toHaveLength(2);
+    expect(refreshControl.mutationCount).toBe(2);
+    expect(cache.importUrls()).toHaveLength(1);
   });
 
   it("returns sanitized 429 without artifacts on the sixth manual activation and succeeds after reset", async () => {
@@ -2716,7 +3273,7 @@ describe("VNU import session cache", () => {
 
     expect(response.status).toBe(200);
     expect(profileSpy).not.toHaveBeenCalled();
-    expect(pointSpy).toHaveBeenCalledWith({ id: "123456", stdId: "00000000001", term: "42", val: undefined });
+    expect(pointSpy).toHaveBeenCalledWith({ id: "123456", stdId: "00000000001", term: "42" }, expect.any(AbortSignal));
     pointSpy.mockRestore();
   });
 
@@ -2730,7 +3287,7 @@ describe("VNU import session cache", () => {
     }));
 
     expect(response.status).toBe(200);
-    expect(examSpy).toHaveBeenCalledWith({ selUniv: "77", selStd: "99000000001", vTermID: "42" });
+    expect(examSpy).toHaveBeenCalledWith({ selUniv: "77", selStd: "99000000001", vTermID: "42" }, expect.any(AbortSignal));
     examSpy.mockRestore();
   });
 
@@ -2747,7 +3304,7 @@ describe("VNU import session cache", () => {
     }));
 
     expect(response.status).toBe(200);
-    expect(pointSpy).toHaveBeenCalledWith({ id: "123456", stdId: "00000000001", term: "42", val: undefined });
+    expect(pointSpy).toHaveBeenCalledWith({ id: "123456", stdId: "00000000001", term: "42" }, expect.any(AbortSignal));
     pointSpy.mockRestore();
   });
 
@@ -2771,7 +3328,7 @@ describe("VNU import session cache", () => {
     expect(gradesBody.data.html).not.toContain(selector);
     expect(detailResponse.status).toBe(200);
     expect(gradesSpy).toHaveBeenCalledTimes(1);
-    expect(pointSpy).toHaveBeenCalledWith({ id: "123456", stdId: selector, term: "42", val: undefined });
+    expect(pointSpy).toHaveBeenCalledWith({ id: "123456", stdId: selector, term: "42" }, expect.any(AbortSignal));
     pointSpy.mockRestore();
   });
 
@@ -3416,6 +3973,38 @@ describe("VNU cross-transcript route", () => {
     profileSpy.mockRestore();
     transcriptSpy.mockRestore();
     vi.unstubAllGlobals();
+  });
+
+  it("enforces an admin bulk limit below the immutable runtime ceiling", async () => {
+    await policyRuntime.publish({
+      baseRevision: 0,
+      policy: { global: { capabilities: {}, limits: { "crossLookup.bulkDirectChunkMaxTargets": 2 } }, universities: {} },
+      reason: "Synthetic effective bulk limit",
+      actor: { method: "password", subject: "test-admin" },
+    });
+
+    const response = await bulkRequest({ mode: "stdid-to-code", targets: ["1001", "1002", "1003"], allowCrossLookup: true });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "VNU_CROSS_LOOKUP_CHUNK_TOO_LARGE" } });
+    expect(profileSpy).not.toHaveBeenCalled();
+    expect(transcriptSpy).not.toHaveBeenCalled();
+  });
+
+  it("never lets an admin bulk limit exceed the immutable runtime ceiling", async () => {
+    await policyRuntime.publish({
+      baseRevision: 0,
+      policy: { global: { capabilities: {}, limits: { "crossLookup.bulkDirectChunkMaxTargets": 100 } }, universities: {} },
+      reason: "Synthetic oversized admin limit",
+      actor: { method: "password", subject: "test-admin" },
+    });
+
+    const response = await bulkRequest({ mode: "stdid-to-code", targets: Array.from({ length: 33 }, (_, index) => String(index + 1)), allowCrossLookup: true });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "VNU_CROSS_LOOKUP_CHUNK_TOO_LARGE" } });
+    expect(profileSpy).not.toHaveBeenCalled();
+    expect(transcriptSpy).not.toHaveBeenCalled();
   });
 
   it("rejects invalid target combinations before reading the own profile", async () => {

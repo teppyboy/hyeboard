@@ -1,7 +1,6 @@
 import type { VnuExamCatalogRow, VnuExamTermInfo, VnuProfile, VnuTranscriptRow } from "@hyeboard/university-adapters/src/vnu/types";
 import { VNU_EXAM_TERMS } from "@hyeboard/university-adapters/src/vnu/exam-terms";
 import { ChevronDown } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ExportMenu } from "@/components/export-menu";
 import { GradeTable } from "@/components/grades/grade-table";
@@ -26,7 +25,7 @@ import { formatTermLabel } from "@/lib/presentation";
 import { calculateTermAcademicSummaries, newestAcademicTermsFirst, type AcademicTermSummary } from "@/lib/term-academic-summary";
 import { cn } from "@/lib/utils";
 import { filterCatalogRowsByUniversity } from "@/lib/university-course-search";
-import { useHyeboard } from "@/state";
+import { useFeatureQuery, useHyeboard } from "@/state";
 
 // Newest first - matches the convention every other term picker in the app
 // uses (see mapTerms in the vnu mapper). VNU_EXAM_TERMS itself stays
@@ -40,6 +39,10 @@ const TERMS_NEWEST_FIRST: readonly VnuExamTermInfo[] = [...VNU_EXAM_TERMS].rever
 // round-trip.
 const VNU_STD_ID_INPUT_PATTERN = /^\d{1,11}$/;
 const VNU_STUDENT_CODE_INPUT_PATTERN = /^\d{8}$/;
+
+export function lookupFreshnessKey(universityId: string, accountId: string | null, sessionNonce: number): string {
+  return `${universityId}:${accountId ?? "no-account"}:${sessionNonce}`;
+}
 
 // Exact match only — no zero-padding or partial-match normalization, so a
 // query can never silently land on a class the user didn't ask for. Every
@@ -61,7 +64,7 @@ function ClassResultRow({ row, expanded, onToggleDetail, exportModel }: { row: V
     <div
       className="list-row flex-col items-stretch gap-3 sm:flex-row sm:items-center cursor-pointer"
       onClick={(event) => {
-        if ((event.target as HTMLElement).closest("button")) return;
+        if ((event.target as HTMLElement).closest("button, [data-export-surface]")) return;
         onToggleDetail();
       }}
       role="button"
@@ -97,13 +100,14 @@ function ClassResultRow({ row, expanded, onToggleDetail, exportModel }: { row: V
 function PointDetailPanel({ classId, termOrdinal }: { classId: string; termOrdinal: string }) {
   const { t } = useLocale();
   const state = useHyeboard();
-  const detailQuery = useQuery({
-    queryKey: ["vnu-point-detail", state.universityId, state.sessionNonce, classId, termOrdinal],
-    queryFn: async () => {
-      await state.ensureSession();
-      return api.vnuPointDetail({ id: classId, Term: termOrdinal });
+  const detailQuery = useFeatureQuery(
+    "vnu-point-detail",
+    ({ signal }) => api.vnuClassPointDetail({ id: classId, Term: termOrdinal }, signal),
+    {
+      capability: "classLookup",
+      queryKey: ["vnu-point-detail", state.universityId, state.sessionNonce, classId, termOrdinal],
     },
-  });
+  );
 
   if (detailQuery.isLoading) return <div className="px-4 py-3"><Skeleton className="h-12" /></div>;
   if (detailQuery.error) return <div className="px-4 py-3" role="alert"><p className="text-sm text-muted-foreground">{t.lookup.pointDetailError}</p></div>;
@@ -117,8 +121,8 @@ function PointDetailPanel({ classId, termOrdinal }: { classId: string; termOrdin
             <p className="break-words text-sm font-medium">{component.nature || "-"}</p>
             <p className="text-xs text-muted-foreground">{
               [
-                component.weight != null ? t.lookup.pointDetailWeight(component.weight) : undefined,
-                component.attempt != null ? t.lookup.pointDetailAttempt(component.attempt) : undefined,
+                component.weight == null ? undefined : t.lookup.pointDetailWeight(component.weight),
+                component.attempt == null ? undefined : t.lookup.pointDetailAttempt(component.attempt),
               ].filter(Boolean).join(" · ") || "-"}</p>
           </div>
           <Badge className="shrink-0 border border-border bg-background font-normal tabular-nums text-foreground">{component.score ?? "-"}</Badge>
@@ -139,14 +143,15 @@ function ClassResolver() {
   // The catalog call needs no ids from the client: the worker derives
   // selStd/selUniv from the session's own profile (same hardening as
   // point-detail) and fails closed with VNU_LOGIN_REQUIRED when it can't.
-  const catalogQuery = useQuery({
-    queryKey: ["vnu-lookup-catalog", state.universityId, state.sessionNonce, termOrdinal],
-    queryFn: async ({ signal }) => {
-      await state.ensureSession();
-      return api.vnuClassCatalog({ vTermID: termOrdinal! }, signal);
+  const catalogQuery = useFeatureQuery(
+    "vnu-lookup-catalog",
+    (signal) => api.vnuClassCatalog({ vTermID: termOrdinal! }, signal),
+    {
+      capability: "classLookup",
+      enabled: Boolean(termOrdinal),
+      queryKey: ["vnu-lookup-catalog", state.universityId, state.sessionNonce, termOrdinal],
     },
-    enabled: Boolean(termOrdinal),
-  });
+  );
 
   const filteredRows = filterCatalogRowsByUniversity(catalogQuery.data ?? [], courseCode, classNo, state.universityId);
 
@@ -165,9 +170,7 @@ function ClassResolver() {
       </div>
 
       <div data-testid="lookup-results" className="min-h-28" aria-live="polite">
-        {!termOrdinal ? (
-          <Empty text={t.lookup.selectTermPrompt} />
-        ) : catalogQuery.isLoading ? (
+        {termOrdinal ? catalogQuery.isLoading ? (
           <Skeleton className="h-40" />
         ) : catalogQuery.error ? (
           <div className="space-y-2" role="alert"><Empty text={t.lookup.classesError} /><Button type="button" variant="outline" className="min-h-11" onClick={() => void catalogQuery.refetch()}>{t.lookup.retry}</Button></div>
@@ -201,6 +204,8 @@ function ClassResolver() {
                 </>
               ) : <Empty text={t.lookup.noMatches} />}
           </div>
+        ) : (
+          <Empty text={t.lookup.selectTermPrompt} />
         )}
       </div>
     </div>
@@ -241,14 +246,15 @@ function ReverseClassResolver() {
   const [classId, setClassId] = useState("");
   const [termOrdinal, setTermOrdinal] = useState<string | undefined>(undefined);
 
-  const catalogQuery = useQuery({
-    queryKey: ["vnu-lookup-catalog", state.universityId, state.sessionNonce, termOrdinal],
-    queryFn: async ({ signal }) => {
-      await state.ensureSession();
-      return api.vnuClassCatalog({ vTermID: termOrdinal! }, signal);
+  const catalogQuery = useFeatureQuery(
+    "vnu-lookup-catalog",
+    (signal) => api.vnuClassCatalog({ vTermID: termOrdinal! }, signal),
+    {
+      capability: "classLookup",
+      enabled: Boolean(termOrdinal),
+      queryKey: ["vnu-lookup-catalog", state.universityId, state.sessionNonce, termOrdinal],
     },
-    enabled: Boolean(termOrdinal),
-  });
+  );
 
   const trimmedClassId = classId.trim();
   const matchedRows = filterCatalogRowsByClassId(catalogQuery.data ?? [], trimmedClassId);
@@ -267,17 +273,11 @@ function ReverseClassResolver() {
       </div>
 
       <div className="min-h-28" aria-live="polite">
-        {!termOrdinal ? (
-          <Empty text={t.lookup.selectTermPrompt} />
-        ) : catalogQuery.isLoading ? (
+        {termOrdinal ? catalogQuery.isLoading ? (
           <Skeleton className="h-40" />
         ) : catalogQuery.error ? (
           <div className="space-y-2" role="alert"><Empty text={t.lookup.classesError} /><Button type="button" variant="outline" className="min-h-11" onClick={() => void catalogQuery.refetch()}>{t.lookup.retry}</Button></div>
-        ) : !trimmedClassId ? (
-          <Empty text={t.lookup.reverseEnterIdPrompt} />
-        ) : !matchedRows.length ? (
-          <Empty text={t.lookup.reverseNoMatch} />
-        ) : (
+        ) : trimmedClassId ? matchedRows.length ? (
           <div>
             <div className="mb-2 flex items-end justify-between gap-3"><h3 className="text-sm font-semibold">{t.lookup.resultsTitle}</h3><p className="text-xs text-muted-foreground">{t.lookup.resultsCount(matchedRows.length)}</p></div>
               <div className="flex items-center justify-between gap-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -297,6 +297,12 @@ function ReverseClassResolver() {
                 />)}
               </div>
           </div>
+        ) : (
+          <Empty text={t.lookup.reverseNoMatch} />
+        ) : (
+          <Empty text={t.lookup.reverseEnterIdPrompt} />
+        ) : (
+          <Empty text={t.lookup.selectTermPrompt} />
         )}
       </div>
     </div>
@@ -307,9 +313,11 @@ type ClassLookupMode = "forward" | "reverse";
 
 function ClassIdentifierTools() {
   const { t } = useLocale();
+  const state = useHyeboard();
   const [mode, setMode] = useState<ClassLookupMode>("forward");
+  const key = `${state.activeAccountId}:${state.sessionNonce}`;
   return (
-    <Card data-testid="class-identifier-tools">
+    <Card key={key} data-testid="class-identifier-tools">
       <CardHeader>
         <CardTitle className="text-base">{t.lookup.classIdentifiersTitle}</CardTitle>
         <CardDescription className="max-w-[70ch]">{t.lookup.classIdentifiersDescription}</CardDescription>
@@ -345,14 +353,15 @@ function CrossStudentCodeSection({ profile }: { profile: VnuProfile }) {
   // still count as self-targeting (same normalization as the worker).
   const isSelfTarget = isValid && Number(trimmedStdId) === Number(profile.internalStudentId);
 
-  const codeQuery = useQuery({
-    queryKey: ["vnu-cross-student-code", state.universityId, state.sessionNonce, submitted],
-    queryFn: async () => {
-      await state.ensureSession();
-      return api.vnuCrossStudentCode(submitted!);
+  const codeQuery = useFeatureQuery(
+    "vnu-cross-student-code",
+    ({ signal }) => api.vnuCrossStudentCode(submitted!, signal),
+    {
+      capability: "crossLookup",
+      enabled: Boolean(submitted),
+      queryKey: ["vnu-cross-student-code", state.universityId, state.sessionNonce, submitted],
     },
-    enabled: Boolean(submitted),
-  });
+  );
 
   const submit = () => {
     if (!isValid || isSelfTarget) return;
@@ -391,9 +400,7 @@ function CrossStudentCodeSection({ profile }: { profile: VnuProfile }) {
             <Skeleton className="h-20" />
           ) : codeQuery.error ? (
             <div className="space-y-2" role="alert"><Empty text={codeError} /><Button type="button" variant="outline" className="min-h-11" onClick={() => void codeQuery.refetch()}>{t.lookup.retry}</Button></div>
-          ) : !result?.studentCode ? (
-            <Empty text={t.lookup.crossCodeNotFound} />
-          ) : (
+          ) : result?.studentCode ? (
             <div className="divide-y divide-border">
               <div className="list-row flex-col items-stretch gap-2 sm:flex-row sm:items-center">
                 <div className="min-w-0">
@@ -406,6 +413,8 @@ function CrossStudentCodeSection({ profile }: { profile: VnuProfile }) {
                 </div>
               </div>
             </div>
+          ) : (
+            <Empty text={t.lookup.crossCodeNotFound} />
           )
         ) : <Empty text={t.lookup.crossCodePrompt} />}</div>
     </section>
@@ -430,14 +439,15 @@ function CrossStudentIdSection({ profile }: { profile: VnuProfile }) {
   // Numeric comparison, matching the worker's normalized self-target check.
   const isSelfTarget = isValid && Number(trimmedStdCode) === Number(profile.studentCode);
 
-  const idQuery = useQuery({
-    queryKey: ["vnu-cross-student-id", state.universityId, state.sessionNonce, submitted],
-    queryFn: async () => {
-      await state.ensureSession();
-      return api.vnuCrossStudentId(submitted!);
+  const idQuery = useFeatureQuery(
+    "vnu-cross-student-id",
+    ({ signal }) => api.vnuCrossStudentId(submitted!, signal),
+    {
+      capability: "crossLookup",
+      enabled: Boolean(submitted),
+      queryKey: ["vnu-cross-student-id", state.universityId, state.sessionNonce, submitted],
     },
-    enabled: Boolean(submitted),
-  });
+  );
 
   const submit = () => {
     if (!isValid || isSelfTarget) return;
@@ -531,14 +541,15 @@ function transcriptAcademicSummaries(transcript?: VnuCrossTranscript): AcademicT
 function CrossTranscriptDetail({ permit }: { permit: string }) {
   const { t } = useLocale();
   const state = useHyeboard();
-  const detailQuery = useQuery({
-    queryKey: ["vnu-cross-detail", state.universityId, state.sessionNonce, permit],
-    queryFn: async () => {
-      await state.ensureSession();
-      return api.vnuCrossDetail(permit);
+  const detailQuery = useFeatureQuery(
+    "vnu-cross-detail",
+    ({ signal }) => api.vnuCrossDetail(permit, signal),
+    {
+      capability: "crossLookup",
+      queryKey: ["vnu-cross-detail", state.universityId, state.sessionNonce, permit],
+      staleTime: Infinity,
     },
-    staleTime: Infinity,
-  });
+  );
 
   if (detailQuery.isLoading) return <div className="px-4 py-3"><Skeleton className="h-12" /></div>;
   if (detailQuery.error) return <div className="px-4 py-3" role="alert"><p className="text-sm text-muted-foreground">{t.lookup.pointDetailError}</p></div>;
@@ -551,8 +562,8 @@ function CrossTranscriptDetail({ permit }: { permit: string }) {
             <p className="break-words text-sm font-medium">{component.nature || "-"}</p>
             <p className="text-xs text-muted-foreground">
               {[
-                component.weight != null ? t.lookup.pointDetailWeight(component.weight) : undefined,
-                component.attempt != null ? t.lookup.pointDetailAttempt(component.attempt) : undefined,
+                component.weight == null ? undefined : t.lookup.pointDetailWeight(component.weight),
+                component.attempt == null ? undefined : t.lookup.pointDetailAttempt(component.attempt),
               ].filter(Boolean).join(" · ") || "-"}
             </p>
           </div>
@@ -615,14 +626,15 @@ function CrossTranscriptSection({ profile, crossDetailEnabled }: { profile: VnuP
   const [submitted, setSubmitted] = useState<VnuCrossTranscriptInput | null>(null);
   const inputState = deriveCrossTranscriptInput(mode, mode === "stdId" ? stdId : stdCode, profile);
 
-  const transcriptQuery = useQuery({
-    queryKey: ["vnu-cross-transcript", state.universityId, state.sessionNonce, submitted],
-    queryFn: async () => {
-      await state.ensureSession();
-      return api.vnuCrossTranscript(submitted!);
+  const transcriptQuery = useFeatureQuery(
+    "vnu-cross-transcript",
+    ({ signal }) => api.vnuCrossTranscript(submitted!, signal),
+    {
+      capability: "crossLookup",
+      enabled: Boolean(submitted),
+      queryKey: ["vnu-cross-transcript", state.universityId, state.sessionNonce, submitted],
     },
-    enabled: Boolean(submitted),
-  });
+  );
   const derivedTerms = useMemo(() => transcriptAcademicSummaries(transcriptQuery.data), [transcriptQuery.data]);
   const permits = useMemo(() => {
     const mapped = new Map<string, string>();
@@ -739,9 +751,11 @@ type StudentLookupMode = "id-to-code" | "code-to-id" | "transcript";
 
 function StudentRecordTools({ profile, crossLookupEnabled, crossDetailEnabled }: { profile: VnuProfile; crossLookupEnabled: boolean; crossDetailEnabled: boolean }) {
   const { t } = useLocale();
+  const state = useHyeboard();
   const [mode, setMode] = useState<StudentLookupMode>("id-to-code");
+  const key = `${state.activeAccountId}:${state.sessionNonce}`;
   return (
-    <Card data-testid="student-record-tools">
+    <Card key={key} data-testid="student-record-tools">
       <CardHeader>
         <CardTitle className="text-base">{t.lookup.studentRecordsTitle}</CardTitle>
         <CardDescription className="max-w-[70ch]">{t.lookup.studentRecordsDescription}</CardDescription>
@@ -873,7 +887,7 @@ function createdBulkExportItems(model: ExportDocument): ExportBulkItem[] {
 
 const BULK_RESULTS_PAGE_SIZE = 50;
 
-function BulkLookupSection({ maximum, modeMaximums, directChunkMaximum, freshnessKey }: { maximum: number; modeMaximums?: Partial<Record<VnuBulkLookupMode, number>>; directChunkMaximum?: number; freshnessKey: string }) {
+function BulkLookupSection({ maximum, modeMaximums, directChunkMaximum }: { maximum: number; modeMaximums?: Partial<Record<VnuBulkLookupMode, number>>; directChunkMaximum?: number }) {
   const { locale, t } = useLocale();
   const state = useHyeboard();
   const [mode, setMode] = useState<VnuBulkLookupMode>("stdid-to-code");
@@ -928,12 +942,19 @@ function BulkLookupSection({ maximum, modeMaximums, directChunkMaximum, freshnes
 
   useEffect(() => {
     const invalidateForAccountSwitch = () => clearLookupState(true);
+    const invalidateForRefresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ preserveFeatureState?: boolean }>).detail;
+      if (detail?.preserveFeatureState) return;
+      clearLookupState(true);
+    };
     window.addEventListener(ACCOUNT_SWITCHED_EVENT, invalidateForAccountSwitch);
+    window.addEventListener("hyeboard:vnu-refresh-committed", invalidateForRefresh);
     return () => {
       window.removeEventListener(ACCOUNT_SWITCHED_EVENT, invalidateForAccountSwitch);
+      window.removeEventListener("hyeboard:vnu-refresh-committed", invalidateForRefresh);
       invalidateRun();
     };
-  }, [freshnessKey]);
+  }, []);
 
   useEffect(() => {
     if (exportItems.current.length === 0) return;
@@ -978,12 +999,12 @@ function BulkLookupSection({ maximum, modeMaximums, directChunkMaximum, freshnes
     const retrying = remainingTargets.length > 0;
     const pendingTargets = retrying ? remainingTargets : parsed.targets;
     const initialProgress = retrying ? progress : { processed: 0, total: parsed.targets.length, items: [] };
-    if (!retrying) {
+    if (retrying) {
+      setExportModel((current) => current?.run ? { ...current, run: { ...current.run, status: "partial" } } : current);
+    } else {
       exportItems.current = [];
       setExportModel(undefined);
       setResultPageStart(0);
-    } else {
-      setExportModel((current) => current?.run ? { ...current, run: { ...current.run, status: "partial" } } : current);
     }
     processedItemCount.current = initialProgress.items.length;
     progressSnapshot.current = initialProgress;
@@ -1111,31 +1132,28 @@ function BulkLookupSection({ maximum, modeMaximums, directChunkMaximum, freshnes
 export function LookupPage() {
   const state = useHyeboard();
   const { t } = useLocale();
-  const profileQuery = useQuery({
-    queryKey: ["vnu-lookup-profile", state.universityId, state.sessionNonce],
-    queryFn: async () => { await state.ensureSession(); return api.vnuOwnProfile(); },
-    placeholderData: (previous) => previous,
-  });
-  // Fail-closed while the universities list is still loading: the section
-  // only renders once the active university's capabilities affirmatively
-  // claim crossLookup (vnu only — see the adapter honesty rule).
-  const activeUniversity = state.universities.data?.find((university) => university.id === state.universityId);
-  const crossLookupEnabled = activeUniversity?.capabilities.crossLookup === true;
-  const bulkMaximum = activeUniversity?.limits?.crossLookup?.bulkMaxTargets;
-  const bulkDirectChunkMaximum = activeUniversity?.limits?.crossLookup?.bulkDirectChunkMaxTargets;
-  const bulkModeMaximums = activeUniversity?.limits?.crossLookup?.bulkModeMaxTargets;
-  const crossDetailEnabled = Number.isSafeInteger(activeUniversity?.limits?.crossLookup?.crossDetail?.maxRows)
-    && activeUniversity!.limits!.crossLookup!.crossDetail!.maxRows > 0;
+  const classLookupEnabled = state.activeUniversity?.capabilities.classLookup === true;
+  const crossLookup = state.activeUniversity?.limits?.crossLookup;
+  const crossLookupEnabled = state.activeUniversity?.capabilities.crossLookup === true && crossLookup !== undefined;
+  const bulkMaximum = crossLookup?.bulkMaxTargets;
+  const bulkDirectChunkMaximum = crossLookup?.bulkDirectChunkMaxTargets;
+  const bulkModeMaximums = crossLookup?.bulkModeMaxTargets;
+  const crossDetailEnabled = crossLookupEnabled && Number.isSafeInteger(crossLookup?.crossDetail?.maxRows)
+    && crossLookup!.crossDetail!.maxRows > 0;
   const bulkLookupEnabled = crossLookupEnabled && Number.isSafeInteger(bulkMaximum) && bulkMaximum! > 0;
-  const bulkFreshnessKey = `${state.universityId}:${state.activeAccountId ?? "no-account"}`;
+  const profileQuery = useFeatureQuery("vnu-lookup-profile", ({ signal }) => api.vnuOwnProfile(signal), {
+    capability: ["classLookup", "crossLookup"],
+    enabled: classLookupEnabled || crossLookupEnabled,
+    queryKey: ["vnu-lookup-profile", state.universityId, state.activeAccountId],
+  });
 
   return (
-    <FeatureFrame title={t.lookup.title} description={t.lookup.description} query={profileQuery}>
+    <FeatureFrame title={t.lookup.title} description={t.lookup.description} query={classLookupEnabled || crossLookupEnabled ? profileQuery : { ...profileQuery, data: {} as VnuProfile }}>
       {(profile) => (
         <div className="space-y-6">
-          <ClassIdentifierTools />
-          <StudentRecordTools profile={profile} crossLookupEnabled={crossLookupEnabled} crossDetailEnabled={crossDetailEnabled} />
-          {bulkLookupEnabled ? <BulkLookupSection key={bulkFreshnessKey} maximum={bulkMaximum!} modeMaximums={bulkModeMaximums} directChunkMaximum={bulkDirectChunkMaximum} freshnessKey={bulkFreshnessKey} /> : null}
+          {classLookupEnabled ? <ClassIdentifierTools /> : null}
+          {crossLookupEnabled ? <StudentRecordTools profile={profile} crossLookupEnabled crossDetailEnabled={crossDetailEnabled} /> : null}
+          {bulkLookupEnabled ? <BulkLookupSection maximum={bulkMaximum!} modeMaximums={bulkModeMaximums} directChunkMaximum={bulkDirectChunkMaximum} /> : null}
         </div>
       )}
     </FeatureFrame>

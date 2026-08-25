@@ -102,14 +102,14 @@ export class DaotaoClient {
   // is rejected, confirming freshness otherwise. ~8 KB; cheaper than any
   // data-bearing page.
   validateSession(signal?: AbortSignal) { return this.fetchPage("/dkmh/login.asp", signal); }
-  getGradesHtml() { return this.fetchPage("/ListPoint/listpoint_Brc1.asp"); }
-  getStudyProgressHtml() { return this.fetchPage("/StdInfo/TabStdStudy.asp"); }
-  getExamBaseHtml() { return this.fetchPage("/StdExamination/StdExamination.asp?selViewType=StdExam"); }
-  getSyllabusHtml() { return this.fetchPage("/SiteManager/Syllabus/default.asp"); }
+  getGradesHtml(signal?: AbortSignal) { return this.fetchPage("/ListPoint/listpoint_Brc1.asp", signal); }
+  getStudyProgressHtml(signal?: AbortSignal) { return this.fetchPage("/StdInfo/TabStdStudy.asp", signal); }
+  getExamBaseHtml(signal?: AbortSignal) { return this.fetchPage("/StdExamination/StdExamination.asp?selViewType=StdExam", signal); }
+  getSyllabusHtml(signal?: AbortSignal) { return this.fetchPage("/SiteManager/Syllabus/default.asp", signal); }
 
-  getExamsHtml(params: { selUniv: string; selStd: string; vTermID: string }): Promise<string> {
+  getExamsHtml(params: { selUniv: string; selStd: string; vTermID: string }, signal?: AbortSignal): Promise<string> {
     const query = new URLSearchParams({ selViewType: "StdExam", selBK: "0", selTG: "0", ...params });
-    return this.fetchPage(`/StdExamination/StdExamination.asp?${query.toString()}`);
+    return this.fetchPage(`/StdExamination/StdExamination.asp?${query.toString()}`, signal);
   }
 
   // ListPoint/listpoint_Brc1.asp?selStd=... — transcript page for a GIVEN
