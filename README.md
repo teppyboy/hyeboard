@@ -147,6 +147,17 @@ Validate Worker packaging without publishing:
 pnpm --filter @hyeboard/worker exec wrangler deploy --dry-run
 ```
 
+Admin control needs the `FEATURE_POLICY` Durable Object binding plus a separate admin session secret. Store admin secrets with Wrangler, never in `wrangler.jsonc` vars:
+
+```bash
+pnpm --filter @hyeboard/worker exec wrangler secret put HYEB_ADMIN_SESSION_SECRET
+pnpm --filter @hyeboard/worker exec wrangler secret put HYEB_ADMIN_PASSWORD_HASH
+pnpm --filter @hyeboard/worker exec wrangler secret put HYEB_ADMIN_GITHUB_CLIENT_SECRET
+pnpm --filter @hyeboard/worker exec wrangler secret put HYEB_ADMIN_DISCORD_CLIENT_SECRET
+```
+
+Set non-secret admin values as deployment vars: `HYEB_ADMIN_SESSION_TTL_SECONDS`, provider client IDs, comma-separated numeric provider user IDs, and the exact HTTPS `HYEB_ADMIN_PUBLIC_ORIGIN`. Register OAuth callbacks at `<origin>/api/admin/oauth/github/callback` and `<origin>/api/admin/oauth/discord/callback`. Behind TLS termination, `HYEB_ADMIN_PUBLIC_ORIGIN=https://…` authorizes `Secure` admin cookies; forwarded protocol headers are intentionally ignored.
+
 ### Self-hosted
 
 Create a production bundle under `dist/`:
@@ -162,6 +173,14 @@ cd dist
 npm install --omit=dev
 HYEB_SESSION_SECRET=replace-with-a-real-secret node dist/index.js
 ```
+
+Generate a PBKDF2 admin password hash without putting the password in shell history:
+
+```bash
+pnpm --filter @hyeboard/worker admin:hash-password
+```
+
+The masked prompt prints only the versioned hash. Configure `HYEB_ADMIN_SESSION_SECRET` separately from `HYEB_SESSION_SECRET`; rotating it signs out every admin session. Numeric GitHub/Discord user IDs form the OAuth allowlists. See the [HA runbook](docs/ha-runbook.md#admin-feature-control) for bootstrap, publishing, rollback, recovery, SQLite backup, Kubernetes, and Helm details.
 
 Container and Kubernetes deployment details live in the [HA runbook](docs/ha-runbook.md). PostgreSQL remains external; the production Kubernetes paths can run Redis through the Redis Operator and Browserless in-cluster.
 
@@ -195,7 +214,7 @@ docker push "ghcr.io/${IMAGE_OWNER}/hyeboard-automation-worker:${IMAGE_TAG}"
 
 After pushing, use the immutable `sha-${GITHUB_SHA}` tag (or replace it with the verified registry digest in a deployment-specific release copy). Do not use `latest` or leave `replace-with-release-tag` in a release overlay. The production overlay intentionally uses `registry.internal.example/...`; replace that registry with the organization's actual registry before rendering.
 
-`docker-compose.yml` has two mutually exclusive local profiles:
+`compose.yml` has two mutually exclusive local profiles:
 
 - `memory` starts only `api-memory`. It uses process-local state and forces `HYEB_AUTOMATION_EXECUTOR_READY=false`.
 - `distributed` starts `api`, `postgres`, `redis`, `browserless`, and `automation-worker`. PostgreSQL, Redis, and Browserless are local Compose dependencies in this profile; this does not make automated UET sign-in or feature parity available.
@@ -214,7 +233,7 @@ docker compose --env-file compose.env --profile distributed up -d --build
 docker compose --env-file compose.env --profile distributed ps
 ```
 
-`compose.env.example` defines `HYEB_SESSION_SECRET`, `POSTGRES_PASSWORD`, the current/optional previous automation key pair, `BROWSERLESS_TOKEN`, `HYEB_ALLOWED_ORIGINS`, `HYEB_AUTOMATION_EXECUTOR_READY`, and `API_PORT`; it also documents optional consumer/node names. Fill the values required by the selected profile rather than adding secrets to `docker-compose.yml`.
+`compose.env.example` defines `HYEB_SESSION_SECRET`, `POSTGRES_PASSWORD`, the current/optional previous automation key pair, `BROWSERLESS_TOKEN`, `HYEB_ALLOWED_ORIGINS`, `HYEB_AUTOMATION_EXECUTOR_READY`, and `API_PORT`; it also documents optional consumer/node names. Fill the values required by the selected profile rather than adding secrets to `compose.yml`.
 
 Only the API is published to the host. Compose keeps PostgreSQL, Redis, Browserless, and the automation health endpoint on the private `hyeboard` network. Use `docker compose ... down` to stop a profile; add `-v` only when intentionally deleting local PostgreSQL/Redis data.
 
@@ -241,7 +260,7 @@ The templates are under [`deploy/k8s`](deploy/k8s):
 
 Kubernetes does not provision PostgreSQL, an ingress controller, TLS, or a secret manager. Example and staging use external PostgreSQL, Redis, and Browserless services. Production runs Redis and Browserless in-cluster, and requires the pinned cluster-scoped Redis Operator release in `ot-operators` watching all namespaces, its cluster-scoped CRD, a production StorageClass, and enough capacity for three Redis members, three Sentinels, three Browserless pods, and the application replicas. All overlays require an NGINX ingress class, a `metrics-server`-compatible metrics API, and the referenced TLS Secret.
 
-`deploy/k8s/base/secret.example.yaml` is a template only and is not a Kustomize resource. Prefer an external secret manager or External Secrets integration to materialize a Secret named `hyeboard-runtime` with these keys: `HYEB_SESSION_SECRET`, `HYEB_POSTGRES_URL`, `HYEB_REDIS_URL`, `AUTOMATION_KEY_CURRENT_ID`, `AUTOMATION_KEY_CURRENT_B64`, optional previous automation key pair, `BROWSERLESS_ENDPOINT`, and `BROWSERLESS_TOKEN`. For production, point `HYEB_REDIS_URL` at the operator-managed `hyeboard-redis-master` Service and `BROWSERLESS_ENDPOINT` at `ws://hyeboard-browserless:3000/chromium`; include the Redis password in the Redis URI as required by the Node Redis client. Create a separate `hyeboard-redis-auth` Secret with key `password` for the Redis Operator. If a cluster secret manager is unavailable, create both Secrets out of band with `kubectl` from environment variables; never apply templates unchanged or commit generated Secret YAML.
+`deploy/k8s/base/secret.example.yaml` is a template only and is not a Kustomize resource. Prefer an external secret manager or External Secrets integration to materialize a Secret named `hyeboard-runtime` with these keys: `HYEB_SESSION_SECRET`, `HYEB_ADMIN_SESSION_SECRET`, `HYEB_POSTGRES_URL`, `HYEB_REDIS_URL`, `AUTOMATION_KEY_CURRENT_ID`, `AUTOMATION_KEY_CURRENT_B64`, optional previous automation key pair, `BROWSERLESS_ENDPOINT`, and `BROWSERLESS_TOKEN`. For production, point `HYEB_REDIS_URL` at the operator-managed `hyeboard-redis-master` Service and `BROWSERLESS_ENDPOINT` at `ws://hyeboard-browserless:3000/chromium`; include the Redis password in the Redis URI as required by the Node Redis client. Create a separate `hyeboard-redis-auth` Secret with key `password` for the Redis Operator. If a cluster secret manager is unavailable, create both Secrets out of band with `kubectl` from environment variables; never apply templates unchanged or commit generated Secret YAML.
 
 The base and overlays contain the explicit `replace-with-release-tag` placeholder. Replace it with the published immutable SHA tag or digest before a real deployment. The CI render job substitutes its commit SHA tag in a temporary copy; it does not modify or deploy the repository manifests.
 

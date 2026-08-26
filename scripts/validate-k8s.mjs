@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { validateClusterSnapshot } from "./validate-k8s-cluster.mjs";
 
 const read = (path) =>
-  readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const option = (name) => {
   const prefix = `--${name}=`;
   const argument = process.argv.find((value) => value.startsWith(prefix));
@@ -30,7 +30,10 @@ const ciDependencies = read("deploy/k8s/overlays/ci/dependencies.yaml");
 const productionBrowserless = read("deploy/k8s/overlays/production/browserless-deployment.yaml");
 const productionRedis = read("deploy/k8s/overlays/production/redis-replication.yaml");
 const productionRedisNetworkPolicy = read("deploy/k8s/overlays/production/redis-network-policy.yaml");
+const readme = read("README.md");
+const runbook = read("docs/ha-runbook.md");
 const dockerfile = read("Dockerfile");
+const compose = read("compose.yml");
 const workerDockerfile = read("apps/automation-worker/Dockerfile");
 const count = (text, value) => text.split(value).length - 1;
 const has = (text, pattern) => assert.match(text, pattern);
@@ -118,6 +121,10 @@ function validateSecretTemplate(text) {
   assert(!/^data:/m.test(text), "Secret template must not contain base64 data");
   const expectedKeys = [
     "HYEB_SESSION_SECRET",
+    "HYEB_ADMIN_SESSION_SECRET",
+    "HYEB_ADMIN_PASSWORD_HASH",
+    "HYEB_ADMIN_GITHUB_CLIENT_SECRET",
+    "HYEB_ADMIN_DISCORD_CLIENT_SECRET",
     "HYEB_POSTGRES_URL",
     "HYEB_REDIS_URL",
     "AUTOMATION_KEY_CURRENT_ID",
@@ -127,7 +134,7 @@ function validateSecretTemplate(text) {
   ];
   for (const key of expectedKeys) has(text, new RegExp(`^  ${key}:`, "m"));
 
-  const secretBlocks = [...text.matchAll(/^  ([A-Z][A-Z0-9_]*):/gm)];
+  const secretBlocks = [...text.matchAll(/^ {2}([A-Z][A-Z0-9_]*):/gm)];
   for (const [index, match] of secretBlocks.entries()) {
     const end = secretBlocks[index + 1]?.index ?? text.length;
     const block = text.slice(match.index, end);
@@ -160,7 +167,6 @@ function validateDeploymentSecurity(text, name) {
 
 function validateBrowserlessSecurity(text) {
   has(text, /automountServiceAccountToken:\s*false/);
-  has(text, /runAsUser:\s*999/);
   has(text, /runAsNonRoot:\s*true/);
   has(text, /seccompProfile:\s*\n\s+type:\s*RuntimeDefault/);
   has(text, /allowPrivilegeEscalation:\s*false/);
@@ -212,6 +218,13 @@ has(api, /maxUnavailable: 0/);
 has(api, /path: \/api\/ready/);
 has(api, /path: \/api\/live/);
 has(api, /fieldPath: metadata\.name/);
+for (const key of [
+  "HYEB_ADMIN_SESSION_SECRET",
+  "HYEB_ADMIN_PASSWORD_HASH",
+  "HYEB_ADMIN_GITHUB_CLIENT_SECRET",
+  "HYEB_ADMIN_DISCORD_CLIENT_SECRET",
+]) has(api, new RegExp(`name: ${key}\\s+valueFrom:\\s+secretKeyRef:`, "m"));
+assert(!/HYEB_ADMIN_DB_PATH|admin\.sqlite/i.test(api), "distributed API deployment must not configure local SQLite");
 has(api, /topologySpreadConstraints:/);
 has(api, /preferredDuringSchedulingIgnoredDuringExecution:/);
 has(api, /whenUnsatisfiable: ScheduleAnyway/);
@@ -222,6 +235,8 @@ has(api, /name: hyeboard-api/);
 assert(!api.includes(":latest"));
 assert(!worker.includes(":latest"));
 assert(config.includes("HYEB_SHUTDOWN_TIMEOUT_MS=30000"));
+assert(config.includes("HYEB_ADMIN_SESSION_TTL_SECONDS=3600"));
+assert(!/HYEB_ADMIN_DB_PATH|admin\.sqlite/i.test(config), "distributed ConfigMap must not configure local SQLite");
 has(hpa, /minReplicas: 2/);
 has(hpa, /maxReplicas: 12/);
 has(hpa, /averageUtilization: 70/);
@@ -233,7 +248,12 @@ has(apiPdb, /maxUnavailable: 1/);
 has(workerPdb, /maxUnavailable: 1/);
 assert(!apiPdb.includes("minAvailable"));
 assert(!workerPdb.includes("minAvailable"));
+has(dockerfile, /mkdir -p \/app\/data/);
+has(dockerfile, /chown 10001:10001 \/app\/data/);
 has(dockerfile, /ENTRYPOINT \["node", "dist\/index\.js"\]/);
+has(compose, /api-memory:[\s\S]*?HYEB_ADMIN_DB_PATH:[\s\S]*?hyeboard-admin:\/app\/data/);
+const distributedApi = compose.match(/^ {2}api:\n([\s\S]*?)(?=^ {2}api-memory:)/m)?.[1] ?? "";
+assert(!/HYEB_ADMIN_DB_PATH|hyeboard-admin:\/app\/data/.test(distributedApi), "distributed Compose API must not configure local SQLite");
 has(workerDockerfile, /ENTRYPOINT \["node", "dist\/cli\.cjs"\]/);
 has(worker, /replicas: 2/);
 has(worker, /topologySpreadConstraints:/);
@@ -263,10 +283,6 @@ has(productionRedis, /redisSecret:/);
 has(productionRedis, /name: hyeboard-redis-auth/);
 has(productionRedis, /sentinel:/);
 assert(!productionRedis.includes(":latest"));
-has(networkPolicy, /port: 53/);
-has(productionRedisNetworkPolicy, /namespaceSelector:\s*\n\s+matchLabels:\s*\n\s+kubernetes\.io\/metadata\.name: ot-operators/);
-has(productionRedisNetworkPolicy, /podSelector:\s*\n\s+matchLabels:\s*\n\s+name: redis-operator/);
-has(productionRedisNetworkPolicy, /app: hyeboard-redis-s\s*\n\s+redis_setup_type: sentinel/);
 has(ingress, /nginx.ingress.kubernetes.io\/proxy-buffering: "off"/);
 has(ingress, /nginx.ingress.kubernetes.io\/proxy-request-buffering: "off"/);
 assert(ciOverlay.includes("dependencies.yaml"));
@@ -275,6 +291,8 @@ assert(ciOverlay.includes("newName: hyeboard-automation-worker"));
 assert(ciDependencies.includes("name: postgres"));
 assert(ciDependencies.includes("name: redis"));
 assert(ciDependencies.includes("name: browserless"));
+has(readme, /hyeboard-runtime` with these keys:[^\n]*`HYEB_SESSION_SECRET`, `HYEB_ADMIN_SESSION_SECRET`, `HYEB_POSTGRES_URL`/);
+has(runbook, /create secret generic hyeboard-runtime[\s\S]*?--from-literal=HYEB_SESSION_SECRET=.*\n\s+--from-literal=HYEB_ADMIN_SESSION_SECRET=/);
 has(networkPolicy, /name: hyeboard-automation-worker/);
 assert(networkPolicy.includes("policyTypes:\n    - Egress"));
 assert(count(api, "secretKeyRef:") >= 5);

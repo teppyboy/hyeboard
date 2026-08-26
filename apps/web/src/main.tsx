@@ -7,7 +7,6 @@ import { Toaster } from "@/components/ui/sonner";
 import { LocaleProvider } from "@/lib/i18n";
 import { shouldRetryQuery } from "@/lib/api";
 import { router } from "@/router";
-import { HyeboardProvider } from "@/state";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, retry: shouldRetryQuery } },
@@ -17,10 +16,8 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <LocaleProvider>
-        <HyeboardProvider>
-          <RouterProvider router={router} />
-          <Toaster />
-        </HyeboardProvider>
+        <RouterProvider router={router} />
+        <Toaster />
       </LocaleProvider>
     </QueryClientProvider>
   </StrictMode>,

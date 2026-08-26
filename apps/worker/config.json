@@ -27,6 +27,15 @@
     "session_epoch": 0,
     "enforce_session_epoch": false
   },
+  "admin": {
+    "session_ttl_seconds": 3600,
+    "db_path": "./data/admin.sqlite",
+    "github_client_id": "",
+    "github_ids": "",
+    "discord_client_id": "",
+    "discord_ids": "",
+    "public_origin": ""
+  },
   "log_level": "info",
   "host": "127.0.0.1",
   "port": 8787,

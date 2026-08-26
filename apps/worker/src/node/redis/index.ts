@@ -6,3 +6,4 @@ export * from "./single-flight";
 export * from "./captcha-relay-coordinator";
 export * from "./vnu-probe-budget-coordinator";
 export * from "./vnu-refresh-coordinator";
+export * from "./feature-policy-events";

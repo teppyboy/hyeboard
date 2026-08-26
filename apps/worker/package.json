@@ -8,6 +8,7 @@
     "dev": "wrangler dev --show-interactive-dev-session=false --log-level info",
     "dev:node": "tsx src/index.node.ts",
     "dev:bun": "bun --watch src/index.node.ts",
+    "admin:hash-password": "tsx scripts/hash-admin-password.ts",
     "deploy": "wrangler deploy",
     "build:node": "node scripts/build-node.mjs",
     "check:node-package": "node scripts/check-node-package.mjs",

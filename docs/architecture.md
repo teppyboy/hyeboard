@@ -68,6 +68,14 @@ When distributed mode is active, newly issued or refreshed sessions carry an opa
 
 Node/Bun `SIGINT`/`SIGTERM` handling is idempotent. Shutdown drains the HTTP server first, then closes cached browser sessions, Redis, and the PostgreSQL pool under a bounded timeout. A timeout is recorded rather than allowing cleanup to block the process indefinitely; cleanup handlers remain responsible for their own cancellation.
 
+## Admin Feature Control
+
+Admin authentication is separate from student sessions. Password login uses a versioned PBKDF2 hash; GitHub and Discord login require exact numeric user-ID allowlists. Admin session tokens use `HYEB_ADMIN_SESSION_SECRET`, so rotating that secret invalidates admin sessions without rotating student tokens.
+
+Feature policy storage follows runtime authority: Cloudflare uses the `FEATURE_POLICY` Durable Object, self-hosted memory mode uses local SQLite, distributed mode uses PostgreSQL plus Redis revision events. Distributed mode never mounts or falls back to local SQLite. Revision 0 is the empty override policy, so initial effective capabilities match adapter evidence. Publishing requires the current base revision and creates an immutable audit entry; rollback publishes a new revision rather than rewriting history.
+
+Student reads retain the last successfully loaded policy during a later store outage; a replica with no cached policy fails with `FEATURE_POLICY_UNAVAILABLE`. Admin writes fail during authority outages. A publication remains committed if its propagation notification fails and logs a warning so replicas reconcile on their next authoritative read. Distributed readiness includes the PostgreSQL policy store and Redis policy-event dependency; neither failure downgrades to process-local authority.
+
 ## Academic Summaries and Exports
 
 `apps/web/src/lib/term-academic-summary.ts` is the single pure definition of listed credits, included credits, derived term GPA, and running CPA. Grades and cross-transcript views normalize their rows into it. Portal-reported cumulative values stay separate; derived values never claim university authority.

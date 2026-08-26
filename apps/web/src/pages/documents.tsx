@@ -54,15 +54,18 @@ function RequestRow({ item }: { item: ServiceRequest }) {
 export function DocumentsPage() {
   const state = useHyeboard();
   const { t } = useLocale();
-  const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
-  const showDocuments = capabilities?.documents ?? true;
-  const showNews = capabilities?.news ?? true;
-  const showRequests = capabilities?.requests ?? true;
-  const [docSearch, setDocSearch] = useState("");
+  const capabilities = state.activeUniversity?.capabilities;
+  const showDocuments = capabilities?.documents === true;
+  const showNews = capabilities?.news === true;
+  const showRequests = capabilities?.requests === true;
+  const [documentSearch, setDocumentSearch] = useState<{ accountId: string | null; sessionNonce: number; value: string }>();
+  const docSearch = documentSearch?.accountId === state.activeAccountId && documentSearch.sessionNonce === state.sessionNonce
+    ? documentSearch.value
+    : "";
 
-  const docs = useFeatureQuery("documents", () => api.documents(state.universityId), { enabled: showDocuments });
-  const news = useFeatureQuery("news", () => api.news(state.universityId), { enabled: showNews });
-  const requests = useFeatureQuery("requests", () => api.requests(state.universityId), { enabled: showRequests });
+  const docs = useFeatureQuery("documents", () => api.documents(state.universityId), { capability: "documents" });
+  const news = useFeatureQuery("news", () => api.news(state.universityId), { capability: "news" });
+  const requests = useFeatureQuery("requests", () => api.requests(state.universityId), { capability: "requests" });
   const filteredDocs = filterDocumentsByUniversity(docs.data, docSearch, state.universityId);
 
   return (
@@ -71,7 +74,7 @@ export function DocumentsPage() {
       <div className="grid gap-4 xl:grid-cols-2">
         {showDocuments ? (
           <div className="space-y-2">
-            <Input value={docSearch} onChange={(event) => setDocSearch(event.target.value)} placeholder={t.documents.searchPlaceholder} aria-label={t.documents.searchAriaLabel} />
+            <Input value={docSearch} onChange={(event) => setDocumentSearch({ accountId: state.activeAccountId, sessionNonce: state.sessionNonce, value: event.target.value })} placeholder={t.documents.searchPlaceholder} aria-label={t.documents.searchAriaLabel} />
             <MiniPanel title={t.documents.documentsTitle} query={{ ...docs, data: filteredDocs }}>{(items) => items.map((item) => <DocumentRow key={item.id} item={item} />)}</MiniPanel>
           </div>
         ) : <UnsupportedPanel title={t.documents.documentsTitle} />}

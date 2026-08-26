@@ -128,6 +128,65 @@ Expected behavior:
 
 Send `SIGTERM` for a normal stop. The API marks itself draining, stops accepting new work through the server shutdown path, closes cached browser sessions, closes Redis clients and the PostgreSQL pool, and exits once the bounded shutdown budget completes. `SIGINT` follows the same idempotent path. A timeout is recorded in the lifecycle report; it is not a license to treat an interrupted browser or stream operation as acknowledged.
 
+## Admin Feature Control
+
+### Bootstrap and authentication
+
+Generate the password hash with the repository command. Its TTY prompt is masked and stdout contains only the versioned PBKDF2 hash:
+
+```bash
+pnpm --filter @hyeboard/worker admin:hash-password
+```
+
+Set `HYEB_ADMIN_SESSION_SECRET` to a separate random value of at least 32 characters. Rotating it immediately invalidates every admin session; it does not invalidate student sessions. Set `HYEB_ADMIN_PASSWORD_HASH` to the generated output when password login is wanted. OAuth login requires each provider's client ID, client secret, and comma-separated allowlist of canonical numeric user IDs. Do not use usernames, email addresses, or leading-zero IDs. Set the exact public HTTPS origin, without a trailing slash:
+
+```text
+HYEB_ADMIN_SESSION_TTL_SECONDS=3600
+HYEB_ADMIN_GITHUB_CLIENT_ID=
+HYEB_ADMIN_GITHUB_IDS=123456789
+HYEB_ADMIN_DISCORD_CLIENT_ID=
+HYEB_ADMIN_DISCORD_IDS=123456789012345678
+HYEB_ADMIN_PUBLIC_ORIGIN=https://hyeboard.example.com
+```
+
+`HYEB_ADMIN_PUBLIC_ORIGIN` is the canonical proxy/TLS authority for admin cookies and OAuth callbacks. Set it to the exact external HTTPS origin when TLS terminates before Hyeboard. Hyeboard does not trust `X-Forwarded-Proto`; without a public origin, cookie security follows only the direct request URL, suitable for direct local HTTP/HTTPS mode.
+
+Register these OAuth callbacks:
+
+```text
+https://hyeboard.example.com/api/admin/oauth/github/callback
+https://hyeboard.example.com/api/admin/oauth/discord/callback
+```
+
+Secrets stay in the environment, Kubernetes Secret, Helm `secrets.existingSecret`, or Wrangler secrets. Cloudflare also requires the existing `FEATURE_POLICY` Durable Object binding and its `v4` migration. Never put admin secrets in `wrangler.jsonc` vars.
+
+### Policy lifecycle and recovery
+
+A new store starts at revision 0 with no overrides. Effective capabilities therefore match the adapter's current evidence-backed capabilities. Before publishing, review the draft diff, supply an operator reason, and publish against the displayed base revision. A stale base revision returns a conflict and preserves the draft for review. Rollback selects an earlier audit entry and publishes its policy as a new revision; history is never rewritten.
+
+If the policy store is unavailable, admin reads/writes fail explicitly and distributed readiness reports the policy dependency unavailable. A replica that already loaded a student policy retains that last-known-good snapshot; a replica without one fails with `FEATURE_POLICY_UNAVAILABLE`. If a publication commits but Redis propagation fails, the API logs a warning and other replicas reconcile on their next authoritative read; restore Redis before another publication. PostgreSQL and Redis remain required distributed authorities. There is no process-local or SQLite fallback.
+
+Memory mode stores policy history at `HYEB_ADMIN_DB_PATH`, default `./data/admin.sqlite`. The Compose memory profile mounts `/app/data` on the `hyeboard-admin` volume. Back up the SQLite file with the process stopped or with a SQLite-consistent backup tool; restore it at the same configured path before starting the replacement container. Without persistent writable storage, container replacement loses local admin history. Distributed mode stores history in PostgreSQL and must not set `HYEB_ADMIN_DB_PATH` or mount an admin SQLite volume.
+
+For Kubernetes or Helm, add these keys to the existing runtime Secret:
+
+```text
+HYEB_ADMIN_SESSION_SECRET
+HYEB_ADMIN_PASSWORD_HASH (optional)
+HYEB_ADMIN_GITHUB_CLIENT_SECRET (optional)
+HYEB_ADMIN_DISCORD_CLIENT_SECRET (optional)
+```
+
+Set non-secret TTL, client IDs, numeric ID allowlists, and public origin in the Kustomize ConfigMap overlay or Helm `config.runtime`. Helm `config.runtime` and `config.extraData` allow arbitrary primitive non-secret settings, but reject known secret names and `HYEB_ADMIN_DB_PATH`; `config.extraData` also cannot repeat a `config.runtime` key. External Secret references are the sole source for secret values. The API `extraEnv` list rejects duplicate names and every name managed through the runtime ConfigMap or explicit chart environment fields. These checks run inside Helm templates; `scripts/validate-helm.mjs` remains defense in depth. Configure chart secrets through `secrets.existingSecret` only. Keep provider triples complete: client ID, secret, and at least one numeric ID. Validate before rollout:
+
+```bash
+node scripts/package-config.test.mjs
+pnpm test:k8s
+pnpm test:helm
+```
+
+After rollout, verify `/api/ready`, admin login, current revision, one no-op draft review, and student policy propagation. Do not publish a capability change during a degraded dependency state.
+
 ## Session Epoch Cutover
 
 The epoch is a one-time invalidation boundary for existing self-hosted sessions. Do not rotate `HYEB_SESSION_SECRET` as part of this procedure.
@@ -218,6 +277,10 @@ After publishing, replace `replace-with-release-tag` in a deployment-specific re
 
 ```text
 HYEB_SESSION_SECRET
+HYEB_ADMIN_SESSION_SECRET
+HYEB_ADMIN_PASSWORD_HASH (optional)
+HYEB_ADMIN_GITHUB_CLIENT_SECRET (optional)
+HYEB_ADMIN_DISCORD_CLIENT_SECRET (optional)
 HYEB_POSTGRES_URL
 HYEB_REDIS_URL
 AUTOMATION_KEY_CURRENT_ID
@@ -271,6 +334,7 @@ kubectl -n "$HYEB_K8S_NAMESPACE" create secret generic hyeboard-redis-auth \
   --dry-run=client -o yaml | kubectl apply -f -
 
 export HYEB_SESSION_SECRET=<32-byte-or-longer-random-secret>
+export HYEB_ADMIN_SESSION_SECRET=<separate-32-byte-or-longer-random-secret>
 export HYEB_POSTGRES_URL=<managed-postgresql-url>
 export AUTOMATION_KEY_CURRENT_ID=<unique-key-id>
 export AUTOMATION_KEY_CURRENT_B64=<base64-encoded-32-byte-key>
@@ -280,6 +344,7 @@ export BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium
 
 kubectl -n "$HYEB_K8S_NAMESPACE" create secret generic hyeboard-runtime \
   --from-literal=HYEB_SESSION_SECRET="$HYEB_SESSION_SECRET" \
+  --from-literal=HYEB_ADMIN_SESSION_SECRET="$HYEB_ADMIN_SESSION_SECRET" \
   --from-literal=HYEB_POSTGRES_URL="$HYEB_POSTGRES_URL" \
   --from-literal=HYEB_REDIS_URL="$HYEB_REDIS_URL" \
   --from-literal=AUTOMATION_KEY_CURRENT_ID="$AUTOMATION_KEY_CURRENT_ID" \
@@ -291,7 +356,7 @@ kubectl -n "$HYEB_K8S_NAMESPACE" create secret generic hyeboard-runtime \
 
 For real operations, replace shell variables with an external secret manager or External Secrets integration. Do not save these exports in a tracked file or paste generated Secret YAML into a ticket.
 
-Generate the session secret and automation key with a cryptographically secure generator, and use a unique key ID. Generate a PostgreSQL password separately when the managed database is provisioned. Keep values out of manifests, shell history where practical, logs, and source control. If no secret manager is available, create the Secret out of band with `kubectl` from environment variables; never apply `secret.example.yaml` unchanged.
+Generate separate student and admin session secrets plus the automation key with a cryptographically secure generator, and use a unique key ID. Generate a PostgreSQL password separately when the managed database is provisioned. Keep values out of manifests, shell history where practical, logs, and source control. If no secret manager is available, create the Secret out of band with `kubectl` from environment variables; never apply `secret.example.yaml` unchanged.
 
 Staging requires reachable PostgreSQL, Redis, and Browserless endpoints. Production requires PostgreSQL, the external OT-CONTAINER-KIT Redis Operator in `ot-operators` watching the selected workload namespace, its `redis.redis.opstreelabs.in/v1beta2` CRD, a `hyeboard-redis-auth` Secret with key `password`, and a StorageClass that can provision three Redis PVCs. Redis, Sentinel, application, and Browserless topology spread is a soft preference, so a smaller test cluster can co-locate replicas. Production Browserless is exposed only through the in-cluster `hyeboard-browserless` ClusterIP and uses `BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium`. Production `HYEB_REDIS_URL` must use the operator-managed `hyeboard-redis-master` Service and include the Redis password in the URL. Add destination restrictions appropriate to the cluster CNI. The Ingress resources require an NGINX ingress controller, the named TLS Secret (`hyeboard-tls`, `hyeboard-staging-tls`, or `hyeboard-production-tls`), and DNS for the selected hostname.
 
@@ -370,6 +435,10 @@ Put the runtime credentials and Redis password in a local values file with `secr
 
 ```text
 HYEB_SESSION_SECRET
+HYEB_ADMIN_SESSION_SECRET
+HYEB_ADMIN_PASSWORD_HASH (optional)
+HYEB_ADMIN_GITHUB_CLIENT_SECRET (optional)
+HYEB_ADMIN_DISCORD_CLIENT_SECRET (optional)
 HYEB_POSTGRES_URL
 HYEB_REDIS_URL
 AUTOMATION_KEY_CURRENT_ID

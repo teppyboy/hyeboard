@@ -66,6 +66,29 @@ spec:
                 secretKeyRef:
                   name: hyeboard-runtime
                   key: HYEB_SESSION_SECRET
+            - name: HYEB_ADMIN_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hyeboard-runtime
+                  key: HYEB_ADMIN_SESSION_SECRET
+            - name: HYEB_ADMIN_PASSWORD_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: hyeboard-runtime
+                  key: HYEB_ADMIN_PASSWORD_HASH
+                  optional: true
+            - name: HYEB_ADMIN_GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hyeboard-runtime
+                  key: HYEB_ADMIN_GITHUB_CLIENT_SECRET
+                  optional: true
+            - name: HYEB_ADMIN_DISCORD_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hyeboard-runtime
+                  key: HYEB_ADMIN_DISCORD_CLIENT_SECRET
+                  optional: true
             - name: HYEB_POSTGRES_URL
               valueFrom:
                 secretKeyRef:

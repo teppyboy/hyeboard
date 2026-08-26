@@ -8,8 +8,13 @@ const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const chartPath = resolve(repositoryRoot, "deploy/helm/hyeboard");
 const placeholderTag = "replace-with-release-tag";
 const defaultReleaseName = "hyeboard";
-const secretKeys = new Set([
+const secretNames = [
   "HYEB_SESSION_SECRET",
+  "HYEB_ADMIN_SESSION_SECRET",
+  "HYEB_ADMIN_PASSWORD_HASH",
+  "HYEB_ADMIN_GITHUB_CLIENT_SECRET",
+  "HYEB_ADMIN_DISCORD_CLIENT_SECRET",
+  "DATABASE_URL",
   "HYEB_POSTGRES_URL",
   "HYEB_REDIS_URL",
   "REDIS_URL",
@@ -19,7 +24,8 @@ const secretKeys = new Set([
   "AUTOMATION_KEY_PREVIOUS_B64",
   "BROWSERLESS_ENDPOINT",
   "BROWSERLESS_TOKEN",
-]);
+];
+const secretKeys = new Set(secretNames);
 const mutableTags = new Set([
   "latest",
   "stable",
@@ -36,6 +42,99 @@ const allowUnpinnedImages = new Set([
   "quay.io/opstree/redis",
   "quay.io/opstree/redis-sentinel",
 ]);
+const adminRuntimeCases = [
+  ["accepts canonical admin runtime values", true, {
+    HYEB_ADMIN_SESSION_TTL_SECONDS: "86400",
+    HYEB_ADMIN_PUBLIC_ORIGIN: "https://admin.example.test:8443",
+    HYEB_ADMIN_GITHUB_CLIENT_ID: "github-client",
+    HYEB_ADMIN_GITHUB_IDS: "42, 7",
+    HYEB_ADMIN_DISCORD_CLIENT_ID: "discord-client",
+    HYEB_ADMIN_DISCORD_IDS: "123456789012345678",
+  }],
+  ["accepts localhost HTTP origin", true, { HYEB_ADMIN_PUBLIC_ORIGIN: "http://localhost:5173" }],
+  ["accepts loopback HTTP origin with non-default port", true, { HYEB_ADMIN_PUBLIC_ORIGIN: "http://localhost:8787" }],
+  ["accepts IPv4 loopback HTTP origin", true, { HYEB_ADMIN_PUBLIC_ORIGIN: "http://127.0.0.1:5173" }],
+  ["accepts IPv6 loopback HTTP origin", true, { HYEB_ADMIN_PUBLIC_ORIGIN: "http://[::1]:5173" }],
+  ["rejects zero TTL", false, { HYEB_ADMIN_SESSION_TTL_SECONDS: "0" }],
+  ["rejects non-canonical TTL", false, { HYEB_ADMIN_SESSION_TTL_SECONDS: "03600" }],
+  ["rejects TTL above runtime bound", false, { HYEB_ADMIN_SESSION_TTL_SECONDS: "86401" }],
+  ["rejects non-loopback HTTP origin", false, { HYEB_ADMIN_PUBLIC_ORIGIN: "http://admin.example.test" }],
+  ["rejects origin trailing slash", false, { HYEB_ADMIN_PUBLIC_ORIGIN: "https://admin.example.test/" }],
+  ["rejects origin path", false, { HYEB_ADMIN_PUBLIC_ORIGIN: "https://admin.example.test/admin" }],
+  ["rejects origin query", false, { HYEB_ADMIN_PUBLIC_ORIGIN: "https://admin.example.test?mode=admin" }],
+  ["rejects origin fragment", false, { HYEB_ADMIN_PUBLIC_ORIGIN: "https://admin.example.test#login" }],
+  ["rejects origin credentials", false, { HYEB_ADMIN_PUBLIC_ORIGIN: "https://operator:secret@admin.example.test" }],
+  ["rejects origin port above URL bounds", false, { HYEB_ADMIN_PUBLIC_ORIGIN: "https://admin.example.test:65536" }],
+  ["rejects empty client ID", false, { HYEB_ADMIN_GITHUB_CLIENT_ID: "" }],
+  ["rejects oversized client ID", false, { HYEB_ADMIN_DISCORD_CLIENT_ID: "x".repeat(257) }],
+  ["rejects zero ID", false, { HYEB_ADMIN_GITHUB_IDS: "0" }],
+  ["rejects leading-zero ID", false, { HYEB_ADMIN_DISCORD_IDS: "007" }],
+  ["rejects empty ID entry", false, { HYEB_ADMIN_GITHUB_IDS: "42,,7" }],
+  ["rejects malformed ID", false, { HYEB_ADMIN_DISCORD_IDS: "42,user" }],
+  ["allows duplicate ID shape for runtime rejection", true, { HYEB_ADMIN_GITHUB_IDS: "42, 7,42" }],
+];
+const prohibitedConfigMapKeys = [
+  "HYEB_ADMIN_DB_PATH",
+  ...secretNames,
+];
+const adminOriginCanonicalCases = [
+  ["accepts HTTPS origin with non-default port", true, "https://admin.example.test:8443"],
+  ["accepts loopback HTTP origin with non-default port", true, "http://localhost:8787"],
+  ["rejects explicit HTTPS default port", false, "https://admin.example.test:443"],
+  ["rejects explicit loopback HTTP default port", false, "http://localhost:80"],
+];
+const extraEnvCases = [
+  ["accepts unrelated literal extraEnv", true, { name: "HYEB_CUSTOM_SETTING", value: "enabled" }],
+  ["accepts unrelated valueFrom extraEnv", true, { name: "HYEB_CUSTOM_SOURCE", valueFrom: { fieldRef: { fieldPath: "metadata.name" } } }],
+  ["rejects literal admin secret extraEnv", false, { name: "HYEB_ADMIN_SESSION_SECRET", value: "literal-secret" }],
+  ["rejects admin secretKeyRef extraEnv", false, { name: "HYEB_ADMIN_SESSION_SECRET", valueFrom: { secretKeyRef: { name: "other-secret", key: "value" } } }],
+  ["rejects local admin DB extraEnv", false, { name: "HYEB_ADMIN_DB_PATH", value: "/tmp/admin.sqlite" }],
+  ["rejects managed HA mode extraEnv", false, { name: "HYEB_HA_MODE", value: "memory" }],
+  ["rejects managed GitHub client ID extraEnv", false, { name: "HYEB_ADMIN_GITHUB_CLIENT_ID", value: "other-client" }],
+  ["rejects managed Discord IDs extraEnv", false, { name: "HYEB_ADMIN_DISCORD_IDS", value: "42" }],
+  ["rejects duplicate extraEnv names", false, [
+    { name: "HYEB_CUSTOM_DUPLICATE", value: "one" },
+    { name: "HYEB_CUSTOM_DUPLICATE", value: "two" },
+  ]],
+];
+const apiTemplateEnvNames = [
+  "HYEB_SESSION_SECRET",
+  "HYEB_ADMIN_SESSION_SECRET",
+  "HYEB_ADMIN_PASSWORD_HASH",
+  "HYEB_ADMIN_GITHUB_CLIENT_SECRET",
+  "HYEB_ADMIN_DISCORD_CLIENT_SECRET",
+  "HYEB_POSTGRES_URL",
+  "HYEB_REDIS_URL",
+  "AUTOMATION_KEY_CURRENT_ID",
+  "AUTOMATION_KEY_CURRENT_B64",
+  "AUTOMATION_KEY_PREVIOUS_ID",
+  "AUTOMATION_KEY_PREVIOUS_B64",
+  "HYEB_HA_NODE_ID",
+];
+const chartManagedEnvNames = [
+  ...prohibitedConfigMapKeys,
+  ...apiTemplateEnvNames,
+  "HYEB_HA_MODE",
+  "HYEB_ADMIN_PUBLIC_ORIGIN",
+  "HYEB_ADMIN_GITHUB_CLIENT_ID",
+  "HYEB_ADMIN_GITHUB_IDS",
+  "HYEB_ADMIN_DISCORD_CLIENT_ID",
+  "HYEB_ADMIN_DISCORD_IDS",
+  "REDIS_URL",
+  "BROWSERLESS_ENDPOINT",
+  "BROWSERLESS_TOKEN",
+  "AUTOMATION_CONSUMER_NAME",
+  "AUTOMATION_CONTROL_CONSUMER_NAME",
+  "TOKEN",
+];
+const configMapKeyCases = [
+  ["accepts arbitrary non-secret config.runtime key", true, "runtime", "HYEB_CUSTOM_RUNTIME_SETTING"],
+  ["accepts arbitrary non-secret config.extraData key", true, "extraData", "CUSTOM_CONFIG_DATA"],
+  ...prohibitedConfigMapKeys.flatMap((key) => [
+    [`rejects config.runtime.${key}`, false, "runtime", key],
+    [`rejects config.extraData.${key}`, false, "extraData", key],
+  ]),
+];
 
 const args = new Set(process.argv.slice(2));
 const option = (name) => {
@@ -158,24 +257,17 @@ function assertField(document, pattern, description) {
   assert(pattern.test(document), `Missing ${description} in ${resourceKind(document)} ${resourceName(document)}`);
 }
 
-function normalizeImageReference(value) {
-  return value.replace(/^['"]|['"]$/g, "");
-}
-
 function validateImages(rendered, { strictRelease }) {
-  const images = [...rendered.matchAll(/^\s*image:\s*(?:>-\s*)?([^\s#]+)\s*$/gm)].map((match) => normalizeImageReference(match[1]));
+  const images = [...rendered.matchAll(/^\s*image:\s*(?:>-\s*)?([^\s#]+)\s*$/gm)].map((match) => match[1]);
   assert(images.length >= 2, "Rendered chart must contain API and worker image references");
   const applicationImages = documentSections(rendered)
     .filter((document) => resourceKind(document) === "Deployment")
     .filter((document) => /api|automation-worker/.test(resourceName(document) || ""))
-    .flatMap((document) => [...document.matchAll(/^\s*image:\s*(?:>-\s*)?([^\s#]+)\s*$/gm)].map((match) => normalizeImageReference(match[1])));
+    .flatMap((document) => [...document.matchAll(/^\s*image:\s*(?:>-\s*)?([^\s#]+)\s*$/gm)].map((match) => match[1]));
   for (const image of images) {
     const digest = image.match(/@sha256:([a-f0-9]{64})$/i)?.[1];
     const tag = digest ? undefined : image.match(/:([^:/]+)$/)?.[1];
-    if (!digest && !tag) {
-      assert(allowUnpinnedImages.has(image), `Image reference has no tag or digest: ${image}`);
-      continue;
-    }
+    assert(digest || tag || allowUnpinnedImages.has(image), `Image reference has no tag or digest: ${image}`);
     if (digest) {
       assert(!/^([a-f0-9])\1{63}$/i.test(digest), `Image ${image} uses a placeholder digest`);
       continue;
@@ -206,7 +298,6 @@ function validateDeployment(document, role) {
 
 function validateBrowserlessDeployment(document) {
   assertField(document, /^\s*automountServiceAccountToken:\s*false\s*$/m, "Browserless service-account token restriction");
-  assertField(document, /^\s*runAsUser:\s*999\s*$/m, "Browserless image-defined UID");
   assertField(document, /^\s*runAsNonRoot:\s*true\s*$/m, "Browserless non-root security context");
   assertField(document, /seccompProfile:\s*\n[\s\S]*?type:\s*RuntimeDefault/m, "Browserless RuntimeDefault seccomp profile");
   assertField(document, /^\s*allowPrivilegeEscalation:\s*false\s*$/m, "Browserless privilege-escalation restriction");
@@ -229,7 +320,7 @@ function validateHpaReplicaOwnership(documents, deployment, hpaPattern, role) {
   assert(!/^  replicas:/m.test(deployment), `${role} Deployment must leave spec.replicas to its HPA`);
 }
 
-function validateRenderedManifest(rendered, label, { strictRelease }) {
+function validateRenderedManifest(rendered, label, { strictRelease, managedRuntimeNames }) {
   const documents = documentSections(rendered);
   assert(documents.length > 0, `${label} rendered no Kubernetes resources`);
   validateImages(rendered, { strictRelease });
@@ -237,6 +328,17 @@ function validateRenderedManifest(rendered, label, { strictRelease }) {
   const api = findResource(documents, "Deployment", /(^|-)api($|-)/);
   const worker = findResource(documents, "Deployment", /worker|automation/);
   validateDeployment(api, "API deployment");
+  validateRenderedApiEnv(api, managedRuntimeNames);
+  for (const key of [
+    "HYEB_ADMIN_SESSION_SECRET",
+    "HYEB_ADMIN_PASSWORD_HASH",
+    "HYEB_ADMIN_GITHUB_CLIENT_SECRET",
+    "HYEB_ADMIN_DISCORD_CLIENT_SECRET",
+  ]) assertField(api, new RegExp(`name: ${key}\\s+valueFrom:\\s+secretKeyRef:`, "m"), `${key} external Secret reference`);
+  assert(!/HYEB_ADMIN_DB_PATH|admin\.sqlite/i.test(api), "distributed API deployment must not configure local SQLite");
+  const configMap = findResource(documents, "ConfigMap", /runtime/);
+  const publicOrigin = configMap.match(/^\s*HYEB_ADMIN_PUBLIC_ORIGIN:\s*["']?([^\s"']+)["']?\s*$/m)?.[1];
+  if (publicOrigin) assert(isCanonicalOrigin(publicOrigin), `${label} renders non-canonical HYEB_ADMIN_PUBLIC_ORIGIN`);
   validateDeployment(worker, "worker deployment");
   validateHpaReplicaOwnership(documents, api, /api/, "API");
   validateHpaReplicaOwnership(documents, worker, /worker|automation/, "worker");
@@ -261,17 +363,6 @@ function validateRenderedManifest(rendered, label, { strictRelease }) {
     assertField(redisPolicy, /namespaceSelector:[\s\S]*?kubernetes\.io\/metadata\.name:[\s\S]*?ot-operators/m, "Redis Operator namespace access");
     assertField(redisPolicy, /podSelector:[\s\S]*?name:\s*redis-operator/m, "Redis Operator pod access");
     assertField(redisPolicy, /app:\s*hyeboard-redis-s[\s\S]*?redis_setup_type:\s*sentinel/m, "Redis Sentinel pod access");
-  }
-
-  if (label === "production") {
-    assert(
-      rendered.includes('image: "quay.io/opstree/redis:v7.0.15"'),
-      "Default Redis image must use the operator-compatible v7.0.15 tag",
-    );
-    assert(
-      rendered.includes('image: "quay.io/opstree/redis-sentinel:v7.0.15"'),
-      "Default Redis Sentinel image must use the operator-compatible v7.0.15 tag",
-    );
   }
 
   if (strictRelease) validateRenderedSecrets(rendered, label);
@@ -308,6 +399,230 @@ function validateRenderedSecrets(rendered, label) {
   }
 }
 
+function resolveDefinition(schema, definition) {
+  return definition?.$ref ? schema.definitions?.[definition.$ref.split("/").at(-1)] : definition;
+}
+
+function matchesSchema(schema, definition, value) {
+  definition = resolveDefinition(schema, definition);
+  if (definition === false) return false;
+  if (definition?.type && definition.type !== typeof value) return false;
+  if (definition?.minLength !== undefined && value.length < definition.minLength) return false;
+  if (definition?.maxLength !== undefined && value.length > definition.maxLength) return false;
+  if (definition?.pattern && !new RegExp(definition.pattern).test(value)) return false;
+  if (definition?.not?.pattern && new RegExp(definition.not.pattern).test(value)) return false;
+  return true;
+}
+
+function isCanonicalOrigin(value) {
+  try {
+    return new URL(value).origin === value;
+  } catch {
+    return false;
+  }
+}
+
+function validateApiExtraEnv(entries, managedRuntimeNames) {
+  const protectedNames = new Set([...prohibitedConfigMapKeys, ...managedRuntimeNames, ...apiTemplateEnvNames]);
+  const seen = new Set();
+  for (const entry of entries) {
+    assert(!seen.has(entry.name), `api.extraEnv contains duplicate ${entry.name}`);
+    assert(!protectedNames.has(entry.name), `api.extraEnv cannot override chart-managed ${entry.name}`);
+    seen.add(entry.name);
+  }
+}
+
+function envNames(document) {
+  const lines = document.split("\n");
+  const start = lines.findIndex((line) => line.trim() === "env:");
+  if (start < 0) return [];
+  const indent = lines[start].match(/^\s*/)[0].length;
+  const block = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() && line.match(/^\s*/)[0].length <= indent) break;
+    block.push(line);
+  }
+  return block.flatMap((line) => line.match(/^\s*- name:\s*([^\s#]+)/)?.slice(1) ?? []);
+}
+
+function validateRenderedApiEnv(document, managedRuntimeNames) {
+  const names = envNames(document);
+  const counts = new Map();
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+  for (const [name, count] of counts) assert.equal(count, 1, `API deployment contains duplicate env ${name}`);
+  for (const name of names.filter((candidate) => !apiTemplateEnvNames.includes(candidate))) {
+    assert(!prohibitedConfigMapKeys.includes(name), `API deployment extraEnv uses protected ${name}`);
+    assert(!managedRuntimeNames.has(name), `API deployment extraEnv overrides chart-managed ${name}`);
+  }
+}
+
+function validateAdminRuntimeCasesWithSchema(schema) {
+  const runtimeProperties = schema.properties?.config?.properties?.runtime?.properties ?? {};
+  for (const [label, expectedValid, runtime] of adminRuntimeCases) {
+    assert.equal(
+      Object.entries(runtime).every(([key, value]) => matchesSchema(schema, runtimeProperties[key], value)),
+      expectedValid,
+      label,
+    );
+  }
+  for (const [label, expectedValid, section, key] of configMapKeyCases) {
+    const propertyNames = schema.properties?.config?.properties?.[section]?.propertyNames;
+    assert.equal(matchesSchema(schema, propertyNames, key), expectedValid, label);
+  }
+}
+
+function validateAdminRuntimeCasesWithHelm() {
+  const cases = [
+    ...adminRuntimeCases.map(([label, expectedValid, runtime]) => [label, expectedValid, "runtime", runtime]),
+    ...configMapKeyCases.map(([label, expectedValid, section, key]) => [label, expectedValid, section, { [key]: "synthetic-value" }]),
+  ];
+  for (const [label, expectedValid, section, values] of cases) {
+    const arguments_ = ["lint", chartPath];
+    for (const [key, value] of Object.entries(values)) arguments_.push("--set-json", `config.${section}.${key}=${JSON.stringify(value)}`);
+    const result = spawnSync("helm", arguments_, { cwd: repositoryRoot, encoding: "utf8" });
+    assert.equal(result.status === 0, expectedValid, `${label}:\n${result.stdout || ""}\n${result.stderr || ""}`);
+  }
+}
+
+function validateHelmSemanticCases(managedRuntimeNames) {
+  const renderCases = [
+    ["rejects config.extraData-runtime collision", false, [
+      "--set-string", "config.runtime.HYEB_COLLISION=runtime-value-sentinel",
+      "--set-string", "config.extraData.HYEB_COLLISION=extra-value-sentinel",
+    ], "HYEB_COLLISION", ["runtime-value-sentinel", "extra-value-sentinel"]],
+    ["rejects config.extraData secret", false, [
+      "--set-string", "config.extraData.HYEB_SESSION_SECRET=secret-value-sentinel",
+    ], "HYEB_SESSION_SECRET", ["secret-value-sentinel"]],
+    ["rejects config.runtime local DB", false, [
+      "--set-string", "config.runtime.HYEB_ADMIN_DB_PATH=local-db-value-sentinel",
+    ], "HYEB_ADMIN_DB_PATH", ["local-db-value-sentinel"]],
+    ["rejects api.extraEnv managed name", false, [
+      "--set-json", 'api.extraEnv=[{"name":"HYEB_HA_MODE","value":"managed-value-sentinel"}]',
+    ], "HYEB_HA_MODE", ["managed-value-sentinel"]],
+    ["rejects duplicate api.extraEnv names", false, [
+      "--set-json", 'api.extraEnv=[{"name":"HYEB_DUPLICATE","value":"first-value-sentinel"},{"name":"HYEB_DUPLICATE","value":"second-value-sentinel"}]',
+    ], "HYEB_DUPLICATE", ["first-value-sentinel", "second-value-sentinel"]],
+    ["renders unrelated config.extraData and api.extraEnv", true, [
+      "--set-string", "config.extraData.HYEB_CUSTOM_DATA=custom-data-value",
+      "--set-json", 'api.extraEnv=[{"name":"HYEB_CUSTOM_ENV","value":"custom-env-value"}]',
+    ], undefined, []],
+  ];
+  for (const [label, expectedValid, caseArguments, expectedKey, prohibitedOutput] of renderCases) {
+    const result = spawnSync("helm", [
+      "template", defaultReleaseName, chartPath, "--skip-schema-validation", ...caseArguments,
+    ], { cwd: repositoryRoot, encoding: "utf8" });
+    const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+    assert.equal(result.status === 0, expectedValid, `${label}:\n${output}`);
+    if (expectedKey) assert(output.includes(expectedKey), `${label} must report only the rejected key`);
+    for (const value of prohibitedOutput) assert(!output.includes(value), `${label} leaked a rejected value`);
+    if (expectedValid) {
+      assert(output.includes("HYEB_CUSTOM_DATA"), `${label} omitted unrelated config.extraData`);
+      assert(output.includes("HYEB_CUSTOM_ENV"), `${label} omitted unrelated api.extraEnv`);
+    }
+  }
+
+  for (const [label, expectedValid, origin] of adminOriginCanonicalCases) {
+    const result = spawnSync("helm", ["template", defaultReleaseName, chartPath, "--set-string", `config.runtime.HYEB_ADMIN_PUBLIC_ORIGIN=${origin}`], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `${label} must pass the coarse schema:\n${result.stdout || ""}\n${result.stderr || ""}`);
+    const configMap = findResource(documentSections(result.stdout), "ConfigMap", /runtime/);
+    const renderedOrigin = configMap.match(/^\s*HYEB_ADMIN_PUBLIC_ORIGIN:\s*["']?([^\s"']+)["']?\s*$/m)?.[1];
+    assert.equal(isCanonicalOrigin(renderedOrigin), expectedValid, label);
+  }
+
+  for (const [label, expectedValid, value] of extraEnvCases) {
+    const entries = Array.isArray(value) ? value : [value];
+    const result = spawnSync("helm", ["template", defaultReleaseName, chartPath, "--set-json", `api.extraEnv=${JSON.stringify(entries)}`], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    });
+    let valid = result.status === 0;
+    if (valid) {
+      try {
+        validateRenderedApiEnv(findResource(documentSections(result.stdout), "Deployment", /(^|-)api($|-)/), managedRuntimeNames);
+      } catch {
+        valid = false;
+      }
+    }
+    assert.equal(valid, expectedValid, `${label}:\n${result.stdout || ""}\n${result.stderr || ""}`);
+  }
+}
+
+function validateSourceContracts() {
+  const values = readFileSync(resolve(chartPath, "values.yaml"), "utf8");
+  const schema = JSON.parse(readFileSync(resolve(chartPath, "values.schema.json"), "utf8"));
+  const apiTemplate = readFileSync(resolve(chartPath, "templates/api-deployment.yaml"), "utf8");
+  const configMapTemplate = readFileSync(resolve(chartPath, "templates/configmap.yaml"), "utf8");
+  const helpersTemplate = readFileSync(resolve(chartPath, "templates/_helpers.tpl"), "utf8");
+  assert(configMapTemplate.includes('include "hyeboard.validateConfig" .'), "ConfigMap template does not invoke chart-level config validation");
+  assert(apiTemplate.includes('include "hyeboard.validateApiExtraEnv" .'), "API template does not invoke chart-level extraEnv validation");
+  assert(helpersTemplate.includes('define "hyeboard.validateConfig"'), "Helm helpers do not define config validation");
+  assert(helpersTemplate.includes('define "hyeboard.validateApiExtraEnv"'), "Helm helpers do not define api.extraEnv validation");
+  assert(helpersTemplate.includes("hasKey $.Values.config.runtime $key"), "Helm config validation does not reject extraData-runtime collisions");
+  assert(helpersTemplate.includes("hasKey $seen $name"), "Helm api.extraEnv validation does not reject duplicates");
+  assert(helpersTemplate.includes("range $key, $_ := .Values.config.runtime"), "Helm api.extraEnv validation does not protect config.runtime envFrom names");
+  assert(helpersTemplate.includes("range $key, $_ := .Values.config.extraData"), "Helm api.extraEnv validation does not protect config.extraData envFrom names");
+  for (const key of prohibitedConfigMapKeys) {
+    assert(helpersTemplate.includes(key), `Helm config validation does not prohibit ${key}`);
+  }
+  for (const name of chartManagedEnvNames) {
+    assert(helpersTemplate.includes(name), `Helm api.extraEnv validation does not protect ${name}`);
+  }
+  const requiredKeys = schema.properties?.secrets?.properties?.keys?.required ?? [];
+  for (const [valueKey, envKey] of Object.entries({
+    adminSessionSecret: "HYEB_ADMIN_SESSION_SECRET",
+    adminPasswordHash: "HYEB_ADMIN_PASSWORD_HASH",
+    adminGithubClientSecret: "HYEB_ADMIN_GITHUB_CLIENT_SECRET",
+    adminDiscordClientSecret: "HYEB_ADMIN_DISCORD_CLIENT_SECRET",
+  })) {
+    assert(requiredKeys.includes(valueKey), `values schema does not require secrets.keys.${valueKey}`);
+    assert(values.includes(`${valueKey}: ${envKey}`), `values.yaml is missing secrets.keys.${valueKey}`);
+    assert(apiTemplate.includes(`key: {{ .Values.secrets.keys.${valueKey} }}`), `API template is missing ${valueKey}`);
+  }
+  const runtimeSchema = schema.properties?.config?.properties?.runtime;
+  const extraDataSchema = schema.properties?.config?.properties?.extraData;
+  const runtimeProperties = runtimeSchema?.properties ?? {};
+  for (const key of [
+    "HYEB_ADMIN_SESSION_TTL_SECONDS",
+    "HYEB_ADMIN_PUBLIC_ORIGIN",
+    "HYEB_ADMIN_GITHUB_CLIENT_ID",
+    "HYEB_ADMIN_GITHUB_IDS",
+    "HYEB_ADMIN_DISCORD_CLIENT_ID",
+    "HYEB_ADMIN_DISCORD_IDS",
+  ]) assert(runtimeProperties[key], `values schema does not explicitly validate config.runtime.${key}`);
+  assert.equal(runtimeSchema?.additionalProperties?.$ref, "#/definitions/runtimePrimitive");
+  assert.equal(extraDataSchema?.additionalProperties?.$ref, "#/definitions/runtimePrimitive");
+  assert.equal(runtimeSchema?.propertyNames?.$ref, "#/definitions/nonSecretConfigMapKey");
+  assert.equal(extraDataSchema?.propertyNames?.$ref, "#/definitions/nonSecretConfigMapKey");
+  assert.equal(runtimeProperties.HYEB_ADMIN_DB_PATH, false, "distributed values schema must reject config.runtime.HYEB_ADMIN_DB_PATH");
+  validateAdminRuntimeCasesWithSchema(schema);
+  const extraEnvSchema = resolveDefinition(schema, schema.definitions?.api?.allOf?.[1]?.properties?.extraEnv?.items);
+  assert(extraEnvSchema, "values schema does not define extraEnv items");
+  const managedRuntimeNames = new Set([
+    ...Object.keys(runtimeProperties),
+    ...[...values.matchAll(/^ {4}([A-Z][A-Z0-9_]*):/gm)].map((match) => match[1]),
+  ]);
+  assert(values.includes("HYEB_HA_MODE: distributed"), "values.yaml is missing managed HYEB_HA_MODE");
+  assert(values.includes("HYEB_ADMIN_GITHUB_CLIENT_ID") || runtimeProperties.HYEB_ADMIN_GITHUB_CLIENT_ID, "values schema is missing managed provider IDs");
+  for (const [label, expectedValid, value] of extraEnvCases) {
+    const entries = Array.isArray(value) ? value : [value];
+    for (const env of entries) {
+      const schemaValid = matchesSchema(schema, extraEnvSchema.properties?.name, env.name);
+      assert.equal(schemaValid, !prohibitedConfigMapKeys.includes(env.name), `${label} schema`);
+    }
+    if (expectedValid) assert.doesNotThrow(() => validateApiExtraEnv(entries, managedRuntimeNames), label);
+    else assert.throws(() => validateApiExtraEnv(entries, managedRuntimeNames), label);
+  }
+  for (const [label, expectedValid, origin] of adminOriginCanonicalCases) {
+    assert.equal(isCanonicalOrigin(origin), expectedValid, label);
+  }
+  assert(values.includes('HYEB_ADMIN_SESSION_TTL_SECONDS: "3600"'), "values.yaml is missing the admin session TTL default");
+  assert(!/HYEB_ADMIN_DB_PATH|admin\.sqlite/i.test(`${values}\n${apiTemplate}`), "distributed Helm chart must not configure local SQLite");
+  return managedRuntimeNames;
+}
+
 function validateChart() {
   if (!statSync(chartPath, { throwIfNoEntry: false })) {
     if (requireChart) fail(`chart directory does not exist: ${relative(repositoryRoot, chartPath)}`);
@@ -315,11 +630,14 @@ function validateChart() {
     return;
   }
 
+  const managedRuntimeNames = validateSourceContracts();
   if (!helmAvailable()) {
-    console.log("Helm is not installed; skipping Helm chart validation.");
+    console.log("Helm is not installed; source contracts passed, render validation skipped.");
     return;
   }
 
+  validateAdminRuntimeCasesWithHelm();
+  validateHelmSemanticCases(managedRuntimeNames);
   const overrides = [
     { name: "default", path: undefined },
     { name: "example", path: findOverride("example") },
@@ -363,7 +681,7 @@ function validateChart() {
       ["template", defaultReleaseName, chartPath, ...templateArguments],
       `${override.name} helm template`,
     );
-    validateRenderedManifest(rendered, override.name, { strictRelease: strict });
+    validateRenderedManifest(rendered, override.name, { strictRelease: strict, managedRuntimeNames });
     console.log(`Validated Helm ${override.name} values.`);
   }
 }

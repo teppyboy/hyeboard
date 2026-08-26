@@ -47,6 +47,7 @@ export const SESSION_CLEARED_EVENT = "hyeboard:session-cleared";
 // remains). The app shell listens for this to re-sync universityId/palette
 // and refetch data for whichever account is now active.
 export const ACCOUNT_SWITCHED_EVENT = "hyeboard:account-switched";
+export const SESSION_TOKEN_ROTATED_EVENT = "hyeboard:session-token-rotated";
 export const VNU_REFRESH_COMMITTED_EVENT = "hyeboard:vnu-refresh-committed";
 export const VNU_REFRESH_STATUS_EVENT = "hyeboard:vnu-refresh-status";
 
@@ -203,9 +204,10 @@ export function setSessionToken(token: string): void {
   if (!activeId) return;
   const accounts = readAccounts();
   const index = accounts.findIndex((account) => account.id === activeId);
-  if (index === -1) return;
+  if (index === -1 || accounts[index]?.token === token) return;
   accounts[index] = { ...accounts[index], token };
   writeAccounts(accounts);
+  window.dispatchEvent(new CustomEvent(SESSION_TOKEN_ROTATED_EVENT, { detail: { accountId: activeId } }));
 }
 
 function findUnchangedStoredAccount(originatingAccount: StoredAccount | undefined): StoredAccount | undefined {
@@ -226,6 +228,7 @@ export function commitVnuRefresh(origin: StoredAccount, result: AuthResult): boo
       studentCode: result.session.studentCode ?? accounts[index].studentCode,
     };
     writeAccounts(accounts);
+    if (result.token !== origin.token) window.dispatchEvent(new CustomEvent(SESSION_TOKEN_ROTATED_EVENT, { detail: { accountId: origin.id } }));
     return true;
   } catch (error) {
     if (previousGrant) storeVnuRefreshGrant(origin.id, previousGrant);
@@ -236,12 +239,13 @@ export function commitVnuRefresh(origin: StoredAccount, result: AuthResult): boo
 
 function setOriginatingSessionToken(originatingAccount: StoredAccount | undefined, token: string): void {
   const currentOriginatingAccount = findUnchangedStoredAccount(originatingAccount);
-  if (!currentOriginatingAccount) return;
+  if (!currentOriginatingAccount || currentOriginatingAccount.token === token) return;
   const accounts = readAccounts();
   const index = accounts.findIndex((account) => account.id === currentOriginatingAccount.id);
   if (index === -1) return;
   accounts[index] = { ...accounts[index], token };
   writeAccounts(accounts);
+  window.dispatchEvent(new CustomEvent(SESSION_TOKEN_ROTATED_EVENT, { detail: { accountId: currentOriginatingAccount.id } }));
 }
 
 // Signs out of the active account only. If other accounts remain, switches
@@ -388,7 +392,7 @@ const refreshDeps = {
   },
   commit: commitVnuRefresh,
   terminal: removeUnchangedOrigin,
-  invalidate: (accountId: string) => window.dispatchEvent(new CustomEvent(VNU_REFRESH_COMMITTED_EVENT, { detail: { accountId } })),
+  invalidate: (accountId: string) => window.dispatchEvent(new CustomEvent(VNU_REFRESH_COMMITTED_EVENT, { detail: { accountId, preserveFeatureState: true } })),
   status: publishVnuRefreshStatus,
 };
 
@@ -404,6 +408,7 @@ async function request<T>(path: string, init: RequestInit = {}, internal: Intern
     if (!(error instanceof ApiError)) throw error;
 
     if (originatingAccount?.universityId === "vnu" && classifyVnuRecovery(error)) {
+      if (init.signal?.aborted) throw init.signal.reason ?? new DOMException("This operation was aborted", "AbortError");
       const routePolicy = requestPolicyFor({ method: init.method ?? "GET", pathname: path });
       const policy = reducedPolicy(routePolicy, internal.policy);
       if (internal.noRefresh || policy === "never") throw error;
@@ -420,6 +425,7 @@ async function request<T>(path: string, init: RequestInit = {}, internal: Intern
         throw markVnuRefreshAttempted(normalizeRefreshError(refreshError));
       }
       if (outcome.kind === "stale") throw markVnuRefreshAttempted(error);
+      if (init.signal?.aborted) throw init.signal.reason ?? new DOMException("This operation was aborted", "AbortError");
       if (policy === "refresh-no-replay") throw markVnuRefreshAttempted(new VnuRequestNotReplayedError());
       try {
         return await request<T>(path, init, { noRefresh: true, tokenOverride: outcome.auth.token });
@@ -498,7 +504,7 @@ const uet = createUetClient(request);
 export const api = {
   universities: () => request<University[]>("/api/universities"),
   profile: (universityId: string) => universityId === "uet" ? uet.profile() : request<Student>(`/api/${universityId}/me`),
-  dashboard: (universityId: string, termCode?: string) => universityId === "vnu" ? vnu.dashboard() : request<DashboardSummary>(`/api/${universityId}/dashboard${termCode ? `?termCode=${encodeURIComponent(termCode)}` : ""}`),
+  dashboard: (universityId: string, termCode?: string) => request<DashboardSummary>(`/api/${universityId}/dashboard${termCode ? `?termCode=${encodeURIComponent(termCode)}` : ""}`),
   terms: (universityId: string) => universityId === "vnu" ? vnu.terms() : universityId === "uet" ? uet.terms() : request<Term[]>(`/api/${universityId}/terms`),
   timetable: (universityId: string, termCode?: string) => universityId === "uet" ? uet.timetable(termCode) : request<ClassSession[]>(`/api/${universityId}/timetable${termCode ? `?termCode=${encodeURIComponent(termCode)}` : ""}`),
   courses: (universityId: string) => request<Course[]>(`/api/${universityId}/courses`),
@@ -513,12 +519,13 @@ export const api = {
   requests: (universityId: string) => request<ServiceRequest[]>(`/api/${universityId}/requests`),
   // vnu (daotao)-only class-code -> internal-id lookup tool - see the
   // classLookup capability flag, gated in the UI before these are called.
-  vnuOwnProfile: () => vnu.ownProfile(),
+  vnuOwnProfile: (signal?: AbortSignal) => vnu.ownProfile(signal),
   vnuClassCatalog: (params: { vTermID: string }, signal?: AbortSignal) => vnu.classCatalog(params, signal),
-  vnuPointDetail: (params: { id: string; Term: string }) => vnu.pointDetail(params),
-  vnuCrossStudentCode: (params: { stdId: string }) => vnu.crossStudentCode(params),
-  vnuCrossStudentId: (params: { stdCode: string }) => vnu.crossStudentId(params),
-  vnuCrossTranscript: (input: VnuCrossTranscriptInput) => vnu.crossTranscript(input),
+  vnuClassPointDetail: (params: { id: string; Term: string }, signal?: AbortSignal) => vnu.classPointDetail(params, signal),
+  vnuPointDetail: (params: { id: string; Term: string }, signal?: AbortSignal) => vnu.pointDetail(params, signal),
+  vnuCrossStudentCode: (params: { stdId: string }, signal?: AbortSignal) => vnu.crossStudentCode(params, signal),
+  vnuCrossStudentId: (params: { stdCode: string }, signal?: AbortSignal) => vnu.crossStudentId(params, signal),
+  vnuCrossTranscript: (input: VnuCrossTranscriptInput, signal?: AbortSignal) => vnu.crossTranscript(input, signal),
   vnuCrossDetail: (permit: string, signal?: AbortSignal) => vnu.crossDetail(permit, signal),
   vnuCrossDetailBulk: (permits: string[], signal?: AbortSignal) => vnu.crossDetailBulk(permits, signal),
   vnuCrossDetailExport: (permits: string[], signal?: AbortSignal) => vnu.crossDetailExport(permits, signal),

@@ -30,11 +30,12 @@ export function safeExternalUrl(value?: string): string | undefined {
   }
 }
 
-type FeatureFrameProps<T> = { title: string; description: string; actions?: ReactNode; query: { data?: T; error: Error | null; isLoading: boolean }; children: (data: T) => ReactNode };
+type FeatureFrameProps<T> = { title: string; description: string; actions?: ReactNode; query: { data?: T; error: Error | null; isLoading: boolean; capabilityAllowed?: boolean; capabilityMetadataPending?: boolean }; children: (data: T) => ReactNode };
 
 export function FeatureFrame<T>({ title, description, actions, query, children }: FeatureFrameProps<T>) {
   const { t } = useLocale();
   if (query.isLoading) return <PageSkeleton />;
+  if (query.capabilityAllowed === false) return <Empty text={query.capabilityMetadataPending ? t.common.metadataUnavailable : t.common.notAvailable} />;
   if (query.error) return <QueryErrorPanel error={query.error} />;
   return <div className="animate-page space-y-4"><FeatureHeader title={title} description={description} actions={actions} />{query.data ? children(query.data) : <Empty text={t.common.noData} />}</div>;
 }
@@ -87,11 +88,11 @@ export function SectionPanel({ title, description, children, testId }: SectionPa
 
 export function ScheduleItem({ item }: { item: ClassSession }) {
   const { t } = useLocale();
-  const label = item.timeLabel ?? (item.periodStart != null
-    ? (item.periodEnd && item.periodEnd !== item.periodStart
+  const label = item.timeLabel ?? (item.periodStart == null
+    ? formatDateTime(item.startTime)
+    : (item.periodEnd && item.periodEnd !== item.periodStart
       ? t.timetable.periodRange(item.periodStart, item.periodEnd)
-      : t.timetable.periodSingle(item.periodStart))
-    : formatDateTime(item.startTime));
+      : t.timetable.periodSingle(item.periodStart)));
   return (
     <div className="list-row">
       <div className="min-w-0">

@@ -121,8 +121,21 @@ export function createMockAdapter(): UniversityAdapter {
     },
     async getStudentProfile() { return student; },
     async getTerms() { return terms; },
-    async getDashboard(): Promise<DashboardSummary> {
-      return { student, currentTerm: terms[0], courseCount: { inTerm: 3, completed: 24 }, nextClass: timetable[0] ?? null, todaySchedule: timetable.slice(0, 1), courses, assignments, grades, gpa, exams, tuition, notifications };
+    async getDashboard({ capabilities = university.capabilities }): Promise<DashboardSummary> {
+      return {
+        student: capabilities.profile ? student : undefined,
+        currentTerm: capabilities.terms ? terms[0] : undefined,
+        courseCount: capabilities.courses ? { inTerm: 3, completed: 24 } : undefined,
+        nextClass: capabilities.timetable ? timetable[0] ?? null : undefined,
+        todaySchedule: capabilities.timetable ? timetable.slice(0, 1) : [],
+        courses: capabilities.courses ? courses : [],
+        assignments: capabilities.assignments ? assignments : [],
+        grades: capabilities.grades ? grades : [],
+        gpa: capabilities.grades ? gpa : undefined,
+        exams: capabilities.exams ? exams : [],
+        tuition: capabilities.tuition ? tuition : undefined,
+        notifications: capabilities.notifications ? notifications : [],
+      };
     },
     async getTimetable() { return timetable; },
     async getCourses() { return courses; },

@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FeatureHeader } from "@/components/shared";
 import { LOCALES, type Locale, useLocale } from "@/lib/i18n";
+import { effectiveDashboardStudent } from "@/lib/student-policy";
 import { cn } from "@/lib/utils";
 import { useHyeboard } from "@/state";
 
@@ -24,7 +25,7 @@ export function SettingsPage() {
   const state = useHyeboard();
   const { t, locale, setLocale } = useLocale();
   const navigate = useNavigate();
-  const data = state.dashboard.data;
+  const student = effectiveDashboardStudent(state.dashboard.data, state.activeUniversity?.capabilities);
   const signOut = async () => {
     try {
       await state.logout("settings");
@@ -93,7 +94,7 @@ export function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>{t.settings.account}</CardTitle>
-            <CardDescription>{data?.student?.fullName ? t.settings.signedInAs(data.student.fullName, data.student.studentCode) : t.settings.sessionUnavailable}</CardDescription>
+            <CardDescription>{student?.fullName ? t.settings.signedInAs(student.fullName, student.studentCode) : t.settings.sessionUnavailable}</CardDescription>
           </CardHeader>
           <CardContent>
             <Button variant="destructive" className="w-full max-lg:min-h-11" onClick={() => { void signOut(); }} disabled={state.activeAccountId ? state.removingAccountIds.has(state.activeAccountId) : false}><LogOut size={15} className="mr-2" />{t.settings.signOut}</Button>

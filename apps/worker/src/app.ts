@@ -1,17 +1,21 @@
 import { cors } from "@elysiajs/cors";
 import { createVnuRefreshAccessDescriptor, createVnuRefreshGrant, decryptSession, decryptSessionForVnuLogout, decryptSessionForVnuRefresh, decryptVnuCrossDetailPermitEnvelope, decryptVnuRefreshGrant, decryptVnuRefreshGrantForLogout, deriveVnuRefreshPrincipal, encryptSession, encryptVnuRefreshGrant, fail, getLogger, HyeboardError, isExpired, ok, parseBearerToken, rotateVnuRefreshGrant, VNU_REFRESH_GRANT_MAX_LENGTH, type EncryptedSessionPayload, type VnuRefreshAccessDescriptor, type VnuRefreshGrantPayload } from "@hyeboard/core";
-import { apiErrorDetailsSchema, type AuthResult } from "@hyeboard/schemas";
+import { apiErrorDetailsSchema, type AuthResult, type CapabilityKey, type OperationalLimitKey, type University, type UniversityCapabilities } from "@hyeboard/schemas";
 import { DaotaoClient, findPointDetailSelector, getAdapter, isDaotaoSessionExpired, listUniversities, parseProfileHtml, parseTranscriptHeader, parseTranscriptHtml, type BrowserBinding, type BrowserConnection, type VnuTranscript } from "@hyeboard/university-adapters";
 import { StudentHubClient } from "@hyeboard/university-adapters/src/uet/studenthub-client";
 import { Elysia, t } from "elysia";
 import { LocalCaptchaRelayCoordinator, captchaRelayCancelled, captchaRelayNotFound, type CaptchaRelayCoordinator, type PreparedCaptchaRelay } from "./captcha-relay";
-import { probeBudgetUnavailable, VNU_BRC1_PERMIT_LIMIT, type VnuProbeBudgetCoordinator } from "./vnu-probe-budget";
+import { probeBudgetUnavailable, VNU_BRC1_PERMIT_LIMIT, type VnuCrossDetailLimits, type VnuProbeBudgetCoordinator } from "./vnu-probe-budget";
 import { vnuRefreshUnavailable, type BeginRefreshResult, type LinkedPair, type VnuRefreshControlCoordinator } from "./vnu-refresh-control";
 import { resolveVnuStudentId, VNU_STUDENT_ID_RESOLVER_MAX_PROBES } from "./vnu-student-id-resolver";
 import { parseVnuRuntimeConfig, type EffectiveVnuRuntimeConfig } from "./vnu-runtime-config";
 import { buildVnuCrossDetailConsumeInput, createVnuCrossDetailMinter, crossDetailUnavailable, parseVnuCrossDetailPermitString, readVnuCrossDetailBody } from "./vnu-cross-detail";
 import { checkSessionEpoch, parseHaConfig, type HaConfig } from "./ha-contracts";
 import { createHaLifecycle, safeHaDiagnostics, type HaLifecycleController } from "./ha-lifecycle";
+import { parseAdminConfig } from "./admin-config";
+import { registerAdminRoutes, type AdminLoginRateLimit } from "./admin-routes";
+import { effectiveUniversity, filterDashboardSummary } from "./feature-policy";
+import type { FeaturePolicyRuntime } from "./feature-policy-store";
 
 // ─── Runtime config ───────────────────────────────────────────
 // Self-hosted (Node/Bun) loads config from config.json + env var overrides
@@ -54,6 +58,17 @@ export interface RuntimeConfig {
   HYEB_POSTGRES_URL?: string;
   HYEB_REDIS_URL?: string;
   HYEB_SHUTDOWN_TIMEOUT_MS?: string;
+  HYEB_ADMIN_SESSION_SECRET?: string;
+  HYEB_ADMIN_SESSION_TTL_SECONDS?: string;
+  HYEB_ADMIN_PASSWORD_HASH?: string;
+  HYEB_ADMIN_PUBLIC_ORIGIN?: string;
+  HYEB_ADMIN_DB_PATH?: string;
+  HYEB_ADMIN_GITHUB_CLIENT_ID?: string;
+  HYEB_ADMIN_GITHUB_CLIENT_SECRET?: string;
+  HYEB_ADMIN_GITHUB_IDS?: string;
+  HYEB_ADMIN_DISCORD_CLIENT_ID?: string;
+  HYEB_ADMIN_DISCORD_CLIENT_SECRET?: string;
+  HYEB_ADMIN_DISCORD_IDS?: string;
   AUTOMATION_JOB_STREAM?: string;
   AUTOMATION_EVENT_STREAM?: string;
   AUTOMATION_CONTROL_STREAM?: string;
@@ -126,9 +141,13 @@ let runtimeConfig: RuntimeConfig = {};
 let effectiveVnuRuntimeConfig: EffectiveVnuRuntimeConfig = parseVnuRuntimeConfig({});
 let haConfig: HaConfig = parseHaConfig();
 let distributedAutomationBackend: DistributedAutomationBackend | undefined;
+let featurePolicyRuntime: FeaturePolicyRuntime | undefined;
+let adminLoginRateLimit: AdminLoginRateLimit | undefined;
+let adminConfigEnabled = false;
 
 export function setRuntimeConfig(config: RuntimeConfig): void {
   runtimeConfig = config;
+  adminConfigEnabled = config.HYEB_ADMIN_SESSION_SECRET !== undefined;
   haConfig = parseHaConfig(config as Readonly<Record<string, string | undefined>>, {}, (setting, effectiveFallback) => {
     getLogger().warn({ setting, effectiveFallback }, "invalid HA runtime setting; using safe fallback");
   });
@@ -152,6 +171,15 @@ export function setRuntimeConfig(config: RuntimeConfig): void {
 
 export function setDistributedAutomationBackend(backend: DistributedAutomationBackend | undefined): void {
   distributedAutomationBackend = backend;
+}
+
+export function setFeaturePolicyRuntime(runtime: FeaturePolicyRuntime | undefined): void {
+  if (featurePolicyRuntime === runtime) return;
+  featurePolicyRuntime = runtime;
+}
+
+export function setAdminLoginRateLimit(limiter: AdminLoginRateLimit | undefined): void {
+  adminLoginRateLimit = limiter;
 }
 
 export function getEffectiveVnuRuntimeConfig(): EffectiveVnuRuntimeConfig {
@@ -299,6 +327,7 @@ export async function resolveSession(headers: Headers | Record<string, string | 
             },
             { browserConnection: browserConnection(), ...(signal === undefined ? {} : { signal }) },
           );
+    if (signal) throwIfRequestCancelled(signal);
     const refreshedToken = await encryptSession(sessionTokenPayload(refreshed.session, session), getSessionSecret());
     return { session: refreshed.session, refreshedToken };
   } catch (error) {
@@ -453,11 +482,7 @@ async function resolveOrdinaryAccessToken(token: string): Promise<EncryptedSessi
 // report its own errors as an "error" SSE event instead).
 function errorPayload(error: unknown): { code: string; message: string; status: number } {
   if (error instanceof HyeboardError) return { code: error.code, message: error.message, status: error.status };
-  // A truly unexpected (non-HyeboardError) failure reaching this far means
-  // the automation's own error handling didn't catch it — surface the real
-  // message instead of a fully generic one, so it's actually diagnosable.
-  const reason = error instanceof Error ? error.message : String(error);
-  return { code: "GOOGLE_SIGNIN_FAILURE", message: `Google sign-in did not complete: ${reason}`, status: 502 };
+  return { code: "GOOGLE_SIGNIN_FAILURE", message: "Google sign-in did not complete. Try again.", status: 502 };
 }
 
 function routeError(error: unknown, requestId?: string, requestUrl?: string) {
@@ -468,8 +493,8 @@ function routeError(error: unknown, requestId?: string, requestUrl?: string) {
   const isVnuRoute = requestPath?.startsWith("/api/vnu/") ?? false;
   const isVnuAuthMutation = requestPath === "/api/vnu/auth/refresh" || requestPath === "/api/vnu/auth/logout";
   const isVnuRawExpiry = requestPath?.startsWith("/api/vnu/raw/") && error instanceof HyeboardError && error.code === "VNU_SESSION_EXPIRED";
-  if (isVnuCrossDetailResponsePath(requestPath) || requestPath?.startsWith("/api/uet/raw/")) headers.set("Cache-Control", "no-store, private");
-  else if (requestPath?.startsWith("/api/vnu/cross-lookup/") || isVnuAuthMutation || isVnuRawExpiry) headers.set("Cache-Control", "no-store");
+  if (isVnuCrossDetailResponsePath(requestPath) || requestPath?.startsWith("/api/uet/raw/") || requestPath?.startsWith("/api/vnu/class-lookup/")) headers.set("Cache-Control", "no-store, private");
+  else if (isImportSessionPath(requestPath) || requestPath?.startsWith("/api/vnu/cross-lookup/") || isVnuAuthMutation || isVnuRawExpiry) headers.set("Cache-Control", "no-store");
   if (error instanceof HyeboardError) {
     const level = error.status >= 500 ? "error" : "warn";
     if (isVnuRoute) log[level]({ operation: "route", code: error.code, status: error.status }, "VNU request failed");
@@ -514,6 +539,10 @@ function routeError(error: unknown, requestId?: string, requestUrl?: string) {
 // private, including failures which bypass individual route handlers.
 function isVnuCrossDetailResponsePath(path: string | undefined): boolean {
   return path === "/api/vnu/cross-lookup/transcript" || path?.startsWith("/api/vnu/cross-lookup/detail") === true;
+}
+
+function isImportSessionPath(path: string | undefined): boolean {
+  return /^\/api\/[^/]+\/auth\/import-session$/.test(path ?? "");
 }
 
 // ─── Schemas ──────────────────────────────────────────────────
@@ -594,6 +623,27 @@ async function parseStrictVnuAuthBody(request: Request, kind: "refresh" | "logou
 
 const termCodeQuery = t.Object({ termCode: t.Optional(t.String()) });
 
+const uetRawCapabilities: Record<string, CapabilityKey> = {
+  profile: "profile",
+  terms: "terms",
+  timetable: "timetable",
+  grades: "grades",
+  gpa: "grades",
+  exams: "exams",
+  tuition: "tuition",
+  news: "news",
+};
+
+const vnuRawCapabilities: Record<string, CapabilityKey> = {
+  profile: "profile",
+  grades: "grades",
+  progress: "trainingPoints",
+  "exam-base": "exams",
+  syllabus: "documents",
+  exams: "exams",
+  "point-detail": "grades",
+};
+
 async function uetRawRead(session: EncryptedSessionPayload, resource: string, termCode?: string): Promise<unknown> {
   const client = new StudentHubClient(session);
   switch (resource) {
@@ -636,27 +686,30 @@ const vnuCrossLookupQuery = t.Object({
 type VnuBulkLookupMode = "stdid-to-code" | "code-to-stdid" | "stdid-to-transcript";
 type VnuBulkLookupBody = { mode: VnuBulkLookupMode; targets: unknown[]; allowCrossLookup: true };
 
-const VNU_BULK_CODE_MODE_LIMIT = 9;
-
-function vnuBulkModeLimit(mode: VnuBulkLookupMode): number {
-  if (mode === "code-to-stdid") return VNU_BULK_CODE_MODE_LIMIT;
-  return effectiveVnuRuntimeConfig.crossLookupDirectChunkMaxTargets;
+function vnuBulkModeLimit(mode: VnuBulkLookupMode, limits: University["limits"]): number {
+  const crossLookup = limits?.crossLookup;
+  if (!crossLookup) return 0;
+  return Math.min(
+    crossLookup.bulkMaxTargets,
+    crossLookup.bulkDirectChunkMaxTargets ?? crossLookup.bulkMaxTargets,
+    crossLookup.bulkModeMaxTargets?.[mode] ?? crossLookup.bulkMaxTargets,
+  );
 }
 
-function parseVnuBulkLookupBody(value: unknown): VnuBulkLookupBody {
+function parseVnuBulkLookupBody(value: unknown, limits: University["limits"]): VnuBulkLookupBody {
   if (!isRecord(value)) throw new HyeboardError("VNU_CROSS_LOOKUP_BODY_INVALID", "Bulk cross-lookup needs a JSON object body.", 400);
   if (value.allowCrossLookup !== true) throw new HyeboardError("VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED", "Cross-student lookup requires the literal allowCrossLookup: true opt-in.", 400);
   if (value.mode !== "stdid-to-code" && value.mode !== "code-to-stdid" && value.mode !== "stdid-to-transcript") {
     throw new HyeboardError("VNU_CROSS_LOOKUP_MODE_INVALID", "Bulk cross-lookup mode is invalid.", 400);
   }
   if (!Array.isArray(value.targets) || value.targets.length === 0) throw new HyeboardError("VNU_CROSS_LOOKUP_TARGETS_INVALID", "Bulk cross-lookup needs at least one target.", 400);
-  if (value.targets.length > vnuBulkModeLimit(value.mode)) throw new HyeboardError("VNU_CROSS_LOOKUP_CHUNK_TOO_LARGE", "Bulk cross-lookup chunk exceeds the selected mode limit.", 400);
+  if (value.targets.length > vnuBulkModeLimit(value.mode, limits)) throw new HyeboardError("VNU_CROSS_LOOKUP_CHUNK_TOO_LARGE", "Bulk cross-lookup chunk exceeds the selected mode limit.", 400);
   return { mode: value.mode, targets: value.targets, allowCrossLookup: true };
 }
 
-async function parseVnuBulkLookupRequest(request: Request): Promise<VnuBulkLookupBody> {
+async function parseVnuBulkLookupRequest(request: Request, limits: University["limits"]): Promise<VnuBulkLookupBody> {
   try {
-    return parseVnuBulkLookupBody(await request.json());
+    return parseVnuBulkLookupBody(await request.json(), limits);
   } catch (error) {
     if (error instanceof HyeboardError) throw error;
     throw new HyeboardError("VNU_CROSS_LOOKUP_BODY_INVALID", "Bulk cross-lookup needs a valid JSON object body.", 400);
@@ -1050,21 +1103,19 @@ async function withVnuOraclePermit<T>(session: EncryptedSessionPayload, parentSi
   }
 }
 
-function crossDetailLimits() {
-  if (!effectiveVnuRuntimeConfig.crossDetailEnabled || !probeBudgetCoordinatorInstalled) throw crossDetailUnavailable();
+function crossDetailLimits(effective: University): VnuCrossDetailLimits {
+  const limits = effective.limits?.crossLookup?.crossDetail;
+  if (!limits || !effectiveVnuRuntimeConfig.crossDetailEnabled || !probeBudgetCoordinatorInstalled) throw crossDetailUnavailable();
   return {
-    maxTargets: effectiveVnuRuntimeConfig.crossDetailMaxTargets,
-    maxRows: effectiveVnuRuntimeConfig.crossDetailMaxRows,
-    concurrency: effectiveVnuRuntimeConfig.crossDetailConcurrency,
+    ...limits,
     budget: effectiveVnuRuntimeConfig.crossDetailBudget,
     windowSeconds: effectiveVnuRuntimeConfig.crossDetailWindowSeconds,
   };
 }
 
-async function consumeVnuCrossDetailPermit(session: EncryptedSessionPayload, requesterToken: string, permit: string) {
+async function consumeVnuCrossDetailPermit(session: EncryptedSessionPayload, requesterToken: string, permit: string, limits: VnuCrossDetailLimits) {
   const parsed = parseVnuCrossDetailPermitString(permit);
   const envelope = await decryptVnuCrossDetailPermitEnvelope(parsed.envelope, getSessionSecret());
-  const limits = crossDetailLimits();
   const identity = await vnuProbeBudgetKey(session);
   const input = await buildVnuCrossDetailConsumeInput(getSessionSecret(), requesterToken, parsed, envelope);
   const consumed = await vnuProbeBudgetCoordinator.consumeCrossDetailPermit(identity, input, limits);
@@ -1077,8 +1128,10 @@ async function fetchVnuCrossDetail(
   permit: string,
   signal: AbortSignal,
   warmClient?: DaotaoClient,
+  limits?: VnuCrossDetailLimits,
 ) {
-  const { consumed, envelope } = await consumeVnuCrossDetailPermit(session, requesterToken, permit);
+  const effectiveLimits = limits ?? crossDetailLimits(await requireFeature("vnu", "crossLookup"));
+  const { consumed, envelope } = await consumeVnuCrossDetailPermit(session, requesterToken, permit, effectiveLimits);
   try {
     const selector = {
       id: envelope.selector.classId,
@@ -1131,6 +1184,7 @@ async function fetchVnuCrossDetailBatch(
   requesterToken: string,
   permits: string[],
   signal: AbortSignal,
+  limits: VnuCrossDetailLimits,
 ): Promise<VnuCrossDetailBatchItem[]> {
   // Group permits by stdId (peeked without consuming the DO permit)
   const groups = new Map<string, string[]>();
@@ -1159,7 +1213,7 @@ async function fetchVnuCrossDetailBatch(
     if (stdId.startsWith("__invalid__")) {
       groupResults[groupIndex] = await Promise.all(groupPermits.map(async (permit) => {
         try {
-          return { permit, status: "ok" as const, html: await fetchVnuCrossDetail(session, requesterToken, permit, signal) };
+          return { permit, status: "ok" as const, html: await fetchVnuCrossDetail(session, requesterToken, permit, signal, undefined, limits) };
         } catch (error) {
           return { permit, status: "error" as const, errorCode: error instanceof HyeboardError ? error.code : "VNU_REQUEST_FAILED" };
         }
@@ -1183,7 +1237,7 @@ async function fetchVnuCrossDetailBatch(
         continue;
       }
       try {
-        results.push({ permit, status: "ok", html: await fetchVnuCrossDetail(session, requesterToken, permit, signal, client) });
+        results.push({ permit, status: "ok", html: await fetchVnuCrossDetail(session, requesterToken, permit, signal, client, limits) });
       } catch (error) {
         if (!(error instanceof HyeboardError) || !isCrossDetailItemError(error)) throw error;
         results.push({ permit, status: "error", errorCode: error.code });
@@ -1192,7 +1246,7 @@ async function fetchVnuCrossDetailBatch(
       groupResults[groupIndex] = results;
     }
   };
-  await Promise.all(Array.from({ length: Math.min(effectiveVnuRuntimeConfig.crossDetailConcurrency, groupEntries.length) }, () => processGroup()));
+  await Promise.all(Array.from({ length: Math.min(limits.concurrency, groupEntries.length) }, () => processGroup()));
 
   // Preserve original permit order
   const itemMap = new Map(groupResults.flat().map((item) => [item.permit, item]));
@@ -1275,7 +1329,9 @@ async function issueVnuAuthResult(input: {
   payload: EncryptedSessionPayload;
   session: AuthenticatedSessionMetadata;
   secret: string;
+  signal: AbortSignal;
 }): Promise<AuthResult> {
+  throwIfRequestCancelled(input.signal);
   const coordinator = vnuRefreshControlCoordinator;
   if (!coordinator) return { token: await encryptSession(sessionTokenPayload(input.payload), input.secret), session: input.session };
 
@@ -1291,6 +1347,7 @@ async function issueVnuAuthResult(input: {
     secret: input.secret,
   });
   let activation: Awaited<ReturnType<VnuRefreshControlCoordinator["activatePair"]>>;
+  throwIfRequestCancelled(input.signal);
   try {
     activation = await coordinator.activatePair(descriptor.principalKey, descriptorPair(descriptor));
   } catch {
@@ -1510,7 +1567,7 @@ function sanitizeGradesHtmlForBrowser(html: string): string {
   return `${sanitized}${html.slice(cursor)}`;
 }
 
-async function vnuRawHtml(session: EncryptedSessionPayload, page: string, params: { selUniv?: string; selStd?: string; vTermID?: string; id?: string; val?: string; Term?: string }): Promise<string> {
+async function vnuRawHtml(session: EncryptedSessionPayload, page: string, params: { selUniv?: string; selStd?: string; vTermID?: string; id?: string; val?: string; Term?: string }, signal?: AbortSignal): Promise<string> {
   if (!session.vnu?.value) throw missingVnuCredential();
   // Client-supplied selStd/selUniv are never trusted for any key: per-student
   // branches below derive both ids from the session's own profile. Strip them
@@ -1528,11 +1585,11 @@ async function vnuRawHtml(session: EncryptedSessionPayload, page: string, params
 
   const client = new DaotaoClient(session);
   let html: string;
-  if (page === "profile") html = await client.getProfileHtml();
-  else if (page === "grades") html = await client.getGradesHtml();
-  else if (page === "progress") html = await client.getStudyProgressHtml();
-  else if (page === "exam-base") html = await client.getExamBaseHtml();
-  else if (page === "syllabus") html = await client.getSyllabusHtml();
+  if (page === "profile") html = await client.getProfileHtml(signal);
+  else if (page === "grades") html = await client.getGradesHtml(signal);
+  else if (page === "progress") html = await client.getStudyProgressHtml(signal);
+  else if (page === "exam-base") html = await client.getExamBaseHtml(signal);
+  else if (page === "syllabus") html = await client.getSyllabusHtml(signal);
   else if (page === "exams") {
     if (!trustedParams.vTermID) throw new HyeboardError("VNU_EXAM_QUERY_INCOMPLETE", "Exam lookup needs a term id (vTermID); the student and university ids are always derived from your own profile server-side.", 400);
     // Same hardening as point-detail: the selStd/selUniv sent upstream are
@@ -1544,19 +1601,20 @@ async function vnuRawHtml(session: EncryptedSessionPayload, page: string, params
     // stays correct if upstream behavior ever changes; cross-student access
     // lives only on the gated cross-lookup routes. The profile read reuses
     // this same cached path, keyed per session cookie.
-    const ownProfile = parseProfileHtml(await vnuRawHtml(session, "profile", {}));
+    const ownProfile = parseProfileHtml(await vnuRawHtml(session, "profile", {}, signal));
     if (!VNU_PORTAL_STD_ID_PATTERN.test(ownProfile.internalStudentId ?? "") || !/^\d+$/.test(ownProfile.internalUnivId ?? "")) throw incompleteVnuProfile();
-    html = await client.getExamsHtml({ selUniv: ownProfile.internalUnivId!, selStd: ownProfile.internalStudentId!, vTermID: trustedParams.vTermID });
+    html = await client.getExamsHtml({ selUniv: ownProfile.internalUnivId!, selStd: ownProfile.internalStudentId!, vTermID: trustedParams.vTermID }, signal);
   } else if (page === "point-detail") {
     if (!trustedParams.id || !trustedParams.Term) throw new HyeboardError("VNU_POINT_DETAIL_QUERY_INCOMPLETE", "Point detail needs a class id and a term ordinal.", 400);
     // detailPoint.asp accepts an unbound StdID. Authorize its selector solely
     // from the matching row in this session's cached own-grade document.
-    const stdId = pointDetailSelector(await vnuRawHtml(session, "grades", {}), trustedParams.id, trustedParams.Term);
-    html = await client.getPointDetailHtml({ id: trustedParams.id, stdId, term: trustedParams.Term });
+    const stdId = pointDetailSelector(await vnuRawHtml(session, "grades", {}, signal), trustedParams.id, trustedParams.Term);
+    html = await client.getPointDetailHtml({ id: trustedParams.id, stdId, term: trustedParams.Term }, signal);
   } else {
     throw new HyeboardError("VNU_RAW_PAGE_UNKNOWN", `Unknown VNU raw page: ${page}`, 404);
   }
 
+  if (signal) throwIfRequestCancelled(signal);
   await cachePut(cacheKey, { html }, page === "exams" || page === "point-detail" ? 60 : 300);
   return html;
 }
@@ -1588,45 +1646,30 @@ function corsPlugin() {
 // adapter (and, via setRuntimeConfig/setCloudflareBrowserBinding, how config
 // values are sourced) differs per entry point.
 
-// Worker-side serialization point for university capability data. The static
-// adapter record (vnu: crossLookup=true) describes the Cloudflare deployment,
-// where the authoritative Durable Object probe-budget coordinator exists. A
-// self-hosted runtime has no such coordinator — every cross-lookup route
-// there fails closed with 503 — so advertising the capability would render
-// cross-lookup UI whose every request errors. Mask it honestly at this
-// boundary instead of touching the shared static record (correct for
-// Cloudflare; listUniversities() returns the adapters' own objects, so the
-// masked list must be a copy, never a mutation).
-function serializeUniversities() {
-  const universities = listUniversities();
-  return universities.map((university) => {
+function serializeNativeUniversities(): University[] {
+  return listUniversities().map((university) => {
     if (!probeBudgetCoordinatorInstalled && university.capabilities.crossLookup) {
       return { ...university, limits: undefined, capabilities: { ...university.capabilities, crossLookup: false } };
     }
     if (probeBudgetCoordinatorInstalled && university.id === "vnu" && university.capabilities.crossLookup) {
+      const bulkMaxTargets = effectiveVnuRuntimeConfig.crossLookupBulkMaxTargets;
       return {
         ...university,
         limits: {
           crossLookup: {
-            bulkMaxTargets: effectiveVnuRuntimeConfig.crossLookupBulkMaxTargets,
+            bulkMaxTargets,
             bulkDirectChunkMaxTargets: effectiveVnuRuntimeConfig.crossLookupDirectChunkMaxTargets,
             bulkModeMaxTargets: {
-              "stdid-to-code": effectiveVnuRuntimeConfig.crossLookupBulkMaxTargets,
-              "stdid-to-transcript": effectiveVnuRuntimeConfig.crossLookupBulkMaxTargets,
-              "code-to-stdid": Math.min(effectiveVnuRuntimeConfig.crossLookupBulkMaxTargets, Math.floor(300 / VNU_STUDENT_ID_RESOLVER_MAX_PROBES)),
+              "stdid-to-code": bulkMaxTargets,
+              "stdid-to-transcript": bulkMaxTargets,
+              "code-to-stdid": Math.min(bulkMaxTargets, Math.floor(300 / VNU_STUDENT_ID_RESOLVER_MAX_PROBES)),
             },
-            // Cross-detail limits are published only while the feature is
-            // affirmatively enabled by config; a malformed/disabled value
-            // fails closed by omitting the block entirely, so clients never
-            // render detail affordances the routes would reject.
             ...(effectiveVnuRuntimeConfig.crossDetailEnabled
-              ? {
-                crossDetail: {
-                  maxTargets: effectiveVnuRuntimeConfig.crossDetailMaxTargets,
-                  maxRows: effectiveVnuRuntimeConfig.crossDetailMaxRows,
-                  concurrency: effectiveVnuRuntimeConfig.crossDetailConcurrency,
-                },
-              }
+              ? { crossDetail: {
+                maxTargets: effectiveVnuRuntimeConfig.crossDetailMaxTargets,
+                maxRows: effectiveVnuRuntimeConfig.crossDetailMaxRows,
+                concurrency: effectiveVnuRuntimeConfig.crossDetailConcurrency,
+              } }
               : {}),
           },
         },
@@ -1636,32 +1679,129 @@ function serializeUniversities() {
   });
 }
 
+function effectiveHardLimits(): Partial<Record<OperationalLimitKey, number>> {
+  const crossLookup = serializeNativeUniversities().find(({ id }) => id === "vnu")?.limits?.crossLookup;
+  if (!crossLookup) return {};
+  return {
+    "crossLookup.bulkMaxTargets": crossLookup.bulkMaxTargets,
+    ...(crossLookup.bulkDirectChunkMaxTargets === undefined ? {} : { "crossLookup.bulkDirectChunkMaxTargets": crossLookup.bulkDirectChunkMaxTargets }),
+    ...(crossLookup.bulkModeMaxTargets?.["stdid-to-code"] === undefined ? {} : { "crossLookup.bulkModeMaxTargets.stdid-to-code": crossLookup.bulkModeMaxTargets["stdid-to-code"] }),
+    ...(crossLookup.bulkModeMaxTargets?.["stdid-to-transcript"] === undefined ? {} : { "crossLookup.bulkModeMaxTargets.stdid-to-transcript": crossLookup.bulkModeMaxTargets["stdid-to-transcript"] }),
+    ...(crossLookup.bulkModeMaxTargets?.["code-to-stdid"] === undefined ? {} : { "crossLookup.bulkModeMaxTargets.code-to-stdid": crossLookup.bulkModeMaxTargets["code-to-stdid"] }),
+    ...(crossLookup.crossDetail === undefined ? {} : {
+      "crossLookup.crossDetail.maxTargets": crossLookup.crossDetail.maxTargets,
+      "crossLookup.crossDetail.maxRows": crossLookup.crossDetail.maxRows,
+      "crossLookup.crossDetail.concurrency": crossLookup.crossDetail.concurrency,
+    }),
+  };
+}
+
+async function serializeUniversities(): Promise<University[]> {
+  const policy = await requireFeaturePolicyRuntime().current();
+  const hardLimits = effectiveHardLimits();
+  return serializeNativeUniversities().map((university) => effectiveUniversity(university, policy, hardLimits));
+}
+
+async function resolveEffectiveUniversity(universityId: string): Promise<University> {
+  const native = serializeNativeUniversities().find(({ id }) => id === universityId);
+  if (!native) throw new HyeboardError("UNKNOWN_UNIVERSITY", `Unknown university: ${universityId}`, 404);
+  return effectiveUniversity(native, await requireFeaturePolicyRuntime().current(), effectiveHardLimits());
+}
+
+async function requireFeature(universityId: string, capability: CapabilityKey): Promise<University> {
+  const effective = await resolveEffectiveUniversity(universityId);
+  if (!effective.capabilities[capability]) {
+    throw new HyeboardError("FEATURE_DISABLED", "This feature is temporarily unavailable.", 503, { capability });
+  }
+  return effective;
+}
+
+function requireFeaturePolicyRuntime(): FeaturePolicyRuntime {
+  if (!featurePolicyRuntime) throw new HyeboardError("FEATURE_POLICY_UNAVAILABLE", "Feature policy is unavailable.", 503);
+  return featurePolicyRuntime;
+}
+
+const memoryAdminLoginWindows = new Map<string, { count: number; resetAt: number }>();
+const memoryAdminLoginRateLimit: AdminLoginRateLimit = {
+  // ponytail: process-local password limiter is valid only in documented single-process memory mode; use shared authority before replicas.
+  async consume(bucketHash, limit, windowMs) {
+    const now = Date.now();
+    for (const [key, window] of memoryAdminLoginWindows) {
+      if (window.resetAt <= now) memoryAdminLoginWindows.delete(key);
+    }
+    const stored = memoryAdminLoginWindows.get(bucketHash);
+    const window = !stored || stored.resetAt <= now ? { count: 0, resetAt: now + windowMs } : stored;
+    if (window.count >= limit) return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((window.resetAt - now) / 1000)) };
+    memoryAdminLoginWindows.set(bucketHash, { ...window, count: window.count + 1 });
+    return { allowed: true };
+  },
+};
+
+function effectiveAdminLoginRateLimit(): AdminLoginRateLimit {
+  if (adminLoginRateLimit) return adminLoginRateLimit;
+  if (haConfig.mode === "distributed") {
+    if (!rateLimitCoordinator) throw distributedDependencyUnavailable("Redis rate limiter");
+    return {
+      async consume(bucketHash, limit, windowMs) {
+        try {
+          return await rateLimitCoordinator!.consumeFixedWindow(`admin/login/${bucketHash}`, 1, windowMs, limit);
+        } catch {
+          throw distributedDependencyUnavailable("Redis rate limiter");
+        }
+      },
+    };
+  }
+  if (haConfig.mode === "memory") return memoryAdminLoginRateLimit;
+  throw distributedDependencyUnavailable("admin login limiter");
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createApp(adapter: any, options: { lifecycle?: HaLifecycleController } = {}) {
+export function createApp(adapter: any, options: { lifecycle?: HaLifecycleController; clientIp?: (request: Request) => string | undefined } = {}) {
   const app = new Elysia({ adapter });
   const lifecycle = options.lifecycle ?? createHaLifecycle({ config: haConfig });
 
   const plugin = corsPlugin();
   if (plugin) app.use(plugin);
 
-  return app
+  const routed = app
     .onRequest(({ request, set }) => {
+      // SAFETY: Request is extensible here; these process-local diagnostics never cross the API boundary.
       const req = request as unknown as { _hyebReqId?: string; _hyebStart?: number };
       req._hyebReqId = requestId();
       req._hyebStart = Date.now();
       const path = new URL(request.url).pathname;
-       if (isVnuCrossDetailResponsePath(path) || path.startsWith("/api/uet/raw/")) set.headers["Cache-Control"] = "no-store, private";
-       else if (path.startsWith("/api/vnu/cross-lookup/") || path === "/api/vnu/auth/import-session" || path === "/api/vnu/auth/refresh" || path === "/api/vnu/auth/logout") set.headers["Cache-Control"] = "no-store";
+      if (isVnuCrossDetailResponsePath(path) || path.startsWith("/api/uet/raw/") || path.startsWith("/api/vnu/class-lookup/")) set.headers["Cache-Control"] = "no-store, private";
+      else if (path.startsWith("/api/admin/") || path === "/api/policy/events" || path.startsWith("/api/vnu/cross-lookup/") || isImportSessionPath(path) || path === "/api/vnu/auth/refresh" || path === "/api/vnu/auth/logout") set.headers["Cache-Control"] = "no-store";
       // Set HYEB_LOG_LEVEL=debug (Node/Bun .env, or a Cloudflare secret/var)
       // to see one line per incoming request here.
       getLogger().debug({ reqId: req._hyebReqId, method: request.method, path: requestLogPath(request.url) }, "request received");
     })
     .onAfterResponse(({ request, set }) => {
+      // SAFETY: onRequest initializes these optional diagnostics on this Request instance.
       const req = request as unknown as { _hyebReqId?: string; _hyebStart?: number };
       getLogger().debug({ reqId: req._hyebReqId, status: set.status, durationMs: req._hyebStart ? Date.now() - req._hyebStart : undefined }, "request completed");
     })
-    .onError(({ error, request }) => routeError(error, (request as unknown as { _hyebReqId?: string })._hyebReqId, request.url))
+    .onError(({ error, request }) => {
+      // SAFETY: onRequest may attach this optional diagnostic to the Request instance.
+      const req = request as unknown as { _hyebReqId?: string };
+      return routeError(error, req._hyebReqId, request.url);
+    });
 
+  if (adminConfigEnabled) {
+    const adminConfig = parseAdminConfig(runtimeConfig);
+    // SAFETY: Elysia exposes the exact chainable get/post registrar surface consumed by the focused route module.
+    registerAdminRoutes(routed as unknown as Parameters<typeof registerAdminRoutes>[0], {
+      runtime: requireFeaturePolicyRuntime,
+      config: () => adminConfig,
+      rateLimit: { consume: (bucketHash, limit, windowMs) => effectiveAdminLoginRateLimit().consume(bucketHash, limit, windowMs) },
+      clientIp: options.clientIp ?? (() => undefined),
+      authenticateStudent: (request) => getSession(request.headers),
+      nativeUniversities: serializeNativeUniversities,
+      hardLimits: effectiveHardLimits,
+    });
+  }
+
+  return routed
     // ── Public — no session required ──
     .get("/api/health", () => ok({ status: "ok", service: "hyeboard" }))
     .get("/api/live", async ({ set }) => {
@@ -1676,8 +1816,9 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
       set.status = diagnostics.state === "ready" ? 200 : 503;
       return ok(diagnostics);
     })
-    .get("/api/universities", () => ok(serializeUniversities()))
-    .post("/api/:universityId/auth/import-session", async ({ params, body, request }) => {
+    .get("/api/universities", async () => ok(await serializeUniversities()))
+    .post("/api/:universityId/auth/import-session", async ({ params, body, request, set }) => {
+      set.headers["Cache-Control"] = "no-store";
       const adapterInstance = getAdapter(params.universityId);
       // Keep parent/guardian direct API logins on this SSE route so a
       // server-side OCR miss can relay the CAPTCHA image to the user. The
@@ -1775,6 +1916,7 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
                       }
                     },
                   });
+              throwIfRequestCancelled(request.signal);
               const token = await encryptSession(sessionTokenPayload(imported.session), getSessionSecret());
               send("done", { token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
             } catch (error) {
@@ -1794,7 +1936,7 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
         return new Response(stream, {
           headers: {
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache, no-transform",
+            "Cache-Control": "no-store, no-transform",
             Connection: "keep-alive",
             // Disables response buffering on proxies that respect this
             // (e.g. nginx) so progress events actually stream incrementally
@@ -1811,14 +1953,17 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
         const secret = getSessionSecret();
         const loginAndCache = async (): Promise<AuthResult> => {
           const imported = await adapterInstance.importSession(normalizedBody, { signal: request.signal });
+          throwIfRequestCancelled(request.signal);
           const normalizedSession: EncryptedSessionPayload = {
             ...imported.session,
             studentCode: imported.studentCode ?? imported.session.studentCode,
           };
           if (!normalizedSession.studentCode) throw incompleteVnuProfile();
           const session = { universityId: normalizedSession.universityId, studentCode: normalizedSession.studentCode, expiresAt: normalizedSession.expiresAt, authenticated: true as const };
-          const authResult = await issueVnuAuthResult({ username, password, payload: normalizedSession, session, secret });
+          throwIfRequestCancelled(request.signal);
+          const authResult = await issueVnuAuthResult({ username, password, payload: normalizedSession, session, secret, signal: request.signal });
           const seed = await encryptSession(sessionTokenPayload(normalizedSession), secret);
+          throwIfRequestCancelled(request.signal);
           await cachePut(cacheKey, { seed, session }, Math.floor((Date.parse(normalizedSession.expiresAt) - Date.now()) / 1000));
           return authResult;
         };
@@ -1831,8 +1976,9 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
           // upstream failures distinct so only coordinator/Redis failures map
           // to the distributed dependency error.
           const workFailure = Symbol("vnu-import-work-failure");
+          let authResult: AuthResult;
           try {
-            return await vnuImportSingleFlight.run(cacheKey, async () => {
+            authResult = await vnuImportSingleFlight.run(cacheKey, async () => {
               try {
                 return await loginAndCache();
               } catch (error) {
@@ -1843,6 +1989,8 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
             if (isRecord(error) && error.workFailure === workFailure) throw error.error;
             throw distributedDependencyUnavailable("Redis VNU import single-flight");
           }
+          throwIfRequestCancelled(request.signal);
+          return authResult;
         };
 
         const cached = await restoreCachedVnuImport(await cacheGet<unknown>(cacheKey), secret);
@@ -1850,7 +1998,8 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
 
         let liveStudentCode: string | undefined;
         try {
-          liveStudentCode = parseProfileHtml(await new DaotaoClient(cached.payload).getProfileHtml()).studentCode;
+          liveStudentCode = parseProfileHtml(await new DaotaoClient(cached.payload).getProfileHtml(request.signal)).studentCode;
+          throwIfRequestCancelled(request.signal);
         } catch (error) {
           if (error instanceof HyeboardError && error.code === "VNU_SESSION_EXPIRED") return ok(await loginAfterCacheMiss());
           throw error;
@@ -1858,9 +2007,10 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
 
         if (!liveStudentCode || liveStudentCode !== cached.payload.studentCode || liveStudentCode !== cached.session.studentCode) return ok(await loginAfterCacheMiss());
 
-        return ok(await issueVnuAuthResult({ username, password, payload: cached.payload, session: cached.session, secret }));
+        return ok(await issueVnuAuthResult({ username, password, payload: cached.payload, session: cached.session, secret, signal: request.signal }));
       }
       const imported = await adapterInstance.importSession(body, { signal: request.signal });
+      throwIfRequestCancelled(request.signal);
       const token = await encryptSession(sessionTokenPayload(imported.session), getSessionSecret());
       return ok({ token, session: { universityId: imported.universityId, studentCode: imported.studentCode, expiresAt: imported.expiresAt, authenticated: true } });
     }, { body: importSessionBody })
@@ -1943,6 +2093,7 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
           { vnuUsername: grant.username, vnuPassword: grant.password, signal: request.signal },
           { signal: request.signal },
         );
+        if (request.signal.aborted) throw vnuRefreshUnavailable();
         if (imported.universityId !== "vnu" || imported.studentCode !== grant.expectedStudentCode) throw vnuRefreshIdentityMismatch();
         const refreshedSession: EncryptedSessionPayload = {
           ...imported.session,
@@ -2061,11 +2212,26 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
       await revokeToken(token, session.expiresAt);
       return ok({ authenticated: false });
     })
-    .get("/api/vnu/raw/:page", async ({ headers, params, query }) => {
+    .get("/api/vnu/raw/:page", async ({ headers, params, query, request }) => {
       const session = await getSession(headers);
       if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
-      const html = await vnuRawHtml(session, params.page, query);
+      const capability = vnuRawCapabilities[params.page];
+      if (!capability) throw new HyeboardError("VNU_RAW_PAGE_UNKNOWN", `Unknown VNU raw page: ${params.page}`, 404);
+      await requireFeature("vnu", capability);
+      const html = await vnuRawHtml(session, params.page, query, request.signal);
       return ok({ html: params.page === "grades" ? sanitizeGradesHtmlForBrowser(html) : html });
+    }, { query: vnuRawQuery })
+    .get("/api/vnu/class-lookup/catalog", async ({ headers, query, request }) => {
+      const session = await getSession(headers);
+      if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
+      await requireFeature("vnu", "classLookup");
+      return ok({ html: await vnuRawHtml(session, "exams", query, request.signal) });
+    }, { query: vnuRawQuery })
+    .get("/api/vnu/class-lookup/point-detail", async ({ headers, query, request }) => {
+      const session = await getSession(headers);
+      if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
+      await requireFeature("vnu", "classLookup");
+      return ok({ html: await vnuRawHtml(session, "point-detail", query, request.signal) });
     }, { query: vnuRawQuery })
     // Cross-student StdID -> student-code resolver. listpoint_Brc1.asp
     // HONORS selStd (live-verified — see har-notes.md): it renders the
@@ -2082,13 +2248,14 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
     .get("/api/vnu/cross-lookup/student-code", async ({ headers, query, request }) => {
       const session = await getSession(headers);
       if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
+      await requireFeature("vnu", "crossLookup");
       if (query.allowCrossLookup !== "true") throw new HyeboardError("VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED", "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.", 400);
       if (!query.stdId || !/^\d{1,11}$/.test(query.stdId)) throw new HyeboardError("VNU_CROSS_LOOKUP_QUERY_INCOMPLETE", "Cross-student student-code lookup needs a target student id.", 400);
       // Fails closed when the caller's own id is unavailable or malformed:
       // without a parsed own identity the self-targeting check below cannot
       // run, so the request is rejected rather than allowed through
       // unverified (see parseVnuOwnIdentity).
-      const ownIdentity = parseVnuOwnIdentity(parseProfileHtml(await vnuRawHtml(session, "profile", {})), {
+      const ownIdentity = parseVnuOwnIdentity(parseProfileHtml(await vnuRawHtml(session, "profile", {}, request.signal)), {
         requireStudentCode: false,
       });
       if (isOwnStdId(ownIdentity, query.stdId)) throw new HyeboardError("VNU_CROSS_LOOKUP_SELF_TARGET", "That is your own student id. Your own ID mapping is on the Lookup page; cross-lookup is only for other students.", 400);
@@ -2110,9 +2277,10 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
     .get("/api/vnu/cross-lookup/student-id", async ({ headers, query, request }) => {
       const session = await getSession(headers);
       if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
+      await requireFeature("vnu", "crossLookup");
       if (query.allowCrossLookup !== "true") throw new HyeboardError("VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED", "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.", 400);
       if (!query.stdCode || !/^\d{8}$/.test(query.stdCode)) throw new HyeboardError("VNU_CROSS_LOOKUP_QUERY_INCOMPLETE", "Cross-student student-id lookup needs a target 8-digit student code.", 400);
-      const ownIdentity = parseVnuOwnIdentity(parseProfileHtml(await vnuRawHtml(session, "profile", {})), {
+      const ownIdentity = parseVnuOwnIdentity(parseProfileHtml(await vnuRawHtml(session, "profile", {}, request.signal)), {
         requireStudentCode: true,
       });
       if (isOwnStudentCode(ownIdentity, query.stdCode)) throw new HyeboardError("VNU_CROSS_LOOKUP_SELF_TARGET", "That is your own student code. Your own ID mapping is on the Lookup page; cross-lookup is only for other students.", 400);
@@ -2137,6 +2305,7 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
        set.headers["Cache-Control"] = "no-store, private";
       const session = await getSession(headers);
       if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
+      const effective = await requireFeature("vnu", "crossLookup");
       if (query.allowCrossLookup !== "true") throw new HyeboardError("VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED", "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.", 400);
 
       const hasStdId = query.stdId !== undefined;
@@ -2145,7 +2314,7 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
         throw new HyeboardError("VNU_CROSS_LOOKUP_QUERY_INCOMPLETE", "Cross-student transcript lookup needs exactly one valid target: stdId or 8-digit stdCode.", 400);
       }
 
-      const ownIdentity = parseVnuOwnIdentity(parseProfileHtml(await vnuRawHtml(session, "profile", {})), {
+      const ownIdentity = parseVnuOwnIdentity(parseProfileHtml(await vnuRawHtml(session, "profile", {}, request.signal)), {
         requireStudentCode: true,
       });
       if (hasStdId && isOwnStdId(ownIdentity, query.stdId!)) throw new HyeboardError("VNU_CROSS_LOOKUP_SELF_TARGET", "That is your own student id. Your own transcript is on the Grades page; cross-lookup is only for other students.", 400);
@@ -2175,14 +2344,15 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
        const transcriptHtml = await withVnuOraclePermit(session, request.signal, (signal) => client.getTranscriptByStdIdHtml(targetStdId!, signal));
        const transcript = parseVnuCrossLookupTranscript(transcriptHtml);
        if (!transcript.header.studentCode) throw new HyeboardError("VNU_CROSS_LOOKUP_NOT_FOUND", "The portal did not return a student for that identifier.", 404);
-       if (!effectiveVnuRuntimeConfig.crossDetailEnabled || !probeBudgetCoordinatorInstalled) return ok(transcript);
+       if (!effectiveVnuRuntimeConfig.crossDetailEnabled || !probeBudgetCoordinatorInstalled || !effective.limits?.crossLookup?.crossDetail) return ok(transcript);
+       const limits = crossDetailLimits(effective);
        const requesterToken = parseBearerToken(new Headers(headers as Record<string, string>).get("Authorization"));
        if (!requesterToken) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
        const minter = createVnuCrossDetailMinter({
          secret: getSessionSecret(),
          requesterToken,
-         maxTargets: effectiveVnuRuntimeConfig.crossDetailMaxTargets,
-         maxRows: effectiveVnuRuntimeConfig.crossDetailMaxRows,
+         maxTargets: limits.maxTargets,
+         maxRows: limits.maxRows,
          permitTtlSeconds: effectiveVnuRuntimeConfig.crossDetailPermitTtlSeconds,
        });
        const permitRows = await Promise.all(transcript.terms.flatMap((term) => term.rows.map(async (row, index) => ({
@@ -2192,7 +2362,7 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
            ? await minter.mint({ targetStdId: targetStdId!, transcriptHtml, row: { courseCode: row.courseCode, classId: row.classId, termOrdinal: row.termOrdinal } })
            : undefined,
        }))));
-       if (minter.issued.length) await vnuProbeBudgetCoordinator.issueCrossDetailPermits(await vnuProbeBudgetKey(session), minter.issued, crossDetailLimits());
+       if (minter.issued.length) await vnuProbeBudgetCoordinator.issueCrossDetailPermits(await vnuProbeBudgetKey(session), minter.issued, limits);
        return ok({ ...transcript, detailPermits: permitRows.filter((row): row is typeof row & { permit: string } => row.permit !== undefined).map(({ termIndex, rowIndex, permit }) => ({ termIndex, rowIndex, permit })) });
      }, { query: vnuCrossLookupQuery })
     .post("/api/vnu/cross-lookup/detail", async ({ headers, request, set }) => {
@@ -2201,8 +2371,9 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
       if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
       const requesterToken = parseBearerToken(new Headers(headers as Record<string, string>).get("Authorization"));
       if (!requesterToken) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
-      const { permit } = await readVnuCrossDetailBody(request, "single", crossDetailLimits().maxRows);
-       return ok({ permit, html: await fetchVnuCrossDetail(session, requesterToken, permit, request.signal) });
+      const limits = crossDetailLimits(await requireFeature("vnu", "crossLookup"));
+      const { permit } = await readVnuCrossDetailBody(request, "single", limits.maxRows);
+       return ok({ permit, html: await fetchVnuCrossDetail(session, requesterToken, permit, request.signal, undefined, limits) });
     }, { parse: "none" })
     .post("/api/vnu/cross-lookup/detail/bulk", async ({ headers, request, set }) => {
       set.headers["Cache-Control"] = "no-store, private";
@@ -2210,8 +2381,9 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
       if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
       const requesterToken = parseBearerToken(new Headers(headers as Record<string, string>).get("Authorization"));
       if (!requesterToken) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
-      const { permits } = await readVnuCrossDetailBody(request, "bulk", crossDetailLimits().maxRows);
-      const items = await fetchVnuCrossDetailBatch(session, requesterToken, permits, request.signal);
+      const limits = crossDetailLimits(await requireFeature("vnu", "crossLookup"));
+      const { permits } = await readVnuCrossDetailBody(request, "bulk", limits.maxRows);
+      const items = await fetchVnuCrossDetailBatch(session, requesterToken, permits, request.signal, limits);
       return ok({ items });
     }, { parse: "none" })
     .post("/api/vnu/cross-lookup/detail/export", async ({ headers, request, set }) => {
@@ -2220,20 +2392,22 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
       if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
       const requesterToken = parseBearerToken(new Headers(headers as Record<string, string>).get("Authorization"));
       if (!requesterToken) throw new HyeboardError("MISSING_SESSION", "Missing Authorization bearer token", 401);
-      const { permits } = await readVnuCrossDetailBody(request, "export", crossDetailLimits().maxRows);
-      const items = await fetchVnuCrossDetailBatch(session, requesterToken, permits, request.signal);
+      const limits = crossDetailLimits(await requireFeature("vnu", "crossLookup"));
+      const { permits } = await readVnuCrossDetailBody(request, "export", limits.maxRows);
+      const items = await fetchVnuCrossDetailBatch(session, requesterToken, permits, request.signal, limits);
       return ok({ items });
     }, { parse: "none" })
     .post("/api/vnu/cross-lookup/bulk", async ({ headers, request }) => {
       const session = await getSession(headers);
       if (session.universityId !== "vnu") throw new HyeboardError("SESSION_UNIVERSITY_MISMATCH", "Session university does not match route", 403);
-      const body = await parseVnuBulkLookupRequest(request);
+      const effective = await requireFeature("vnu", "crossLookup");
+      const body = await parseVnuBulkLookupRequest(request, effective.limits);
       const deadline = createBulkRequestDeadline(request.signal, effectiveVnuRuntimeConfig.crossLookupRequestTimeoutMs);
 
       try {
 
       const needsOwnCode = body.mode === "code-to-stdid";
-      const ownIdentity = parseVnuOwnIdentity(parseProfileHtml(await vnuRawHtml(session, "profile", {})), {
+      const ownIdentity = parseVnuOwnIdentity(parseProfileHtml(await vnuRawHtml(session, "profile", {}, deadline.signal)), {
         requireStudentCode: needsOwnCode,
       });
 
@@ -2358,6 +2532,9 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
         })
         .get("/raw/:resource", async ({ session, params, query, set }) => {
           set.headers["Cache-Control"] = "no-store, private";
+          const capability = uetRawCapabilities[params.resource];
+          if (!capability) throw new HyeboardError("UET_RAW_RESOURCE_UNKNOWN", "Unknown UET raw resource", 404);
+          await requireFeature("uet", capability);
           return ok(await uetRawRead(session, params.resource, query.termCode));
         }, { query: termCodeQuery }),
     )
@@ -2377,24 +2554,37 @@ export function createApp(adapter: any, options: { lifecycle?: HaLifecycleContro
           if (!("data" in typed)) return response;
           return { ...typed, meta: { ...(typed.meta ?? {}), refreshedToken } };
         })
-        .get("/auth/session", ({ session }) => ok({ universityId: session.universityId, studentCode: session.studentCode, expiresAt: session.expiresAt, authenticated: true }))
-        .get("/me", async ({ adapter, session }) => ok(await adapter.getStudentProfile({ session })))
-        .get("/dashboard", async ({ adapter, session, query }) => ok(await adapter.getDashboard({ session, termCode: query.termCode })), { query: termCodeQuery })
-        .get("/terms", async ({ adapter, session }) => ok(await adapter.getTerms({ session })))
-        .get("/timetable", async ({ adapter, session, query }) => ok(await adapter.getTimetable({ session, termCode: query.termCode })), { query: termCodeQuery })
-        .get("/courses", async ({ adapter, session }) => ok(await adapter.getCourses({ session })))
-        .get("/courses/:courseId", async ({ adapter, session, params }) => ok(await adapter.getCourseDetail({ session, courseId: params.courseId })))
-        .get("/assignments", async ({ adapter, session }) => ok(await adapter.getAssignments({ session })))
-        .get("/grades", async ({ adapter, session }) => ok(await adapter.getGrades({ session })))
-        .get("/gpa", async ({ adapter, session }) => ok(await adapter.getGpaSummary({ session })))
-        .get("/exams", async ({ adapter, session, query }) => ok(await adapter.getExams({ session, termCode: query.termCode })), { query: termCodeQuery })
-        .get("/attendance", async ({ adapter, session }) => ok(await adapter.getAttendance({ session })))
-        .get("/notifications", async ({ adapter, session }) => ok(await adapter.getNotifications({ session })))
-        .get("/news", async ({ adapter, session }) => ok(await adapter.getNews({ session })))
-        .get("/documents", async ({ adapter, session }) => ok(await adapter.getDocuments({ session })))
-        .get("/tuition", async ({ adapter, session }) => ok(await adapter.getTuition({ session })))
-        .get("/training-points", async ({ adapter, session }) => ok(await adapter.getTrainingPoints({ session })))
-        .get("/requests", async ({ adapter, session }) => ok(await adapter.getRequests({ session })))
+        .get("/auth/session", async ({ session }) => {
+          const effective = await resolveEffectiveUniversity(session.universityId);
+          return ok({
+            universityId: session.universityId,
+            expiresAt: session.expiresAt,
+            authenticated: true,
+            ...(effective.capabilities.profile === true ? { studentCode: session.studentCode } : {}),
+          });
+        })
+        .get("/me", async ({ adapter, session, request }) => { await requireFeature(session.universityId, "profile"); return ok(await adapter.getStudentProfile({ session, signal: request.signal })); })
+        .get("/dashboard", async ({ adapter, session, query, request }) => {
+          const effective = await resolveEffectiveUniversity(session.universityId);
+          const dashboardRequest = { session, termCode: query.termCode, capabilities: effective.capabilities, signal: request.signal };
+          const dashboard = await adapter.getDashboard(dashboardRequest);
+          return ok(filterDashboardSummary(dashboard, effective.capabilities));
+        }, { query: termCodeQuery })
+        .get("/terms", async ({ adapter, session }) => { await requireFeature(session.universityId, "terms"); return ok(await adapter.getTerms({ session })); })
+        .get("/timetable", async ({ adapter, session, query }) => { await requireFeature(session.universityId, "timetable"); return ok(await adapter.getTimetable({ session, termCode: query.termCode })); }, { query: termCodeQuery })
+        .get("/courses", async ({ adapter, session }) => { await requireFeature(session.universityId, "courses"); return ok(await adapter.getCourses({ session })); })
+        .get("/courses/:courseId", async ({ adapter, session, params }) => { await requireFeature(session.universityId, "courses"); return ok(await adapter.getCourseDetail({ session, courseId: params.courseId })); })
+        .get("/assignments", async ({ adapter, session }) => { await requireFeature(session.universityId, "assignments"); return ok(await adapter.getAssignments({ session })); })
+        .get("/grades", async ({ adapter, session }) => { await requireFeature(session.universityId, "grades"); return ok(await adapter.getGrades({ session })); })
+        .get("/gpa", async ({ adapter, session }) => { await requireFeature(session.universityId, "grades"); return ok(await adapter.getGpaSummary({ session })); })
+        .get("/exams", async ({ adapter, session, query }) => { await requireFeature(session.universityId, "exams"); return ok(await adapter.getExams({ session, termCode: query.termCode })); }, { query: termCodeQuery })
+        .get("/attendance", async ({ adapter, session }) => { await requireFeature(session.universityId, "attendance"); return ok(await adapter.getAttendance({ session })); })
+        .get("/notifications", async ({ adapter, session }) => { await requireFeature(session.universityId, "notifications"); return ok(await adapter.getNotifications({ session })); })
+        .get("/news", async ({ adapter, session }) => { await requireFeature(session.universityId, "news"); return ok(await adapter.getNews({ session })); })
+        .get("/documents", async ({ adapter, session }) => { await requireFeature(session.universityId, "documents"); return ok(await adapter.getDocuments({ session })); })
+        .get("/tuition", async ({ adapter, session }) => { await requireFeature(session.universityId, "tuition"); return ok(await adapter.getTuition({ session })); })
+        .get("/training-points", async ({ adapter, session }) => { await requireFeature(session.universityId, "trainingPoints"); return ok(await adapter.getTrainingPoints({ session })); })
+        .get("/requests", async ({ adapter, session }) => { await requireFeature(session.universityId, "requests"); return ok(await adapter.getRequests({ session })); })
     )
     .compile();
 }

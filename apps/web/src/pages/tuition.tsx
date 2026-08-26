@@ -9,7 +9,7 @@ import { useFeatureQuery, useHyeboard } from "@/state";
 export function TuitionPage() {
   const state = useHyeboard();
   const { t } = useLocale();
-  const query = useFeatureQuery("tuition", () => api.tuition(state.universityId));
+  const query = useFeatureQuery("tuition", () => api.tuition(state.universityId), { capability: "tuition" });
   return (
     <FeatureFrame title={t.tuition.title} description={t.tuition.description} query={query}>
       {(tuition) => {

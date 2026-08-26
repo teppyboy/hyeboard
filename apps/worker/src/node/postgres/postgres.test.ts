@@ -1,9 +1,12 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { emptyPolicy } from "../../feature-policy";
+import type { PublishFeaturePolicyInput } from "../../feature-policy-store";
 import { derivePostgresOpaqueHash, toPostgresEpochMilliseconds } from "./crypto";
-import { runPostgresMigrations } from "./migrations";
+import { PostgresFeaturePolicyStore } from "./feature-policy-store";
+import { defaultPostgresMigrationsDirectory, runPostgresMigrations } from "./migrations";
 import { PostgresSessionRevocationStore } from "./session-revocation";
 import { PostgresVnuRefreshControlCoordinator } from "./vnu-refresh-coordinator";
 import type { PostgresConnection, PostgresPoolLike } from "./pool";
@@ -16,6 +19,11 @@ const PAIR: LinkedPair = {
   grantId: "B".repeat(22),
   grantExpiresAt: Date.parse("2036-02-03T13:00:00.000Z"),
 };
+const POLICY_ACTOR = { method: "password" as const, subject: "password-admin" };
+
+function publication(baseRevision: number, reason = `Publish ${baseRevision + 1}`): PublishFeaturePolicyInput {
+  return { baseRevision, policy: emptyPolicy(), reason, actor: POLICY_ACTOR };
+}
 
 class FakeConnection implements PostgresConnection {
   readonly queries: Array<{ text: string; values?: readonly unknown[] }> = [];
@@ -43,6 +51,69 @@ class FakePool implements PostgresPoolLike {
 
   async transaction<T>(body: (connection: PostgresConnection) => Promise<T>): Promise<T> {
     return body(this.connection);
+  }
+}
+
+class FeaturePolicyFakeConnection implements PostgresConnection {
+  readonly queries: Array<{ text: string; values?: readonly unknown[] }> = [];
+  currentRow: Record<string, unknown> = {
+    revision: "0",
+    snapshot: JSON.stringify({ ...emptyPolicy(), revision: 0 }),
+  };
+  readonly historyRows: Record<string, unknown>[] = [];
+
+  async query<Row extends Record<string, unknown> = Record<string, unknown>>(text: string, values?: readonly unknown[]) {
+    this.queries.push({ text, values });
+    if (text.includes("FROM hyeboard_feature_policy_current")) return { rows: [this.currentRow] as Row[] };
+    if (text.includes("INSERT INTO hyeboard_feature_policy_history")) {
+      this.historyRows.push({
+        revision: String(values![0]),
+        base_revision: String(values![1]),
+        actor: values![2],
+        reason: values![3],
+        published_at: values![4],
+        snapshot: values![5],
+      });
+    }
+    if (text.includes("UPDATE hyeboard_feature_policy_current")) {
+      this.currentRow = { revision: String(values![0]), snapshot: values![1] };
+    }
+    if (text.includes("FROM hyeboard_feature_policy_history")) {
+      const matching = text.includes("revision = $1")
+        ? this.historyRows.filter(({ revision }) => Number(revision) === values![0])
+        : this.historyRows
+          .filter(({ revision }) => Number(revision) < Number(values![0]))
+          .sort((left, right) => Number(right.revision) - Number(left.revision))
+          .slice(0, Number(values![1]));
+      return { rows: matching as Row[] };
+    }
+    return { rows: [] as Row[] };
+  }
+
+  release(): void {}
+}
+
+class FeaturePolicyFakePool implements PostgresPoolLike {
+  readonly connection = new FeaturePolicyFakeConnection();
+
+  query<Row extends Record<string, unknown> = Record<string, unknown>>(text: string, values?: readonly unknown[]) {
+    return this.connection.query<Row>(text, values);
+  }
+
+  async connect(): Promise<PostgresConnection> {
+    return this.connection;
+  }
+
+  async transaction<T>(body: (connection: PostgresConnection) => Promise<T>): Promise<T> {
+    await this.connection.query("BEGIN");
+    try {
+      const result = await body(this.connection);
+      await this.connection.query("COMMIT");
+      return result;
+    } catch (error) {
+      await this.connection.query("ROLLBACK");
+      throw error;
+    }
   }
 }
 
@@ -80,6 +151,67 @@ describe("PostgreSQL HA boundaries", () => {
     expect(JSON.stringify(pool.connection.queries)).not.toMatch(/password|cookie|raw.?token/i);
   });
 
+  it("publishes feature policy under a row lock with history before current", async () => {
+    const pool = new FeaturePolicyFakePool();
+    const store = new PostgresFeaturePolicyStore(pool);
+    const entry = await store.publish(publication(0, "Initial publication"));
+
+    expect(entry).toMatchObject({ revision: 1, baseRevision: 0, actor: POLICY_ACTOR });
+    const statements = pool.connection.queries.map(({ text }) => text.trim());
+    const lock = statements.findIndex((text) => text.includes("FOR UPDATE"));
+    const insert = statements.findIndex((text) => text.includes("INSERT INTO hyeboard_feature_policy_history"));
+    const update = statements.findIndex((text) => text.includes("UPDATE hyeboard_feature_policy_current"));
+    expect(statements[0]).toBe("BEGIN");
+    expect(lock).toBeGreaterThan(0);
+    expect(lock).toBeLessThan(insert);
+    expect(insert).toBeLessThan(update);
+    expect(update).toBeLessThan(statements.indexOf("COMMIT"));
+    expect(await store.current()).toEqual(entry.snapshot);
+  });
+
+  it("rejects stale feature policy CAS before writes and never accepts credential fields", async () => {
+    const pool = new FeaturePolicyFakePool();
+    const store = new PostgresFeaturePolicyStore(pool);
+    await store.publish(publication(0));
+    const writesBeforeConflict = pool.connection.queries.filter(({ text }) => /INSERT INTO|UPDATE hyeboard/.test(text)).length;
+
+    await expect(store.publish(publication(0))).rejects.toMatchObject({
+      code: "ADMIN_POLICY_CONFLICT",
+      status: 409,
+      details: { currentRevision: 1 },
+    });
+    expect(pool.connection.queries.filter(({ text }) => /INSERT INTO|UPDATE hyeboard/.test(text)).length).toBe(writesBeforeConflict);
+    expect(pool.connection.queries.at(-1)?.text).toBe("ROLLBACK");
+
+    const credential = "sensitive-credential-sentinel";
+    await expect(store.publish({ ...publication(1), password: credential } as never)).rejects.toBeTruthy();
+    expect(JSON.stringify(pool.connection.queries)).not.toContain(credential);
+  });
+
+  it("parses PostgreSQL JSON and returns bounded newest-first policy pages", async () => {
+    const pool = new FeaturePolicyFakePool();
+    const store = new PostgresFeaturePolicyStore(pool);
+    await store.publish(publication(0));
+    await store.publish(publication(1));
+    await store.publish(publication(2));
+
+    const first = await store.history({ limit: 2 });
+    expect(first.items.map(({ revision }) => revision)).toEqual([3, 2]);
+    expect(first.nextBeforeRevision).toBe(2);
+    expect((await store.history({ beforeRevision: 2, limit: 200 })).items.map(({ revision }) => revision)).toEqual([1]);
+    expect(pool.connection.queries.at(-1)?.values).toEqual([2, 101]);
+    expect(await store.revision(1)).toMatchObject({ revision: 1, snapshot: { revision: 1 } });
+    const queriesBeforeInvalidRevision = pool.connection.queries.length;
+    await expect(store.revision(Number.MAX_SAFE_INTEGER + 1)).resolves.toBeUndefined();
+    expect(pool.connection.queries).toHaveLength(queriesBeforeInvalidRevision);
+  });
+
+  it("rejects malformed durable policy JSON rows", async () => {
+    const pool = new FeaturePolicyFakePool();
+    pool.connection.currentRow.snapshot = "{not-json";
+    await expect(new PostgresFeaturePolicyStore(pool).current()).rejects.toBeTruthy();
+  });
+
   it("runs migrations under a session advisory lock and records applied SQL", async () => {
     const directory = await mkdtemp(join(tmpdir(), "hyeboard-postgres-migrations-"));
     try {
@@ -99,6 +231,19 @@ describe("PostgreSQL HA boundaries", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("ships the immutable singleton feature-policy migration through the migration runner", async () => {
+    const migration = await readFile(join(defaultPostgresMigrationsDirectory(), "003_feature_policy.sql"), "utf8");
+    expect(migration).toContain("singleton boolean PRIMARY KEY");
+    expect(migration.match(/CHECK \(\(jsonb_typeof\((?:snapshot|actor)\) = 'object'\) IS TRUE\)/g)).toHaveLength(3);
+    expect(migration).toContain("BEFORE UPDATE OR DELETE ON hyeboard_feature_policy_history");
+    expect(migration).toContain("ON CONFLICT (singleton) DO NOTHING");
+
+    const pool = new FakePool();
+    const applied = await runPostgresMigrations(pool);
+    expect(applied.map(({ version }) => version)).toEqual([1, 2, 3]);
+    expect(pool.connection.queries.map(({ text }) => text)).toContain(migration);
   });
 
   it("orders migrations by numeric version and rejects an unknown applied version", async () => {

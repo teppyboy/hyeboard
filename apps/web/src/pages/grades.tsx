@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import type { GradeTableRow } from "@/lib/grade-view-model";
 import { GradeTable } from "@/components/grades/grade-table";
 import { SummerBadge } from "@/components/grades/summer-badge";
-import { useQuery } from "@tanstack/react-query";
 import { AcademicTermSection } from "@/components/grades/academic-term-section";
 import { ExportMenu } from "@/components/export-menu";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +14,7 @@ import { createGradesExport } from "@/lib/data-export";
 import { ALL_GRADE_TERMS, createGradeExportTerm, decodeGradeTermKey, encodeGradeTermKey, isSummerGrade, selectVisibleGradeSummaries, sortGrades, type GradeSortState } from "@/lib/grade-view-model";
 import { useLocale } from "@/lib/i18n";
 import { formatTermLabel, letterForGrade, letterTone } from "@/lib/presentation";
+import { effectiveDashboardStudent } from "@/lib/student-policy";
 import { calculateTermAcademicSummaries, newestAcademicTermsFirst } from "@/lib/term-academic-summary";
 import { cn } from "@/lib/utils";
 import { useFeatureQuery, useHyeboard } from "@/state";
@@ -44,13 +44,14 @@ function LetterBadge({ letter, large }: { letter: string | undefined; large?: bo
 function VnuGradeDetail({ classId, termOrdinal }: { classId: string; termOrdinal: string }) {
   const { t } = useLocale();
   const state = useHyeboard();
-  const detailQuery = useQuery({
-    queryKey: ["vnu-point-detail", state.universityId, state.sessionNonce, classId, termOrdinal],
-    queryFn: async () => {
-      await state.ensureSession();
-      return api.vnuPointDetail({ id: classId, Term: termOrdinal });
+  const detailQuery = useFeatureQuery(
+    "vnu-point-detail",
+    ({ signal }) => api.vnuPointDetail({ id: classId, Term: termOrdinal }, signal),
+    {
+      capability: "grades",
+      queryKey: ["vnu-point-detail", state.universityId, state.sessionNonce, classId, termOrdinal],
     },
-  });
+  );
   if (detailQuery.isLoading) return <div className="px-4 py-3" role="status"><Skeleton className="h-12" /><span className="sr-only">{t.grades.componentDetailLoading}</span></div>;
   if (detailQuery.error) return <div className="px-4 py-3" role="alert"><p className="text-sm text-muted-foreground">{t.grades.componentDetailError}</p></div>;
   if (!detailQuery.data?.components.length) return <div className="px-4 py-3"><Empty text={t.grades.componentDetailEmpty} /></div>;
@@ -124,9 +125,14 @@ function GradesGradeTable({ grades, sort, onSortChange, universityId, emptyText 
 export function GradesPage() {
   const state = useHyeboard();
   const { t } = useLocale();
-  const [sort, setSort] = useState<GradeSortState>({ key: "name", direction: "asc" });
-  const [selectedTerm, setSelectedTerm] = useState<string | undefined>(undefined);
-  const query = useFeatureQuery("grades", () => api.grades(state.universityId));
+  const defaultSort: GradeSortState = { key: "name", direction: "asc" };
+  const [scopedSort, setScopedSort] = useState<{ accountId: string | null; sessionNonce: number; value: GradeSortState }>();
+  const [scopedTerm, setScopedTerm] = useState<{ accountId: string | null; sessionNonce: number; value: string }>();
+  const sort = scopedSort?.accountId === state.activeAccountId && scopedSort.sessionNonce === state.sessionNonce ? scopedSort.value : defaultSort;
+  const selectedTerm = scopedTerm?.accountId === state.activeAccountId && scopedTerm.sessionNonce === state.sessionNonce ? scopedTerm.value : undefined;
+  const setSort = (value: GradeSortState) => setScopedSort({ accountId: state.activeAccountId, sessionNonce: state.sessionNonce, value });
+  const setSelectedTerm = (value: string) => setScopedTerm({ accountId: state.activeAccountId, sessionNonce: state.sessionNonce, value });
+  const query = useFeatureQuery("grades", () => api.grades(state.universityId), { capability: "grades" });
   const gpa = state.dashboard.data?.gpa;
   const summaries = useMemo(
     () => newestAcademicTermsFirst(calculateTermAcademicSummaries(
@@ -152,10 +158,11 @@ export function GradesPage() {
     const exportTerm = createGradeExportTerm(summary, state.universityId, label, sortedCourses);
     return { summary, rawTermCode, label, sortedCourses, exportTerm };
   });
-  const exportIdentity = state.dashboard.data?.student ? {
-    studentCode: state.dashboard.data.student.studentCode,
-    studentName: state.dashboard.data.student.fullName,
-    managingClass: state.dashboard.data.student.className,
+  const student = effectiveDashboardStudent(state.dashboard.data, state.activeUniversity?.capabilities);
+  const exportIdentity = student ? {
+    studentCode: student.studentCode,
+    studentName: student.fullName,
+    managingClass: student.className,
   } : undefined;
   const exportReported = gpa ? {
     cumulativeGpa4: gpa.gpa ?? undefined,
@@ -224,7 +231,7 @@ export function GradesPage() {
                 </>}
                 action={termExportModel ? <ExportMenu model={termExportModel} /> : null}
               >
-                <GradesGradeTable grades={sortedCourses} sort={sort} onSortChange={setSort} universityId={state.universityId} emptyText={t.grades.noGrades} />
+                <GradesGradeTable key={`${state.activeAccountId}:${state.sessionNonce}:${summary.termKey}`} grades={sortedCourses} sort={sort} onSortChange={setSort} universityId={state.universityId} emptyText={t.grades.noGrades} />
               </AcademicTermSection>
             );})}
           </div>

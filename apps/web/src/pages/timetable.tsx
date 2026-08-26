@@ -142,7 +142,7 @@ export function TimetablePage() {
   const state = useHyeboard();
   const { t } = useLocale();
   const [view, setView] = useState<"calendar" | "list">("calendar");
-  const query = useFeatureQuery("timetable", () => api.timetable(state.universityId, state.termCode));
+  const query = useFeatureQuery("timetable", () => api.timetable(state.universityId, state.termCode), { capability: "timetable" });
   return (
     <FeatureFrame title={t.timetable.title} description={t.timetable.description} query={query}>
       {(items) => {

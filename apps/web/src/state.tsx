@@ -1,4 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { CapabilityKey } from "@hyeboard/schemas";
+import { useQuery, useQueryClient, type QueryFunctionContext } from "@tanstack/react-query";
 import {
   createContext,
   useContext,
@@ -31,13 +32,29 @@ import {
   type AccountActionOperation,
   type AccountActionSource,
 } from "@/lib/account-action-state";
-import { shouldInvalidateAccountQuery } from "@/lib/query-scope";
+import { invalidatePolicyQueries, shouldInvalidateAccountQuery } from "@/lib/query-scope";
+import { subscribeToPolicyEvents } from "@/lib/policy-events";
 
 export type Palette = "geist" | "uet" | "vnu";
 export type Mode = "light" | "dark";
 export type { AccountActionSource } from "@/lib/account-action-state";
 
 export type HyeboardState = ReturnType<typeof useHyeboardState>;
+type AccountTermState = { accountId: string | null; code?: string };
+
+export function accountTermState(accountId: string | null, code?: string): AccountTermState {
+  return { accountId, code };
+}
+
+export function accountTermCode(term: AccountTermState, activeAccountId: string | null): string | undefined {
+  return term.accountId === activeAccountId ? term.code : undefined;
+}
+
+export async function runAccountScoped<T>(accountId: string | null, task: () => Promise<T>): Promise<T> {
+  if (accountId !== getActiveAccountId()) throw new DOMException("Account changed", "AbortError");
+  return task();
+}
+
 const HyeboardContext = createContext<HyeboardState | null>(null);
 
 export function useHyeboard() {
@@ -127,7 +144,8 @@ function useHyeboardState() {
   const [themeHue, setThemeHue] = useState<number>(
     () => Number(stored("hyeboard.themeHue", "209")) || 209,
   );
-  const [termCode, setTermCode] = useState<string | undefined>();
+  const [term, setTerm] = useState<AccountTermState>(() => accountTermState(getActiveAccountId()));
+  const termRef = useRef(term);
   const [sessionNonce, setSessionNonce] = useState(0);
   const [accounts, setAccounts] = useState<StoredAccount[]>(() =>
     listAccounts(),
@@ -153,6 +171,18 @@ function useHyeboardState() {
   const [vnuReconnectState, setVnuReconnectState] = useState<
     "idle" | "reconnecting" | "retryable"
   >("idle");
+  const termCode = accountTermCode(term, activeAccountId);
+  const currentTermCode = (): string | undefined => accountTermCode(termRef.current, getActiveAccountId());
+  const setTermCode = (code: string | undefined): void => {
+    const next = accountTermState(getActiveAccountId(), code);
+    termRef.current = next;
+    setTerm(next);
+  };
+  const clearTermCode = (accountId: string | null): void => {
+    const next = accountTermState(accountId);
+    termRef.current = next;
+    setTerm(next);
+  };
 
   const clearAccountActionError = (source?: AccountActionSource): void => {
     const currentSource =
@@ -171,8 +201,10 @@ function useHyeboardState() {
   // active and refetches all feature data for it.
   useEffect(() => {
     const syncActiveAccount = () => {
+      const nextActiveAccountId = getActiveAccountId();
+      clearTermCode(nextActiveAccountId);
       setAccounts(listAccounts());
-      setActiveAccountId(getActiveAccountId());
+      setActiveAccountId(nextActiveAccountId);
       setVnuReconnectState("idle");
       clearAccountActionError();
       const account = getActiveAccount();
@@ -184,6 +216,7 @@ function useHyeboardState() {
             : "geist",
         );
       }
+      void queryClient.cancelQueries({ predicate: shouldInvalidateAccountQuery });
       setSessionNonce((value) => value + 1);
       void queryClient.invalidateQueries({
         predicate: shouldInvalidateAccountQuery,
@@ -195,15 +228,21 @@ function useHyeboardState() {
       window.removeEventListener(ACCOUNT_SWITCHED_EVENT, syncActiveAccount);
   }, []);
 
+  useEffect(() => subscribeToPolicyEvents({
+    getAccount: getActiveAccount,
+    onRevision: () => invalidatePolicyQueries(queryClient, { universityId, sessionNonce }),
+    onPoll: () => invalidatePolicyQueries(queryClient, { universityId, sessionNonce }),
+  }), [queryClient, activeAccountId, universityId, sessionNonce]);
+
   useEffect(() => {
     const readDetail = (
       event: Event,
     ):
-      | { accountId: string; state?: "idle" | "reconnecting" | "retryable" }
+        | { accountId: string; state?: "idle" | "reconnecting" | "retryable"; preserveFeatureState?: boolean }
       | undefined => {
       const detail = (event as CustomEvent<unknown>).detail;
       if (!detail || typeof detail !== "object") return undefined;
-      const candidate = detail as { accountId?: unknown; state?: unknown };
+      const candidate = detail as { accountId?: unknown; state?: unknown; preserveFeatureState?: unknown };
       if (typeof candidate.accountId !== "string") return undefined;
       if (
         candidate.state !== undefined &&
@@ -212,7 +251,11 @@ function useHyeboardState() {
         candidate.state !== "retryable"
       )
         return undefined;
-      return { accountId: candidate.accountId, state: candidate.state };
+      return {
+        accountId: candidate.accountId,
+        state: candidate.state,
+        preserveFeatureState: candidate.preserveFeatureState === true,
+      };
     };
     const handleRefreshStatus = (event: Event) => {
       const detail = readDetail(event);
@@ -236,13 +279,11 @@ function useHyeboardState() {
         active?.universityId !== "vnu"
       )
         return;
-      setVnuReconnectState("idle");
+      const refreshQuery = (query: Parameters<typeof shouldInvalidateVnuRefreshQuery>[0]) =>
+        shouldInvalidateVnuRefreshQuery(query, detail.accountId, activeId);
+      if (!detail.preserveFeatureState) setVnuReconnectState("idle");
       setSessionNonce((value) => value + 1);
-      void queryClient.invalidateQueries({
-        predicate: (query) =>
-          shouldInvalidateVnuRefreshQuery(query, detail.accountId, activeId),
-        refetchType: "none",
-      });
+      void queryClient.invalidateQueries({ predicate: refreshQuery, refetchType: "none" });
     };
     window.addEventListener(VNU_REFRESH_STATUS_EVENT, handleRefreshStatus);
     window.addEventListener(
@@ -275,31 +316,49 @@ function useHyeboardState() {
     queryFn: api.universities,
     refetchOnWindowFocus: false,
   });
+  const policyMetadataPending = universities.fetchStatus === "fetching" || !universities.isFetched;
+  const activeUniversity = !policyMetadataPending && universities.error == null
+    ? universities.data?.find((university) => university.id === universityId)
+    : undefined;
 
   const ensureSession = async () => {
     if (getSessionToken()) return;
     throw new Error("Sign in to continue.");
   };
 
+  const dashboardAccountIdRef = useRef<string | null>(null);
   const dashboard = useQuery({
     queryKey: ["dashboard", universityId, termCode, sessionNonce],
     queryFn: async () => {
       await ensureSession();
-      return api.dashboard(universityId, termCode);
+      const data = await runAccountScoped(activeAccountId, () => api.dashboard(universityId, currentTermCode()));
+      if (activeAccountId === getActiveAccountId()) dashboardAccountIdRef.current = activeAccountId;
+      return data;
     },
   });
 
   useEffect(() => {
-    if (!termCode && dashboard.data?.currentTerm?.code) {
+    if (
+      activeUniversity?.capabilities.terms === true
+      && dashboardAccountIdRef.current === activeAccountId
+      && !termCode
+      && dashboard.data?.currentTerm?.code
+    ) {
       setTermCode(dashboard.data.currentTerm.code);
     }
-  }, [dashboard.data, termCode]);
+  }, [activeAccountId, activeUniversity, dashboard.data, dashboard.dataUpdatedAt, termCode]);
 
   const selectUniversity = (
     nextUniversityId: string,
     options: { clearSession?: boolean } = {},
   ) => {
+    void queryClient.cancelQueries({ predicate: shouldInvalidateAccountQuery });
+    const previousAccountId = getActiveAccountId();
     if (options.clearSession ?? true) clearSessionToken();
+    const nextAccountId = getActiveAccountId();
+    if (previousAccountId !== nextAccountId || nextUniversityId !== universityId) {
+      clearTermCode(nextAccountId);
+    }
     setSessionNonce((value) => value + 1);
     setUniversityId(nextUniversityId);
     setPalette(
@@ -310,6 +369,7 @@ function useHyeboardState() {
   };
 
   const refreshSession = () => {
+    void queryClient.cancelQueries({ predicate: shouldInvalidateAccountQuery });
     setSessionNonce((value) => value + 1);
     void queryClient.invalidateQueries({
       predicate: shouldInvalidateAccountQuery,
@@ -412,9 +472,13 @@ function useHyeboardState() {
     setMode,
     themeHue,
     setThemeHue,
-    termCode,
+    get termCode() {
+      return currentTermCode();
+    },
     setTermCode,
     universities,
+    policyMetadataPending,
+    activeUniversity,
     dashboard,
     ensureSession,
     refreshSession,
@@ -433,18 +497,45 @@ function useHyeboardState() {
   };
 }
 
+type FeatureQueryOptions = {
+  capability: CapabilityKey | readonly CapabilityKey[];
+  enabled?: boolean;
+  queryKey?: readonly unknown[];
+  staleTime?: number;
+};
+
 export function useFeatureQuery<T>(
   name: string,
-  queryFn: () => Promise<T>,
-  options: { enabled?: boolean } = {},
+  queryFn: (context: AbortSignal & QueryFunctionContext) => Promise<T>,
+  options: FeatureQueryOptions,
 ) {
   const state = useHyeboard();
-  return useQuery({
-    queryKey: [name, state.universityId, state.termCode, state.sessionNonce],
-    queryFn: async () => {
+  const capabilityKeys: readonly CapabilityKey[] = typeof options.capability === "string"
+    ? [options.capability]
+    : options.capability;
+  const capabilityAllowed = state.activeUniversity !== undefined && capabilityKeys.some(
+    (capability) => state.activeUniversity?.capabilities[capability] === true,
+  );
+  const capabilityEnabled = capabilityAllowed;
+  const query = useQuery({
+    queryKey: options.queryKey ?? [name, state.universityId, state.termCode, state.sessionNonce],
+    queryFn: async (context) => {
+      if (!capabilityEnabled) return undefined as T;
+      const accountId = getActiveAccountId();
+      if (state.activeAccountId !== accountId) throw new DOMException("Account changed", "AbortError");
       await state.ensureSession();
-      return queryFn();
+      return runAccountScoped(accountId, () => queryFn(Object.assign(context.signal, context) as AbortSignal & QueryFunctionContext));
     },
-    enabled: options.enabled ?? true,
+    enabled: capabilityEnabled && (options.enabled ?? true),
+    staleTime: options.staleTime,
   });
+  if (capabilityAllowed) return { ...query, capabilityAllowed: true, capabilityMetadataPending: false };
+  return {
+    ...query,
+    data: undefined,
+    error: null,
+    isLoading: state.universities.fetchStatus === "fetching",
+    capabilityAllowed: false,
+    capabilityMetadataPending: state.activeUniversity === undefined,
+  };
 }

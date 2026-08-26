@@ -35,6 +35,10 @@ secrets:
   existingSecret: hyeboard-runtime
   keys:
     sessionSecret: HYEB_SESSION_SECRET
+    adminSessionSecret: HYEB_ADMIN_SESSION_SECRET
+    adminPasswordHash: HYEB_ADMIN_PASSWORD_HASH
+    adminGithubClientSecret: HYEB_ADMIN_GITHUB_CLIENT_SECRET
+    adminDiscordClientSecret: HYEB_ADMIN_DISCORD_CLIENT_SECRET
     postgresUrl: HYEB_POSTGRES_URL
     redisUrl: HYEB_REDIS_URL
     browserlessEndpoint: BROWSERLESS_ENDPOINT
@@ -59,6 +63,7 @@ config:
     HYEB_HA_SESSION_EPOCH: "0"
     HYEB_HA_ENFORCE_SESSION_EPOCH: "false"
     HYEB_SHUTDOWN_TIMEOUT_MS: "30000"
+    HYEB_ADMIN_SESSION_TTL_SECONDS: "3600"
     HYEB_BROWSER_LOCAL: "false"
     HYEB_BROWSER_HEADLESS: "true"
     HYEB_AUTOMATION_EXECUTOR_READY: "false"
@@ -158,6 +163,8 @@ api:
                 app.kubernetes.io/component: api
   nodeSelector: {}
   tolerations: []
+  # Non-secret additions only. Names managed by config.runtime or this chart's
+  # external Secret references are rejected by validation.
   extraEnv: []
   tmpVolume: {}
 

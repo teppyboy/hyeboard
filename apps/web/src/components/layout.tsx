@@ -1,4 +1,4 @@
-import type { Notification } from "@hyeboard/schemas";
+import type { Notification, UniversityCapabilities } from "@hyeboard/schemas";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Award, Bell, BookOpen, CalendarDays, Check, ChevronDown, ClipboardCheck, Files, GraduationCap, Hash, LayoutDashboard, ListChecks, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings, UserRound, WalletCards, Wrench, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +9,7 @@ import { SessionReauthGate } from "@/components/reauth";
 import { universityLogoUrl } from "@/components/shared";
 import { SESSION_CLEARED_EVENT, type StoredAccount } from "@/lib/api";
 import { type Translations, useLocale } from "@/lib/i18n";
+import { effectiveDashboardStudent } from "@/lib/student-policy";
 import { cn, formatDateTime } from "@/lib/utils";
 import { useHyeboard } from "@/state";
 
@@ -41,11 +42,11 @@ const navGroups: NavGroup[] = [
   { key: "system", items: [{ key: "settings", to: "/settings", icon: Settings }] },
 ];
 
-function isCapabilityVisible(capability: NavCapability | undefined, capabilities: Record<string, boolean> | undefined): boolean {
+function isCapabilityVisible(capability: NavCapability | undefined, capabilities: UniversityCapabilities | undefined): boolean {
   if (!capability) return true;
-  if (!capabilities) return true;
+  if (!capabilities) return false;
   if (capability === "documentsHub") return capabilities.documents || capabilities.requests || capabilities.news;
-  return capabilities[capability] !== false;
+  return capabilities[capability] === true;
 }
 
 function SidebarNav({
@@ -64,7 +65,7 @@ function SidebarNav({
   const state = useHyeboard();
   const { t } = useLocale();
   const pathname = useRouterState({ select: (routerState) => routerState.location.pathname });
-  const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
+  const capabilities = state.activeUniversity?.capabilities;
   const utilityExpanded = utilityOpen || pathname === "/lookup";
   const lookupVisible = isCapabilityVisible("classLookup", capabilities);
   const lookupControlsId = `utility-lookup-${mobile ? "mobile" : "desktop"}`;
@@ -224,7 +225,7 @@ function NavSearch() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
 
-  const capabilities = state.universities.data?.find((u) => u.id === state.universityId)?.capabilities;
+  const capabilities = state.activeUniversity?.capabilities;
   const navWithLabels = useMemo(
     () =>
       navGroups
@@ -283,9 +284,10 @@ function NavSearch() {
   );
 }
 
-function NotificationsMenu() {
-  const { dashboard } = useHyeboard();
+export function NotificationsMenu() {
+  const { activeUniversity, dashboard } = useHyeboard();
   const { t } = useLocale();
+  if (activeUniversity?.capabilities.notifications !== true) return null;
   const items: Notification[] = dashboard.data?.notifications ?? [];
   const unreadCount = items.filter((item) => item.unread).length;
   return (
@@ -310,17 +312,27 @@ function NotificationsMenu() {
   );
 }
 
-function accountLabel(account: StoredAccount, t: Translations): string {
-  if (account.studentCode) return account.studentCode;
+function accountLabel(account: StoredAccount, t: Translations, profileEnabled: boolean): string {
+  if (profileEnabled && account.studentCode) return account.studentCode;
   if (account.universityId === "mock") return t.common.demo;
   return account.universityId.toUpperCase();
 }
 
-function AccountMenu() {
+function accountRemovalLabel(account: StoredAccount, t: Translations, profileEnabled: boolean, metadataLoading: boolean): string {
+  if (metadataLoading && account.studentCode) return account.studentCode;
+  return accountLabel(account, t, profileEnabled);
+}
+
+export function AccountMenu() {
   const state = useHyeboard();
   const { t } = useLocale();
   const navigate = useNavigate();
-  const student = state.dashboard.data?.student;
+  const student = effectiveDashboardStudent(state.dashboard.data, state.activeUniversity?.capabilities);
+  const accountProfileEnabled = (account: StoredAccount) =>
+    state.universities.fetchStatus === "idle"
+    && state.universities.error == null
+    && state.universities.data?.find((university) => university.id === account.universityId)?.capabilities.profile === true;
+  const accountMetadataLoading = state.universities.fetchStatus === "fetching";
 
   const signOut = async () => {
     try {
@@ -349,7 +361,7 @@ function AccountMenu() {
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel>
           <span className="block text-sm">{student?.fullName ?? t.common.account}</span>
-          <span className="block text-xs font-normal text-muted-foreground">{student?.studentCode ?? state.universityId.toUpperCase()}</span>
+          <span className="block text-xs font-normal text-muted-foreground">{student?.studentCode ?? t.common.university}</span>
         </DropdownMenuLabel>
         {state.accounts.length > 1 ? (
           <>
@@ -364,9 +376,9 @@ function AccountMenu() {
               >
                 <span className="flex min-w-0 items-center gap-2">
                   {account.id === state.activeAccountId ? <Check size={14} className="shrink-0 text-primary" /> : <span className="w-3.5 shrink-0" />}
-                  <span className="truncate">{accountLabel(account, t)} <span className="text-muted-foreground">({account.universityId.toUpperCase()})</span></span>
+                  <span className="truncate">{accountLabel(account, t, accountProfileEnabled(account))} <span className="text-muted-foreground">({account.universityId.toUpperCase()})</span></span>
                 </span>
-                <button type="button" onClick={(event) => { void handleRemove(event, account.id); }} disabled={state.removingAccountIds.has(account.id)} aria-label={t.common.remove(accountLabel(account, t))} className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={(event) => { void handleRemove(event, account.id); }} disabled={state.removingAccountIds.has(account.id)} aria-label={t.common.remove(accountRemovalLabel(account, t, accountProfileEnabled(account), accountMetadataLoading))} className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">
                   <X size={13} />
                 </button>
               </DropdownMenuItem>

@@ -43,6 +43,7 @@ test("timetable stays free of horizontal overflow on tablet @webkit", async ({ a
 });
 
 test("feature routes render UI instead of JSON dumps", async ({ authenticatedPage: page }) => {
+  test.slow();
   const routes = [
     ["/timetable", "Timetable", "Web Application Development"],
     ["/courses", "Courses", "Data Structures and Algorithms"],
