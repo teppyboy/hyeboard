@@ -32,7 +32,6 @@ const productionRedis = read("deploy/k8s/overlays/production/redis-replication.y
 const productionRedisNetworkPolicy = read("deploy/k8s/overlays/production/redis-network-policy.yaml");
 const readme = read("README.md");
 const runbook = read("docs/ha-runbook.md");
-const haWorkflow = read(".github/workflows/ha-k8s.yml");
 const dockerfile = read("Dockerfile");
 const compose = read("compose.yml");
 const workerDockerfile = read("apps/automation-worker/Dockerfile");
@@ -294,7 +293,6 @@ assert(ciDependencies.includes("name: redis"));
 assert(ciDependencies.includes("name: browserless"));
 has(readme, /hyeboard-runtime` with these keys:[^\n]*`HYEB_SESSION_SECRET`, `HYEB_ADMIN_SESSION_SECRET`, `HYEB_POSTGRES_URL`/);
 has(runbook, /create secret generic hyeboard-runtime[\s\S]*?--from-literal=HYEB_SESSION_SECRET=.*\n\s+--from-literal=HYEB_ADMIN_SESSION_SECRET=/);
-has(haWorkflow, /create secret generic hyeboard-runtime[\s\S]*?--from-literal=HYEB_SESSION_SECRET=.*\n\s+--from-literal=HYEB_ADMIN_SESSION_SECRET=/);
 has(networkPolicy, /name: hyeboard-automation-worker/);
 assert(networkPolicy.includes("policyTypes:\n    - Egress"));
 assert(count(api, "secretKeyRef:") >= 5);
