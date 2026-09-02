@@ -130,6 +130,8 @@ Send `SIGTERM` for a normal stop. The API marks itself draining, stops accepting
 
 ## Admin Feature Control
 
+See the [Admin Dashboard Guide](admin-dashboard.md) for Kubernetes/Helm setup, UI operation, rollback, and session troubleshooting.
+
 ### Bootstrap and authentication
 
 Generate the password hash with the repository command. Its TTY prompt is masked and stdout contains only the versioned PBKDF2 hash:
