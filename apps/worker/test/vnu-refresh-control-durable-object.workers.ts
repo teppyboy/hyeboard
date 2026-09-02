@@ -783,7 +783,7 @@ describe("combined activation and refresh retention bound", () => {
       state: await context.storage.get(VNU_REFRESH_STATE_KEY),
       alarm: await context.storage.getAlarm(),
     }))).toEqual({ state: undefined, alarm: null });
-  }, 15_000);
+  });
 });
 
 describe("coordinator failure and privacy boundary", () => {
