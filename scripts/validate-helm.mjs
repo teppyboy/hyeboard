@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const chartPath = resolve(repositoryRoot, "deploy/helm/hyeboard");
+const valuesPath = resolve(chartPath, "values.yaml");
 const placeholderTag = "replace-with-release-tag";
 const defaultReleaseName = "hyeboard";
 const secretKeys = new Set([
@@ -42,7 +43,7 @@ const option = (name) => {
 const strict = args.has("--strict") || process.env.HELM_VALIDATION_STRICT === "true";
 const requireChart = args.has("--require-chart") || strict;
 const requestedImageTag = option("image-tag");
-const imageTag = requestedImageTag || "sha-validation000000000000000000000000000000000000";
+const imageTag = requestedImageTag || "sha-0000000000000000000000000000000000000001";
 
 function fail(message) {
   throw new Error(`Helm validation failed: ${message}`);
@@ -150,8 +151,74 @@ function findResource(documents, kind, pattern) {
   return resource;
 }
 
+function addHpaMetric(rendered, namePattern, metric) {
+  const documents = documentSections(rendered);
+  const hpa = findResource(
+    documents,
+    "HorizontalPodAutoscaler",
+    namePattern,
+  );
+  const mutated = hpa.replace(/^  metrics:\s*$/m, `  metrics:\n${metric}`);
+  assert.notEqual(mutated, hpa, "HPA metrics block was not found");
+  return rendered.replace(hpa, mutated);
+}
+
 function assertField(document, pattern, description) {
   assert(pattern.test(document), `Missing ${description} in ${resourceKind(document)} ${resourceName(document)}`);
+}
+
+function fieldBlock(document, field) {
+  const lines = document.split("\n");
+  const index = lines.findIndex((line) =>
+    new RegExp(`^(\\s*)${field}:\\s*$`).test(line),
+  );
+  assert(index >= 0, `Missing ${field} in ${resourceKind(document)} ${resourceName(document)}`);
+  const indent = lines[index].match(/^\s*/)[0].length;
+  const block = [];
+  for (const line of lines.slice(index + 1)) {
+    if (line.trim() && line.match(/^\s*/)[0].length <= indent) break;
+    block.push(line);
+  }
+  return block;
+}
+
+function validateCpuMetric(document, role) {
+  const metrics = fieldBlock(document, "metrics");
+  const itemIndent = metrics.find((line) => /^\s*-\s+/.test(line))?.match(/^\s*/)[0].length;
+  const items = metrics.filter(
+    (line) => /^\s*-\s+/.test(line) && line.match(/^\s*/)[0].length === itemIndent,
+  );
+  assert.equal(items.length, 1, `${role} HPA must have exactly one metric`);
+  const metric = metrics.join("\n");
+  assert.equal(
+    (metric.match(/^\s*-\s+resource:\s*$/gm) ?? []).length,
+    1,
+    `${role} HPA metric must contain one resource source`,
+  );
+  assert.equal(
+    (metric.match(/^\s+name:\s*cpu\s*$/gm) ?? []).length,
+    1,
+    `${role} HPA metric must contain one CPU resource`,
+  );
+  assert.equal(
+    (metric.match(/^\s+type:\s*Utilization\s*$/gm) ?? []).length,
+    1,
+    `${role} HPA metric must contain one utilization target`,
+  );
+  assert.equal(
+    (metric.match(/^\s+averageUtilization:\s*60\s*$/gm) ?? []).length,
+    1,
+    `${role} HPA metric must contain one 60% target`,
+  );
+  assert.equal(
+    (metric.match(/^\s+type:\s*Resource\s*$/gm) ?? []).length,
+    1,
+    `${role} HPA metric must have type Resource`,
+  );
+  assert(
+    !/^\s+(?:pods|object|external|containerResource):\s*$/m.test(metric),
+    `${role} HPA metric contains another metric source`,
+  );
 }
 
 function validateImages(rendered, { strictRelease }) {
@@ -171,7 +238,10 @@ function validateImages(rendered, { strictRelease }) {
     }
     assert(!mutableTags.has(tag), `Image ${image} uses mutable tag ${tag}`);
     if (strictRelease && applicationImages.includes(image)) {
-      assert(tag !== placeholderTag, `Image ${image} still uses the release placeholder tag`);
+      assert(
+        /^sha-[a-f0-9]{40}$/.test(tag),
+        `Application image ${image} must use a full SHA tag or digest`,
+      );
       if (requestedImageTag) assert.equal(tag, requestedImageTag, `Image ${image} does not use the requested release tag`);
     }
   }
@@ -185,12 +255,50 @@ function validateDeployment(document, role) {
   assertField(document, /^\s*readOnlyRootFilesystem:\s*true\s*$/m, `${role} read-only root filesystem`);
   assertField(document, /capabilities:\s*\n[\s\S]*?drop:\s*(?:\[?ALL\]?|\n\s+-\s+ALL)/m, `${role} dropped capabilities`);
   assertField(document, /resources:\s*\n[\s\S]*?requests:\s*\n/m, `${role} resource requests`);
+  assertField(document, /requests:\s*\n\s+cpu:\s*100m\s*\n\s+memory:\s*192Mi/m, `${role} calibrated resource requests`);
   assertField(document, /resources:\s*\n[\s\S]*?limits:\s*\n/m, `${role} resource limits`);
   assertField(document, /^\s*readinessProbe:\s*$/m, `${role} readiness probe`);
   assertField(document, /^\s*livenessProbe:\s*$/m, `${role} liveness probe`);
   assertField(document, /^\s*startupProbe:\s*$/m, `${role} startup probe`);
   assert(!/^\s*(?:privileged|hostNetwork|hostPID|hostIPC):\s*true\s*$/m.test(document), `${role} enables a host or privileged setting`);
   assert(!/^\s*hostPath:/m.test(document), `${role} mounts a hostPath volume`);
+}
+
+const browserlessBounds = [
+  ["CONCURRENT", "1"],
+  ["QUEUED", "2"],
+  ["TIMEOUT", "120000"],
+  ["MAX_RECONNECT_TIME", "120000"],
+];
+
+function validateBrowserlessValues(text) {
+  for (const [name, value] of browserlessBounds) {
+    assert.equal(
+      text.match(new RegExp(`^\\s*- name: ${name}\\s*$`, "gm"))?.length,
+      1,
+      `Helm values must declare Browserless ${name} exactly once`,
+    );
+    assertField(
+      text,
+      new RegExp(`name: ${name}\\s*\\n\\s+value: "${value}"\\s*$`, "m"),
+      `Browserless ${name} value`,
+    );
+  }
+}
+
+function validateBrowserlessEnv(document) {
+  for (const [name, value] of browserlessBounds) {
+    assert.equal(
+      document.match(new RegExp(`^\\s*- name: ${name}\\s*$`, "gm"))?.length,
+      1,
+      `Browserless must declare ${name} exactly once`,
+    );
+    assertField(
+      document,
+      new RegExp(`name: ${name}\\s*\\n\\s+value: "${value}"\\s*$`, "m"),
+      `Browserless ${name} bound`,
+    );
+  }
 }
 
 function validateBrowserlessDeployment(document) {
@@ -221,12 +329,40 @@ function validateRenderedManifest(rendered, label, { strictRelease }) {
   findResource(documents, "Service", /(^|-)api($|-)/);
   assert(documents.some((document) => resourceKind(document) === "Ingress"), `${label} is missing an Ingress`);
 
+  const config = findResource(documents, "ConfigMap", /runtime/);
+  assertField(config, /HYEB_AUTOMATION_EXECUTOR_READY:\s*"false"/, "disabled automation executor gate");
+  assertField(config, /HYEB_POSTGRES_POOL_MAX:\s*"5"/, "PostgreSQL pool maximum");
+  assertField(config, /HYEB_POSTGRES_CONNECT_TIMEOUT_MS:\s*"5000"/, "PostgreSQL connect timeout");
+
+  const apiHpa = findResource(documents, "HorizontalPodAutoscaler", /(^|-)api($|-)/);
+  assertField(apiHpa, /^\s*minReplicas:\s*2\s*$/m, "API HPA minimum");
+  assertField(apiHpa, /^\s*maxReplicas:\s*8\s*$/m, "API HPA maximum");
+  assertField(apiHpa, /stabilizationWindowSeconds:\s*0/, "API HPA immediate scale-up");
+  assertField(apiHpa, /periodSeconds:\s*30\s*\n\s+type:\s*Percent\s*\n\s+value:\s*100/, "API HPA percent scale-up policy");
+  assertField(apiHpa, /periodSeconds:\s*30\s*\n\s+type:\s*Pods\s*\n\s+value:\s*2/, "API HPA pod scale-up policy");
+  assertField(apiHpa, /periodSeconds:\s*60\s*\n\s+type:\s*Percent\s*\n\s+value:\s*25/, "API HPA percent scale-down policy");
+  assertField(apiHpa, /stabilizationWindowSeconds:\s*300/, "API HPA scale-down stabilization");
+  validateCpuMetric(apiHpa, "API");
+  assert(
+    !documents.some(
+      (document) =>
+        resourceKind(document) === "HorizontalPodAutoscaler" &&
+        /worker|automation/.test(resourceName(document) || ""),
+    ),
+    `${label} must not render an automation-worker HPA while automation is gated off`,
+  );
+
   const browserless = documents.find(
     (document) => resourceKind(document) === "Deployment" && /browserless/.test(resourceName(document) || ""),
   );
   if (browserless) {
     validateBrowserlessDeployment(browserless);
     findResource(documents, "Service", /browserless/);
+    validateBrowserlessEnv(browserless);
+    const browserlessHpa = findResource(documents, "HorizontalPodAutoscaler", /browserless/);
+    assertField(browserlessHpa, /^\s*minReplicas:\s*2\s*$/m, "Browserless HPA minimum");
+    assertField(browserlessHpa, /^\s*maxReplicas:\s*8\s*$/m, "Browserless HPA maximum");
+    validateCpuMetric(browserlessHpa, "Browserless");
   }
 
   if (strictRelease && label === "production") {
@@ -274,10 +410,21 @@ function validateChart() {
     return;
   }
 
-  if (!helmAvailable()) {
-    console.log("Helm is not installed; skipping Helm chart validation.");
-    return;
-  }
+  const defaultValues = readFileSync(valuesPath, "utf8");
+  validateBrowserlessValues(defaultValues);
+  assert.throws(
+    () =>
+      validateBrowserlessValues(
+        defaultValues.replace(
+          /^\s*- name: CONCURRENT\s*$/m,
+          "    - name: CONCURRENT\n      value: \"1\"\n    - name: CONCURRENT",
+        ),
+      ),
+    /Browserless CONCURRENT exactly once/,
+  );
+
+  if (!helmAvailable())
+    fail("Helm is required; install Helm or add a portable Helm binary to PATH");
 
   const overrides = [
     { name: "default", path: undefined },
@@ -323,6 +470,51 @@ function validateChart() {
       `${override.name} helm template`,
     );
     validateRenderedManifest(rendered, override.name, { strictRelease: strict });
+    const extraApiMetric = addHpaMetric(
+      rendered,
+      /(^|-)api($|-)/,
+      "    - pods:\n        metric:\n          name: requests_per_second\n        target:\n          averageValue: 100\n          type: AverageValue\n      type: Pods",
+    );
+    assert.throws(
+      () =>
+        validateRenderedManifest(extraApiMetric, override.name, {
+          strictRelease: strict,
+        }),
+      /API HPA must have exactly one metric/,
+    );
+    if (/kind:\s*Deployment[\s\S]*?name:\s*[^\n]*browserless/m.test(rendered)) {
+      const browserless = findResource(
+        documentSections(rendered),
+        "Deployment",
+        /browserless/,
+      );
+      const duplicateBrowserlessEnv = rendered.replace(
+        browserless,
+        browserless.replace(
+          /^\s*- name: CONCURRENT\s*$/m,
+          "            - name: CONCURRENT\n              value: \"1\"\n            - name: CONCURRENT",
+        ),
+      );
+      assert.throws(
+        () =>
+          validateRenderedManifest(duplicateBrowserlessEnv, override.name, {
+            strictRelease: strict,
+          }),
+        /Browserless must declare CONCURRENT exactly once/,
+      );
+      const extraBrowserlessMetric = addHpaMetric(
+        rendered,
+        /browserless/,
+        "    - external:\n        metric:\n          name: browserless_queue\n        target:\n          type: Value\n          value: 1\n      type: External",
+      );
+      assert.throws(
+        () =>
+          validateRenderedManifest(extraBrowserlessMetric, override.name, {
+            strictRelease: strict,
+          }),
+        /Browserless HPA must have exactly one metric/,
+      );
+    }
     console.log(`Validated Helm ${override.name} values.`);
   }
 }

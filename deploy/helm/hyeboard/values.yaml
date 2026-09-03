@@ -54,6 +54,8 @@ config:
     HYEB_HA_SESSION_EPOCH: "0"
     HYEB_HA_ENFORCE_SESSION_EPOCH: "false"
     HYEB_SHUTDOWN_TIMEOUT_MS: "30000"
+    HYEB_POSTGRES_POOL_MAX: "5"
+    HYEB_POSTGRES_CONNECT_TIMEOUT_MS: "5000"
     HYEB_BROWSER_LOCAL: "false"
     HYEB_BROWSER_HEADLESS: "true"
     HYEB_AUTOMATION_EXECUTOR_READY: "false"
@@ -87,8 +89,8 @@ api:
   podAnnotations: {}
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
       cpu: "2"
       memory: 2Gi
@@ -169,8 +171,8 @@ automationWorker:
   podAnnotations: {}
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
       cpu: "2"
       memory: 2Gi
@@ -371,7 +373,15 @@ browserless:
                 app.kubernetes.io/component: browserless
   nodeSelector: {}
   tolerations: []
-  extraEnv: []
+  extraEnv:
+    - name: CONCURRENT
+      value: "1"
+    - name: QUEUED
+      value: "2"
+    - name: TIMEOUT
+      value: "120000"
+    - name: MAX_RECONNECT_TIME
+      value: "120000"
   shmSizeLimit: 2Gi
   tmpVolume: {}
   hpa:
@@ -380,11 +390,14 @@ browserless:
     maxReplicas: 8
     behavior:
       scaleUp:
-        stabilizationWindowSeconds: 30
+        stabilizationWindowSeconds: 0
         policies:
           - type: Percent
             value: 100
-            periodSeconds: 60
+            periodSeconds: 30
+          - type: Pods
+            value: 2
+            periodSeconds: 30
       scaleDown:
         stabilizationWindowSeconds: 300
         policies:
@@ -397,13 +410,7 @@ browserless:
           name: cpu
           target:
             type: Utilization
-            averageUtilization: 70
-      - type: Resource
-        resource:
-          name: memory
-          target:
-            type: Utilization
-            averageUtilization: 75
+            averageUtilization: 60
   pdb:
     enabled: true
     maxUnavailable: 1
@@ -412,44 +419,17 @@ hpa:
   api:
     enabled: true
     minReplicas: 2
-    maxReplicas: 12
-    behavior:
-      scaleUp:
-        stabilizationWindowSeconds: 30
-        policies:
-          - type: Percent
-            value: 100
-            periodSeconds: 60
-      scaleDown:
-        stabilizationWindowSeconds: 300
-        policies:
-          - type: Percent
-            value: 25
-            periodSeconds: 60
-    metrics:
-      - type: Resource
-        resource:
-          name: cpu
-          target:
-            type: Utilization
-            averageUtilization: 70
-      - type: Resource
-        resource:
-          name: memory
-          target:
-            type: Utilization
-            averageUtilization: 75
-  automationWorker:
-    enabled: true
-    minReplicas: 2
     maxReplicas: 8
     behavior:
       scaleUp:
-        stabilizationWindowSeconds: 30
+        stabilizationWindowSeconds: 0
         policies:
           - type: Percent
             value: 100
-            periodSeconds: 60
+            periodSeconds: 30
+          - type: Pods
+            value: 2
+            periodSeconds: 30
       scaleDown:
         stabilizationWindowSeconds: 300
         policies:
@@ -462,13 +442,11 @@ hpa:
           name: cpu
           target:
             type: Utilization
-            averageUtilization: 70
-      - type: Resource
-        resource:
-          name: memory
-          target:
-            type: Utilization
-            averageUtilization: 75
+            averageUtilization: 60
+  # CPU and memory do not represent Redis Stream backlog. Keep fixed workers
+  # until a queue-depth metric is available after real-provider validation.
+  automationWorker:
+    enabled: false
 
 pdb:
   api:

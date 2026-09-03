@@ -135,7 +135,7 @@ jobs:
       - run: |
           hpa_filter='[.items[].status.conditions[]? |
             select(.type == "ScalingActive" and .status == "True")] |
-            length == 2'
+            length == 1'
           for attempt in $(seq 1 60); do
             if kubectl get --raw /apis/metrics.k8s.io/v1beta1 \
               >/dev/null 2>&1 && \
@@ -151,6 +151,7 @@ jobs:
         env:
           HYEB_K8S_NAMESPACE: hyeboard
           HYEB_K8S_PROBE_IMAGE: node:22-alpine
+          HYEB_K8S_ALLOW_CI_AUTOMATION_EXECUTOR: "true"
       - if: failure()
         run: |
           kubectl get pods -n hyeboard -o wide || true

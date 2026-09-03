@@ -183,19 +183,21 @@ These tests cover the shared-dependency and failure-handling foundation. They do
 
 ## Kubernetes deployment
 
-The manifests in [`deploy/k8s`](../deploy/k8s) are a deployment template, not a dependency installer. The `base` includes two Deployments, a ClusterIP API Service, readiness/liveness/startup probes, rolling-update policies, resource requests/limits, HPAs, PDBs, non-root ServiceAccounts, generated runtime ConfigMap, and egress NetworkPolicies. The API uses `/api/live` and `/api/ready`; the worker uses `/healthz` and `/readyz`.
+The manifests in [`deploy/k8s`](../deploy/k8s) are a deployment template, not a dependency installer. The `base` includes two Deployments, a ClusterIP API Service, readiness/liveness/startup probes, rolling-update policies, resource requests/limits, an API HPA, PDBs, non-root ServiceAccounts, generated runtime ConfigMap, and egress NetworkPolicies. The API uses `/api/live` and `/api/ready`; the worker uses `/healthz` and `/readyz`. The worker stays at a fixed replica count while automation is gated off because CPU and memory do not measure Redis Stream backlog.
 
 The overlays are intentionally different:
 
 | Overlay | Namespace | Hostname | Initial replicas | Image registry |
 | --- | --- | --- | --- | --- |
-| `example` | `hyeboard` | `hyeboard.example.com` | 1 API, 1 worker | `ghcr.io/im-yuuki` |
+| `example` | `hyeboard` | `hyeboard.example.com` | 2 API, 1 worker | `ghcr.io/im-yuuki` |
 | `staging` | `hyeboard-staging` | `staging.hyeboard.example.com` | 2 API, 2 workers | `ghcr.io/im-yuuki` |
 | `production` | `hyeboard-production` | `hyeboard.example.com` | 3 API, 3 workers, 3 Browserless | `registry.internal.example` placeholder |
 
 CI uses `deploy/k8s/overlays/ci` with a disposable three-node Kind cluster. It runs PostgreSQL, Redis, and Browserless inside the cluster, loads the CI images, enables metrics-server for HPA status, and executes the same round-robin/failover validator. This proves the Kubernetes wiring in an ephemeral cluster; it does not replace target-cluster or real UET credential validation.
 
-The base starts `HYEB_AUTOMATION_EXECUTOR_READY=false` and uses distributed mode with Browserless as the configured provider. The setting is not changed by any overlay. Keep it false: a running worker, Browserless endpoint, or healthy rollout does not establish Browserless/UET parity.
+The base starts `HYEB_AUTOMATION_EXECUTOR_READY=false` and uses distributed mode with Browserless as the configured provider. Only the disposable CI overlay changes the gate to `true` to test queue wiring against mock dependencies. Keep it false in real environments: a running worker, Browserless endpoint, or healthy rollout does not establish Browserless/UET parity.
+
+The base caps each API PostgreSQL pool at five connections with a five-second connection timeout. With the default API HPA maximum of eight replicas, the normal pool budget is 40 connections. Confirm the external PostgreSQL connection limit before raising either value.
 
 ### Images and secrets
 
@@ -290,6 +292,83 @@ Generate the session secret and automation key with a cryptographically secure g
 
 Staging requires reachable PostgreSQL, Redis, and Browserless endpoints. Production requires PostgreSQL, the OT-CONTAINER-KIT Redis Operator and its `redis.redis.opstreelabs.in/v1beta2` CRD, a `hyeboard-redis-auth` Secret with key `password`, and a StorageClass that can provision three Redis PVCs. Redis, Sentinel, application, and Browserless topology spread is a soft preference, so a smaller test cluster can co-locate replicas. Production Browserless is exposed only through the in-cluster `hyeboard-browserless` ClusterIP and uses `BROWSERLESS_ENDPOINT=ws://hyeboard-browserless:3000/chromium`. Production `HYEB_REDIS_URL` must use the operator-managed `hyeboard-redis-master` Service and include the Redis password in the URL. Add destination restrictions appropriate to the cluster CNI. The Ingress resources require an NGINX ingress controller, the named TLS Secret (`hyeboard-tls`, `hyeboard-staging-tls`, or `hyeboard-production-tls`), and DNS for the selected hostname.
 
+### Scale the ingress controller
+
+Hyeboard does not install or own ingress-nginx. For clusters using the standard `ingress-nginx` release labels, the operator artifacts add a second controller replica, soft hostname spreading, and a PDB without changing the controller Service or arguments:
+
+Run the preflight and apply block as one script. It refuses to overwrite an unfinished rollback marker, captures the current Deployment settings, and records whether the controller PDB already exists before changing either resource:
+
+```bash
+set -euo pipefail
+INGRESS_ROLLBACK_STATE="${TMPDIR:-/tmp}/hyeboard-ingress-rollback-dir"
+if [ -e "$INGRESS_ROLLBACK_STATE" ]; then
+  echo "Unfinished ingress rollback state: $INGRESS_ROLLBACK_STATE" >&2
+  exit 1
+fi
+INGRESS_ROLLBACK_DIR="$(mktemp -d)"
+chmod 700 "$INGRESS_ROLLBACK_DIR"
+printf '%s\n' "$INGRESS_ROLLBACK_DIR" > "$INGRESS_ROLLBACK_STATE"
+
+kubectl -n ingress-nginx get deployment ingress-nginx-controller -o json | \
+  jq '{spec: {replicas: .spec.replicas, template: {spec: {topologySpreadConstraints: (.spec.template.spec.topologySpreadConstraints // null)}}}}' \
+  > "$INGRESS_ROLLBACK_DIR/deployment-patch.json"
+if kubectl -n ingress-nginx get pdb ingress-nginx-controller -o json \
+  > "$INGRESS_ROLLBACK_DIR/pdb-live.json" \
+  2> "$INGRESS_ROLLBACK_DIR/pdb-get.err"; then
+  jq 'del(.metadata.creationTimestamp, .metadata.generation, .metadata.managedFields, .metadata.resourceVersion, .metadata.uid, .status)' \
+    "$INGRESS_ROLLBACK_DIR/pdb-live.json" \
+    > "$INGRESS_ROLLBACK_DIR/pdb-restore.json"
+  printf 'existed\n' > "$INGRESS_ROLLBACK_DIR/pdb-state"
+elif grep -q '(NotFound)' "$INGRESS_ROLLBACK_DIR/pdb-get.err"; then
+  printf 'created\n' > "$INGRESS_ROLLBACK_DIR/pdb-state"
+else
+  cat "$INGRESS_ROLLBACK_DIR/pdb-get.err" >&2
+  exit 1
+fi
+
+kubectl -n ingress-nginx patch deployment ingress-nginx-controller \
+  --type=strategic \
+  --patch-file deploy/k8s/operator/ingress-nginx-scaling-patch.yaml
+kubectl apply -f deploy/k8s/operator/ingress-nginx-pdb.yaml
+kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=10m
+kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o wide
+kubectl -n ingress-nginx wait \
+  --for=jsonpath='{.status.disruptionsAllowed}'=1 \
+  pdb/ingress-nginx-controller --timeout=2m
+kubectl -n ingress-nginx get pdb ingress-nginx-controller \
+  -o custom-columns='NAME:.metadata.name,ALLOWED-DISRUPTIONS:.status.disruptionsAllowed'
+```
+
+Review the live labels before applying these artifacts when the controller has another release or namespace name. Keep the rollback marker until verification completes. An ingress-nginx Helm upgrade may overwrite the Deployment patch; reapply and revalidate it after every controller upgrade. Rollback restores the captured Deployment and an existing PDB; it deletes the PDB only when this procedure created it:
+
+```bash
+set -euo pipefail
+INGRESS_ROLLBACK_STATE="${TMPDIR:-/tmp}/hyeboard-ingress-rollback-dir"
+test -f "$INGRESS_ROLLBACK_STATE"
+INGRESS_ROLLBACK_DIR="$(cat "$INGRESS_ROLLBACK_STATE")"
+test -d "$INGRESS_ROLLBACK_DIR"
+
+kubectl -n ingress-nginx patch deployment ingress-nginx-controller \
+  --type=merge \
+  --patch-file "$INGRESS_ROLLBACK_DIR/deployment-patch.json"
+case "$(cat "$INGRESS_ROLLBACK_DIR/pdb-state")" in
+  existed)
+    kubectl apply -f "$INGRESS_ROLLBACK_DIR/pdb-restore.json"
+    ;;
+  created)
+    kubectl -n ingress-nginx delete pdb ingress-nginx-controller \
+      --ignore-not-found=true
+    ;;
+  *)
+    echo "Invalid ingress PDB rollback state" >&2
+    exit 1
+    ;;
+esac
+kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=10m
+rm -rf "$INGRESS_ROLLBACK_DIR"
+rm -f "$INGRESS_ROLLBACK_STATE"
+```
+
 ### Render and apply
 
 Run static validation first. It does not require a live cluster:
@@ -308,14 +387,14 @@ kubectl rollout status deployment/hyeboard-api -n hyeboard-staging --timeout=180
 kubectl rollout status deployment/hyeboard-automation-worker -n hyeboard-staging --timeout=180s
 ```
 
-Use the corresponding overlay and namespace for `example` or `production`. The example overlay has one replica and is not suitable for the multi-replica cluster validator. For production, verify the Redis Operator reports the CRD and reconcile permissions before applying the overlay. For staging or production, after the dependencies and metrics API are ready:
+Use the corresponding overlay and namespace for `example` or `production`. The example overlay has two API replicas but one worker replica, so it is not suitable for the multi-replica cluster validator. For production, verify the Redis Operator reports the CRD and reconcile permissions before applying the overlay. For staging or production, after the dependencies and metrics API are ready:
 
 ```bash
 HYEB_K8S_NAMESPACE=hyeboard-staging \
   node scripts/validate-k8s-cluster.mjs --failover
 ```
 
-The cluster validator needs a working `kubectl` context, two ready replicas of both application Deployments, two ready API Service endpoints, active HPA metrics, and permission to create a temporary `node:22-alpine` probe pod. It accepts a single node; it checks rollouts, readiness, endpoint spread, a mock session against each API pod, repeated readiness requests, and API pod replacement during `--failover`. Separately verify Redis Sentinel failover and Browserless session recovery; the validator does not establish Browserless/UET parity.
+The cluster validator needs a working `kubectl` context, two ready replicas of both application Deployments, two ready API Service endpoints, active API HPA metrics, and permission to create a temporary `node:22-alpine` probe pod. It accepts a single node; it checks rollouts, readiness, endpoint spread, a mock session against each API pod, repeated readiness requests, and API pod replacement during `--failover`. Separately verify Redis Sentinel failover and Browserless session recovery; the validator does not establish Browserless/UET parity.
 
 ### Apply the production Kustomize overlay
 

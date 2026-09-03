@@ -11,14 +11,17 @@ spec:
     kind: Deployment
     name: hyeboard-api
   minReplicas: 2
-  maxReplicas: 12
+  maxReplicas: 8
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 30
+      stabilizationWindowSeconds: 0
       policies:
         - type: Percent
           value: 100
-          periodSeconds: 60
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
     scaleDown:
       stabilizationWindowSeconds: 300
       policies:
@@ -31,10 +34,4 @@ spec:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 70
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 75
+          averageUtilization: 60
