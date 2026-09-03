@@ -21,15 +21,17 @@ const config = kustomization;
 const networkPolicy = read("deploy/k8s/base/network-policy.yaml");
 const secret = read("deploy/k8s/base/secret.example.yaml");
 const hpa = read("deploy/k8s/base/api-hpa.yaml");
-const workerHpa = read("deploy/k8s/base/automation-hpa.yaml");
 const apiPdb = read("deploy/k8s/base/api-pdb.yaml");
 const workerPdb = read("deploy/k8s/base/automation-pdb.yaml");
 const ingress = read("deploy/k8s/overlays/example/ingress.yaml");
 const ciOverlay = read("deploy/k8s/overlays/ci/kustomization.yaml");
+const ciConfig = read("deploy/k8s/overlays/ci/configmap-patch.yaml");
 const ciDependencies = read("deploy/k8s/overlays/ci/dependencies.yaml");
 const productionBrowserless = read("deploy/k8s/overlays/production/browserless-deployment.yaml");
+const productionBrowserlessHpa = read("deploy/k8s/overlays/production/browserless-hpa.yaml");
 const productionRedis = read("deploy/k8s/overlays/production/redis-replication.yaml");
-const productionRedisNetworkPolicy = read("deploy/k8s/overlays/production/redis-network-policy.yaml");
+const ingressScalingPatch = read("deploy/k8s/operator/ingress-nginx-scaling-patch.yaml");
+const ingressPdb = read("deploy/k8s/operator/ingress-nginx-pdb.yaml");
 const readme = read("README.md");
 const runbook = read("docs/ha-runbook.md");
 const dockerfile = read("Dockerfile");
@@ -234,16 +236,23 @@ has(api, /readOnlyRootFilesystem: true/);
 has(api, /name: hyeboard-api/);
 assert(!api.includes(":latest"));
 assert(!worker.includes(":latest"));
+has(api, /requests:\s*\n\s+cpu: 100m\s*\n\s+memory: 192Mi/);
 assert(config.includes("HYEB_SHUTDOWN_TIMEOUT_MS=30000"));
 assert(config.includes("HYEB_ADMIN_SESSION_TTL_SECONDS=3600"));
+assert(config.includes("HYEB_POSTGRES_POOL_MAX=5"));
+assert(config.includes("HYEB_POSTGRES_CONNECT_TIMEOUT_MS=5000"));
 assert(!/HYEB_ADMIN_DB_PATH|admin\.sqlite/i.test(config), "distributed ConfigMap must not configure local SQLite");
 has(hpa, /minReplicas: 2/);
-has(hpa, /maxReplicas: 12/);
-has(hpa, /averageUtilization: 70/);
-assert(workerHpa.includes("name: hyeboard-automation-worker"));
-assert(workerHpa.includes("minReplicas: 2"));
-assert(workerHpa.includes("maxReplicas: 8"));
-assert(workerHpa.includes("averageUtilization: 70"));
+has(hpa, /maxReplicas: 8/);
+has(hpa, /scaleUp:\s*\n\s+stabilizationWindowSeconds: 0/);
+has(hpa, /type: Percent\s*\n\s+value: 100\s*\n\s+periodSeconds: 30/);
+has(hpa, /type: Pods\s*\n\s+value: 2\s*\n\s+periodSeconds: 30/);
+has(hpa, /scaleDown:\s*\n\s+stabilizationWindowSeconds: 300/);
+has(hpa, /type: Percent\s*\n\s+value: 25\s*\n\s+periodSeconds: 60/);
+has(hpa, /averageUtilization: 60/);
+assert(!hpa.includes("name: memory"));
+assert(!kustomization.includes("automation-hpa.yaml"));
+has(worker, /requests:\s*\n\s+cpu: 100m\s*\n\s+memory: 192Mi/);
 has(apiPdb, /maxUnavailable: 1/);
 has(workerPdb, /maxUnavailable: 1/);
 assert(!apiPdb.includes("minAvailable"));
@@ -276,6 +285,14 @@ assert(overlayKustomizations.find(({ name }) => name === "production").text.incl
 assert(overlayKustomizations.find(({ name }) => name === "production").text.includes("redis-replication.yaml"));
 validateBrowserlessSecurity(productionBrowserless);
 has(productionBrowserless, /image: ghcr\.io\/browserless\/chromium:v2\.55\.4/);
+for (const [name, value] of [["CONCURRENT", "1"], ["QUEUED", "2"], ["TIMEOUT", "120000"], ["MAX_RECONNECT_TIME", "120000"]]) {
+  assert.equal((productionBrowserless.match(new RegExp(`^\\s*- name: ${name}\\s*$`, "gm")) ?? []).length, 1);
+  has(productionBrowserless, new RegExp(`name: ${name}\\s*\\n\\s+value: ["']?${value}["']?\\s*$`, "m"));
+}
+has(productionBrowserlessHpa, /minReplicas: 2/);
+has(productionBrowserlessHpa, /maxReplicas: 8/);
+has(productionBrowserlessHpa, /averageUtilization: 60/);
+assert(!productionBrowserlessHpa.includes("name: memory"));
 assert(!productionBrowserless.includes(":latest"));
 has(productionRedis, /apiVersion: redis\.redis\.opstreelabs\.in\/v1beta2/);
 has(productionRedis, /clusterSize: 3/);
@@ -288,9 +305,14 @@ has(ingress, /nginx.ingress.kubernetes.io\/proxy-request-buffering: "off"/);
 assert(ciOverlay.includes("dependencies.yaml"));
 assert(ciOverlay.includes("newName: hyeboard-api"));
 assert(ciOverlay.includes("newName: hyeboard-automation-worker"));
+assert(ciConfig.includes('HYEB_AUTOMATION_EXECUTOR_READY: "true"'));
 assert(ciDependencies.includes("name: postgres"));
 assert(ciDependencies.includes("name: redis"));
 assert(ciDependencies.includes("name: browserless"));
+has(ingressScalingPatch, /replicas: 2/);
+has(ingressScalingPatch, /whenUnsatisfiable: ScheduleAnyway/);
+has(ingressScalingPatch, /topologyKey: kubernetes\.io\/hostname/);
+has(ingressPdb, /maxUnavailable: 1/);
 has(readme, /hyeboard-runtime` with these keys:[^\n]*`HYEB_SESSION_SECRET`, `HYEB_ADMIN_SESSION_SECRET`, `HYEB_POSTGRES_URL`/);
 has(runbook, /create secret generic hyeboard-runtime[\s\S]*?--from-literal=HYEB_SESSION_SECRET=.*\n\s+--from-literal=HYEB_ADMIN_SESSION_SECRET=/);
 has(networkPolicy, /name: hyeboard-automation-worker/);
@@ -307,12 +329,32 @@ if (renderedPath) {
 const readyCondition = [{ type: "Ready", status: "True" }];
 const activeCondition = [{ type: "ScalingActive", status: "True" }];
 const clusterSnapshot = {
+  configMaps: {
+    items: [{
+      metadata: { name: "hyeboard-runtime" },
+      data: {
+        HYEB_AUTOMATION_EXECUTOR_READY: "false",
+        HYEB_POSTGRES_POOL_MAX: "5",
+        HYEB_POSTGRES_CONNECT_TIMEOUT_MS: "5000",
+      },
+    }],
+  },
   deployments: {
-    items: ["hyeboard-api", "hyeboard-automation-worker"].map((name) => ({
-      metadata: { name },
-      spec: { replicas: 2 },
-      status: { readyReplicas: 2 },
-    })),
+    items: [
+      {
+        metadata: { name: "hyeboard-api" },
+        spec: {
+          replicas: 2,
+          template: { spec: { containers: [{ name: "api", envFrom: [{ configMapRef: { name: "hyeboard-runtime" } }] }] } },
+        },
+        status: { readyReplicas: 2 },
+      },
+      {
+        metadata: { name: "hyeboard-automation-worker" },
+        spec: { replicas: 2, template: { spec: { containers: [{ name: "automation-worker" }] } } },
+        status: { readyReplicas: 2 },
+      },
+    ],
   },
   pods: {
     items: ["hyeboard-api", "hyeboard-automation-worker"].flatMap((name) =>
@@ -338,10 +380,19 @@ const clusterSnapshot = {
     ],
   },
   hpas: {
-    items: ["hyeboard-api", "hyeboard-automation-worker"].map((name) => ({
-      metadata: { name },
+    items: [{
+      metadata: { name: "hyeboard-api" },
+      spec: {
+        minReplicas: 2,
+        maxReplicas: 8,
+        behavior: {
+          scaleUp: { stabilizationWindowSeconds: 0, policies: [{ type: "Percent", value: 100, periodSeconds: 30 }, { type: "Pods", value: 2, periodSeconds: 30 }] },
+          scaleDown: { stabilizationWindowSeconds: 300, policies: [{ type: "Percent", value: 25, periodSeconds: 60 }] },
+        },
+        metrics: [{ type: "Resource", resource: { name: "cpu", target: { type: "Utilization", averageUtilization: 60 } } }],
+      },
       status: { currentReplicas: 2, conditions: activeCondition },
-    })),
+    }],
   },
 };
 validateClusterSnapshot(clusterSnapshot);

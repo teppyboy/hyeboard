@@ -30,15 +30,136 @@ function readJson(args) {
   }
 }
 
-export function validateClusterSnapshot({
-  deployments,
-  pods,
-  endpointSlices,
-  hpas,
-}) {
+function assertPolicy(policies, type, value, periodSeconds, label) {
+  const matches = policies.filter(
+    (policy) =>
+      policy.type === type &&
+      policy.value === value &&
+      policy.periodSeconds === periodSeconds,
+  );
+  if (matches.length !== 1) throw new Error(`${label} policy is invalid`);
+}
+
+function validateCpuHpa(hpa, name) {
+  if (!hpa) throw new Error(`Missing HorizontalPodAutoscaler ${name}`);
+  if (hpa.spec?.minReplicas !== 2 || hpa.spec?.maxReplicas !== 8)
+    throw new Error(`${name} HPA must scale from 2 to 8 replicas`);
+  const metrics = hpa.spec.metrics ?? [];
+  if (
+    metrics.length !== 1 ||
+    metrics[0].type !== "Resource" ||
+    metrics[0].resource?.name !== "cpu" ||
+    metrics[0].resource?.target?.type !== "Utilization" ||
+    metrics[0].resource?.target?.averageUtilization !== 60
+  )
+    throw new Error(`${name} HPA must use only a 60% CPU target`);
+  const scaleUp = hpa.spec.behavior?.scaleUp;
+  if (scaleUp?.stabilizationWindowSeconds !== 0)
+    throw new Error(`${name} HPA scale-up stabilization is invalid`);
+  const scaleUpPolicies = scaleUp?.policies ?? [];
+  if (scaleUpPolicies.length !== 2)
+    throw new Error(`${name} HPA scale-up policies are invalid`);
+  assertPolicy(scaleUpPolicies, "Percent", 100, 30, `${name} HPA scale-up`);
+  assertPolicy(scaleUpPolicies, "Pods", 2, 30, `${name} HPA scale-up`);
+  const scaleDown = hpa.spec.behavior?.scaleDown;
+  if (scaleDown?.stabilizationWindowSeconds !== 300)
+    throw new Error(`${name} HPA scale-down stabilization is invalid`);
+  const scaleDownPolicies = scaleDown?.policies ?? [];
+  if (scaleDownPolicies.length !== 1)
+    throw new Error(`${name} HPA scale-down policies are invalid`);
+  assertPolicy(
+    scaleDownPolicies,
+    "Percent",
+    25,
+    60,
+    `${name} HPA scale-down`,
+  );
+}
+
+function validateBrowserless(deployment, hpas) {
+  if (!deployment) return;
+  const env = deployment.spec?.template?.spec?.containers?.[0]?.env ?? [];
+  for (const [name, value] of [
+    ["CONCURRENT", "1"],
+    ["QUEUED", "2"],
+    ["TIMEOUT", "120000"],
+    ["MAX_RECONNECT_TIME", "120000"],
+  ]) {
+    const matches = env.filter((item) => item.name === name);
+    if (matches.length !== 1 || matches[0].value !== value)
+      throw new Error(
+        `hyeboard-browserless must set ${name}=${value} exactly once`,
+      );
+  }
+  validateCpuHpa(
+    hpas.items.find((item) => item.metadata.name === "hyeboard-browserless"),
+    "hyeboard-browserless",
+  );
+}
+
+function deploymentImage(deployment) {
+  return deployment?.spec?.template?.spec?.containers?.[0]?.image;
+}
+
+function apiRuntimeConfigName(apiDeployment) {
+  const apiContainer = apiDeployment?.spec?.template?.spec?.containers?.find(
+    (container) => container.name === "api",
+  );
+  const names = (apiContainer?.envFrom ?? [])
+    .map((source) => source.configMapRef?.name)
+    .filter(Boolean);
+  if (names.length !== 1)
+    throw new Error("hyeboard-api must reference exactly one runtime ConfigMap");
+  return names[0];
+}
+
+function isDisposableCi(deploymentByName, allowCiAutomationExecutor) {
+  return (
+    allowCiAutomationExecutor &&
+    deploymentImage(deploymentByName.get("hyeboard-api")) ===
+      "hyeboard-api:ci" &&
+    deploymentImage(deploymentByName.get("hyeboard-automation-worker")) ===
+      "hyeboard-automation-worker:ci" &&
+    ["postgres", "redis", "browserless"].every((name) =>
+      deploymentByName.has(name),
+    )
+  );
+}
+
+export function validateClusterSnapshot(
+  { configMaps, deployments, pods, endpointSlices, hpas },
+  { allowCiAutomationExecutor = false } = {},
+) {
   const deploymentByName = new Map(
     deployments.items.map((item) => [item.metadata.name, item]),
   );
+  const runtimeConfigName = apiRuntimeConfigName(
+    deploymentByName.get("hyeboard-api"),
+  );
+  const runtimeConfig = configMaps.items.find(
+    (item) => item.metadata.name === runtimeConfigName,
+  );
+  if (!runtimeConfig)
+    throw new Error(`Missing ConfigMap ${runtimeConfigName}`);
+  const executorReady = runtimeConfig.data?.HYEB_AUTOMATION_EXECUTOR_READY;
+  if (
+    executorReady !== "false" &&
+    !(
+      executorReady === "true" &&
+      isDisposableCi(deploymentByName, allowCiAutomationExecutor)
+    )
+  )
+    throw new Error(
+      "hyeboard-runtime must set HYEB_AUTOMATION_EXECUTOR_READY=false outside disposable CI",
+    );
+  for (const [name, value] of [
+    ["HYEB_POSTGRES_POOL_MAX", "5"],
+    ["HYEB_POSTGRES_CONNECT_TIMEOUT_MS", "5000"],
+  ]) {
+    if (runtimeConfig.data?.[name] !== value)
+      throw new Error(`hyeboard-runtime must set ${name}=${value}`);
+  }
+
   for (const name of ["hyeboard-api", "hyeboard-automation-worker"]) {
     const deployment = deploymentByName.get(name);
     if (!deployment) throw new Error(`Missing Deployment ${name}`);
@@ -78,25 +199,44 @@ export function validateClusterSnapshot({
       "hyeboard-api Service has fewer than two ready endpoint addresses",
     );
 
-  const hpaByName = new Map(
-    hpas.items.map((item) => [item.metadata.name, item]),
+  const workerHpa = hpas.items.find(
+    (item) => item.metadata.name === "hyeboard-automation-worker",
   );
-  for (const name of ["hyeboard-api", "hyeboard-automation-worker"]) {
-    const hpa = hpaByName.get(name);
-    if (!hpa) throw new Error(`Missing HorizontalPodAutoscaler ${name}`);
-    if ((hpa.status.currentReplicas ?? 0) < 2)
-      throw new Error(`${name} HPA reports fewer than two current replicas`);
-    const active = hpa.status.conditions?.some(
-      (condition) =>
-        condition.type === "ScalingActive" && condition.status === "True",
-    );
-    if (!active) throw new Error(`${name} HPA metrics are not active`);
-  }
+  if (workerHpa)
+    throw new Error("hyeboard-automation-worker HPA must be absent");
+  const apiHpa = hpas.items.find(
+    (item) => item.metadata.name === "hyeboard-api",
+  );
+  validateCpuHpa(apiHpa, "hyeboard-api");
+  if ((apiHpa.status.currentReplicas ?? 0) < 2)
+    throw new Error("hyeboard-api HPA reports fewer than two current replicas");
+  const active = apiHpa.status.conditions?.some(
+    (condition) =>
+      condition.type === "ScalingActive" && condition.status === "True",
+  );
+  if (!active) throw new Error("hyeboard-api HPA metrics are not active");
+  validateBrowserless(deploymentByName.get("hyeboard-browserless"), hpas);
 }
 
 function snapshot() {
+  const deployments = readJson(["get", "deployments", "-n", namespace]);
+  const apiDeployment = deployments.items.find(
+    (item) => item.metadata.name === "hyeboard-api",
+  );
+  const runtimeConfigName = apiRuntimeConfigName(apiDeployment);
   return {
-    deployments: readJson(["get", "deployments", "-n", namespace]),
+    configMaps: {
+      items: [
+        readJson([
+          "get",
+          "configmap",
+          runtimeConfigName,
+          "-n",
+          namespace,
+        ]),
+      ],
+    },
+    deployments,
     pods: readJson(["get", "pods", "-n", namespace]),
     endpointSlices: readJson([
       "get",
@@ -183,7 +323,11 @@ function waitForRollouts() {
 function main() {
   waitForRollouts();
   let currentSnapshot = snapshot();
-  validateClusterSnapshot(currentSnapshot);
+  const validationOptions = {
+    allowCiAutomationExecutor:
+      process.env.HYEB_K8S_ALLOW_CI_AUTOMATION_EXECUTOR === "true",
+  };
+  validateClusterSnapshot(currentSnapshot, validationOptions);
   probeService(currentSnapshot);
 
   if (failover) {
@@ -208,7 +352,7 @@ function main() {
     probeService(currentSnapshot, false);
     waitForRollouts();
     currentSnapshot = snapshot();
-    validateClusterSnapshot(currentSnapshot);
+    validateClusterSnapshot(currentSnapshot, validationOptions);
     probeService(currentSnapshot);
   }
 

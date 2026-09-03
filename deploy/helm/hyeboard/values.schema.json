@@ -508,7 +508,7 @@
         "affinity": { "$ref": "#/definitions/securityContext" },
         "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
         "tolerations": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
-        "extraEnv": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "extraEnv": { "type": "array", "uniqueItems": true, "items": { "type": "object", "additionalProperties": true } },
         "shmSizeLimit": { "type": "string", "minLength": 1 },
         "tmpVolume": { "type": "object", "additionalProperties": true },
         "hpa": { "$ref": "#/definitions/hpaConfig" },
@@ -517,7 +517,7 @@
     },
     "hpaConfig": {
       "type": "object",
-      "required": ["enabled", "minReplicas", "maxReplicas", "behavior", "metrics"],
+      "required": ["enabled"],
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
@@ -525,7 +525,9 @@
         "maxReplicas": { "type": "integer", "minimum": 1 },
         "behavior": { "type": "object", "additionalProperties": true },
         "metrics": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": true } }
-      }
+      },
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": { "required": ["minReplicas", "maxReplicas", "behavior", "metrics"] }
     },
     "pdbConfig": {
       "type": "object",

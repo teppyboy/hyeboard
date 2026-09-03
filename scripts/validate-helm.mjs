@@ -317,7 +317,7 @@ function validateHpaReplicaOwnership(documents, deployment, hpaPattern, role) {
     (document) => resourceKind(document) === "HorizontalPodAutoscaler" && hpaPattern.test(resourceName(document) || ""),
   );
   if (!hpa) return;
-  assert(!/^  replicas:/m.test(deployment), `${role} Deployment must leave spec.replicas to its HPA`);
+  assert(!/^ {2}replicas:/m.test(deployment), `${role} Deployment must leave spec.replicas to its HPA`);
 }
 
 function validateRenderedManifest(rendered, label, { strictRelease, managedRuntimeNames }) {
@@ -605,6 +605,15 @@ function validateSourceContracts() {
     ...[...values.matchAll(/^ {4}([A-Z][A-Z0-9_]*):/gm)].map((match) => match[1]),
   ]);
   assert(values.includes("HYEB_HA_MODE: distributed"), "values.yaml is missing managed HYEB_HA_MODE");
+  assert(values.includes("HYEB_POSTGRES_POOL_MAX: \"5\""), "values.yaml is missing PostgreSQL pool maximum");
+  assert(values.includes("HYEB_POSTGRES_CONNECT_TIMEOUT_MS: \"5000\""), "values.yaml is missing PostgreSQL connect timeout");
+  assert(values.includes("cpu: 100m") && values.includes("memory: 192Mi"), "values.yaml is missing calibrated application requests");
+  assert(values.includes('averageUtilization: 60'), "values.yaml is missing CPU-only HPA targets");
+  assert(!values.includes("name: memory"), "values.yaml must not use memory HPA metrics");
+  for (const [name, value] of [["CONCURRENT", "1"], ["QUEUED", "2"], ["TIMEOUT", "120000"], ["MAX_RECONNECT_TIME", "120000"]]) {
+    assert.equal((values.match(new RegExp(`- name: ${name}\\s*\\n\\s+value: ["']?${value}["']?`, "g")) ?? []).length, 1, `values.yaml must declare Browserless ${name} exactly once`);
+  }
+  assert(values.includes("  automationWorker:\n    enabled: false"), "values.yaml must disable worker HPA while automation is gated");
   assert(values.includes("HYEB_ADMIN_GITHUB_CLIENT_ID") || runtimeProperties.HYEB_ADMIN_GITHUB_CLIENT_ID, "values schema is missing managed provider IDs");
   for (const [label, expectedValid, value] of extraEnvCases) {
     const entries = Array.isArray(value) ? value : [value];

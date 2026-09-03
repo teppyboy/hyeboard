@@ -17,10 +17,24 @@ declare const process: { env: Record<string, string | undefined>; cwd: () => str
 
 const isBun = typeof Bun !== "undefined";
 
+type SelfHostedRuntimeConfig = RuntimeConfig & {
+  HYEB_POSTGRES_POOL_MAX: string;
+  HYEB_POSTGRES_CONNECT_TIMEOUT_MS: string;
+};
+
+function positiveIntegerSetting(value: string | undefined, name: string, fallback: number): string {
+  if (value === undefined) return String(fallback);
+  const parsed = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
 export function selfHostedRuntimeConfig(
   environment: Record<string, string | undefined>,
   fileConfig: RuntimeConfig,
-): RuntimeConfig {
+): SelfHostedRuntimeConfig {
   return {
     HYEB_SESSION_SECRET: environment.HYEB_SESSION_SECRET,
     HYEB_ALLOWED_ORIGINS: environment.HYEB_ALLOWED_ORIGINS ?? fileConfig.HYEB_ALLOWED_ORIGINS,
@@ -49,6 +63,16 @@ export function selfHostedRuntimeConfig(
     DATABASE_URL: environment.DATABASE_URL ?? fileConfig.DATABASE_URL,
     REDIS_URL: environment.REDIS_URL ?? fileConfig.REDIS_URL,
     HYEB_POSTGRES_URL: environment.HYEB_POSTGRES_URL ?? fileConfig.HYEB_POSTGRES_URL,
+    HYEB_POSTGRES_POOL_MAX: positiveIntegerSetting(
+      environment.HYEB_POSTGRES_POOL_MAX,
+      "HYEB_POSTGRES_POOL_MAX",
+      5,
+    ),
+    HYEB_POSTGRES_CONNECT_TIMEOUT_MS: positiveIntegerSetting(
+      environment.HYEB_POSTGRES_CONNECT_TIMEOUT_MS,
+      "HYEB_POSTGRES_CONNECT_TIMEOUT_MS",
+      5_000,
+    ),
     HYEB_REDIS_URL: environment.HYEB_REDIS_URL ?? fileConfig.HYEB_REDIS_URL,
     HYEB_SHUTDOWN_TIMEOUT_MS: environment.HYEB_SHUTDOWN_TIMEOUT_MS ?? fileConfig.HYEB_SHUTDOWN_TIMEOUT_MS,
     HYEB_ADMIN_SESSION_SECRET: environment.HYEB_ADMIN_SESSION_SECRET,
@@ -311,7 +335,11 @@ export async function start(): Promise<unknown> {
       if (postgresUrl) {
         try {
           const postgres = await import("./node/postgres");
-          const pool = new postgres.PostgresPool(postgresUrl);
+          const pool = new postgres.PostgresPool({
+            connectionString: postgresUrl,
+            max: Number(config.HYEB_POSTGRES_POOL_MAX),
+            connectionTimeoutMillis: Number(config.HYEB_POSTGRES_CONNECT_TIMEOUT_MS),
+          });
           postgresPool = pool;
           await postgres.runPostgresMigrations(pool);
           setSessionRevocationStore(new postgres.PostgresSessionRevocationStore(pool, config.HYEB_SESSION_SECRET ?? ""));
