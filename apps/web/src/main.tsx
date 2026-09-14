@@ -5,7 +5,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster } from "@/components/ui/sonner";
 import { LocaleProvider } from "@/lib/i18n";
-import { shouldRetryQuery } from "@/lib/api";
+import { shouldRetryQuery } from "@/lib/api/api";
 import { router } from "@/router";
 
 const queryClient = new QueryClient({

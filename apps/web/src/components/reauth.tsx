@@ -3,10 +3,21 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CaptchaDialog, useCaptchaRelay } from "@/components/captcha-dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { api, ApiError, clearSessionToken } from "@/lib/api";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { api, ApiError, clearSessionToken } from "@/lib/api/api";
 import { useLocale } from "@/lib/i18n";
-import { clearUetReauthCredentials, markReauthSucceeded, readUetReauthCredentials, SESSION_REAUTH_REQUIRED_EVENT } from "@/lib/reauth";
+import {
+  clearUetReauthCredentials,
+  markReauthSucceeded,
+  readUetReauthCredentials,
+  SESSION_REAUTH_REQUIRED_EVENT,
+} from "@/lib/session/reauth";
 
 // Global inline re-authentication for expired UET sessions. Mounted once in
 // RootLayout so it covers every authenticated route (the login page keeps its
@@ -49,9 +60,13 @@ export function SessionReauthGate() {
       setStatus(undefined);
       try {
         await api.importUetGoogleSession(
-          { uetGoogleEmail: credentials.email, uetGooglePassword: credentials.password },
+          {
+            uetGoogleEmail: credentials.email,
+            uetGooglePassword: credentials.password,
+          },
           (message) => setStatus(message),
-          (imageDataUrl, signal) => relayCaptchaRef.current(imageDataUrl, signal),
+          (imageDataUrl, signal) =>
+            relayCaptchaRef.current(imageDataUrl, signal),
           controller.signal,
         );
         markReauthSucceeded();
@@ -59,7 +74,11 @@ export function SessionReauthGate() {
       } catch (error) {
         // Stored credentials are provably wrong - drop them so the next
         // session death goes straight to the login page instead of looping.
-        if (error instanceof ApiError && error.code === "INVALID_STUDENTHUB_CREDENTIAL") clearUetReauthCredentials();
+        if (
+          error instanceof ApiError &&
+          error.code === "INVALID_STUDENTHUB_CREDENTIAL"
+        )
+          clearUetReauthCredentials();
         if (!controller.signal.aborted) toast.error(messages.reauth.failed);
         // Fall back to the pre-existing behavior: drop the dead account,
         // which redirects to /login (or auto-switches to another account).
@@ -78,7 +97,8 @@ export function SessionReauthGate() {
       void signBackIn();
     };
     window.addEventListener(SESSION_REAUTH_REQUIRED_EVENT, beginReauth);
-    return () => window.removeEventListener(SESSION_REAUTH_REQUIRED_EVENT, beginReauth);
+    return () =>
+      window.removeEventListener(SESSION_REAUTH_REQUIRED_EVENT, beginReauth);
   }, []);
 
   // Abort only on unmount (redirect away), never on locale re-renders.
@@ -87,7 +107,13 @@ export function SessionReauthGate() {
   if (!reauthing) return null;
 
   const cancelButton = (
-    <Button variant="ghost" className="w-full" onClick={() => controllerRef.current?.abort()}>{t.reauth.cancelAndSignOut}</Button>
+    <Button
+      variant="ghost"
+      className="w-full"
+      onClick={() => controllerRef.current?.abort()}
+    >
+      {t.reauth.cancelAndSignOut}
+    </Button>
   );
 
   if (captcha.challenge) {

@@ -1,7 +1,12 @@
-import { featurePolicyStreamLimited, MAX_FEATURE_POLICY_SSE_SUBSCRIBERS, type FeaturePolicyEvents } from "../../feature-policy-store";
+import {
+  featurePolicyStreamLimited,
+  MAX_FEATURE_POLICY_SSE_SUBSCRIBERS,
+  type FeaturePolicyEvents,
+} from "../../policy/feature-policy-store";
 import type { RedisPublishClient, RedisSubscribeClient } from "./client";
 
-export const FEATURE_POLICY_REVISION_CHANNEL = "hyeboard:v1:feature-policy:revision";
+export const FEATURE_POLICY_REVISION_CHANNEL =
+  "hyeboard:v1:feature-policy:revision";
 const HEARTBEAT_MS = 15_000;
 const encoder = new TextEncoder();
 
@@ -21,14 +26,20 @@ export class RedisFeaturePolicyEvents implements FeaturePolicyEvents {
   async start(): Promise<void> {
     if (this.closed) throw new Error("Redis feature policy events are closed");
     if (this.started) return;
-    await this.subscriber.subscribe(FEATURE_POLICY_REVISION_CHANNEL, this.receive);
+    await this.subscriber.subscribe(
+      FEATURE_POLICY_REVISION_CHANNEL,
+      this.receive,
+    );
     this.started = true;
   }
 
   async publish(revision: number): Promise<void> {
     if (!isRevision(revision)) return;
     try {
-      await this.publisher.publish(FEATURE_POLICY_REVISION_CHANNEL, String(revision));
+      await this.publisher.publish(
+        FEATURE_POLICY_REVISION_CHANNEL,
+        String(revision),
+      );
     } finally {
       this.notify(revision);
     }
@@ -40,8 +51,13 @@ export class RedisFeaturePolicyEvents implements FeaturePolicyEvents {
     return () => this.listeners.delete(listener);
   }
 
-  async stream(lastRevision: number | undefined, signal: AbortSignal, currentRevision = this.highestRevision): Promise<Response> {
-    if (this.activeStreams >= MAX_FEATURE_POLICY_SSE_SUBSCRIBERS) throw featurePolicyStreamLimited();
+  async stream(
+    lastRevision: number | undefined,
+    signal: AbortSignal,
+    currentRevision = this.highestRevision,
+  ): Promise<Response> {
+    if (this.activeStreams >= MAX_FEATURE_POLICY_SSE_SUBSCRIBERS)
+      throw featurePolicyStreamLimited();
     this.activeStreams += 1;
     currentRevision = Math.max(currentRevision, this.highestRevision);
     let seen = isRevision(lastRevision) ? lastRevision : -1;
@@ -72,11 +88,15 @@ export class RedisFeaturePolicyEvents implements FeaturePolicyEvents {
           unsubscribe = this.subscribe((revision) => {
             if (!open || revision <= seen) return;
             seen = revision;
-            controller.enqueue(encode(`event: revision\ndata: ${revision}\n\n`));
+            controller.enqueue(
+              encode(`event: revision\ndata: ${revision}\n\n`),
+            );
           });
           if (isRevision(currentRevision) && currentRevision > seen) {
             seen = currentRevision;
-            controller.enqueue(encode(`event: revision\ndata: ${currentRevision}\n\n`));
+            controller.enqueue(
+              encode(`event: revision\ndata: ${currentRevision}\n\n`),
+            );
           }
           heartbeat = setInterval(() => {
             try {
@@ -108,7 +128,8 @@ export class RedisFeaturePolicyEvents implements FeaturePolicyEvents {
     this.closed = true;
     for (const close of [...this.closeStreams]) close();
     this.listeners.clear();
-    if (this.started) await this.subscriber.unsubscribe(FEATURE_POLICY_REVISION_CHANNEL);
+    if (this.started)
+      await this.subscriber.unsubscribe(FEATURE_POLICY_REVISION_CHANNEL);
     this.started = false;
   }
 
@@ -133,7 +154,9 @@ export class RedisFeaturePolicyEvents implements FeaturePolicyEvents {
 function parseRevision(message: string): number | undefined {
   if (!/^(0|[1-9]\d*)$/.test(message)) return undefined;
   const revision = Number(message);
-  return isRevision(revision) && String(revision) === message ? revision : undefined;
+  return isRevision(revision) && String(revision) === message
+    ? revision
+    : undefined;
 }
 
 function isRevision(value: unknown): value is number {

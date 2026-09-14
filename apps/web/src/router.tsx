@@ -8,15 +8,19 @@ import {
   type RouteComponent,
 } from "@tanstack/react-router";
 import { RootLayout } from "@/components/layout";
-import { getSessionToken } from "@/lib/api";
-import { LoginPage } from "@/pages/login";
+import { getSessionToken } from "@/lib/api/api";
+import { LoginPage } from "@/pages/account/login";
 import { HyeboardProvider } from "@/state";
 
 const rootRoute = createRootRoute({ component: Outlet });
 const studentRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "student",
-  component: () => <HyeboardProvider><Outlet /></HyeboardProvider>,
+  component: () => (
+    <HyeboardProvider>
+      <Outlet />
+    </HyeboardProvider>
+  ),
 });
 const loginRoute = createRoute({
   getParentRoute: () => studentRoute,
@@ -40,95 +44,137 @@ const lazyPage = (
 const indexRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
-  component: lazyPage(() => import("@/pages/dashboard"), "DashboardPage"),
+  component: lazyPage(
+    () => import("@/pages/dashboard/dashboard"),
+    "DashboardPage",
+  ),
 });
 const adminLoginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admin/login",
-  component: lazyPage(() => import("@/pages/admin-login"), "AdminLoginPage"),
+  component: lazyPage(
+    () => import("@/pages/admin/admin-login"),
+    "AdminLoginPage",
+  ),
 });
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admin",
-  component: lazyPage(() => import("@/components/admin/admin-layout"), "AdminLayout"),
+  component: lazyPage(
+    () => import("@/components/admin/admin-layout"),
+    "AdminLayout",
+  ),
 });
 const adminIndexRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/",
-  component: lazyPage(() => import("@/pages/admin-control"), "AdminControlPage"),
+  component: lazyPage(
+    () => import("@/pages/admin/admin-control"),
+    "AdminControlPage",
+  ),
 });
 const adminHistoryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/history",
-  component: lazyPage(() => import("@/pages/admin-history"), "AdminHistoryPage"),
+  component: lazyPage(
+    () => import("@/pages/admin/admin-history"),
+    "AdminHistoryPage",
+  ),
 });
 const adminAuthRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/auth",
-  component: lazyPage(() => import("@/pages/admin-auth"), "AdminAuthPage"),
+  component: lazyPage(
+    () => import("@/pages/admin/admin-auth"),
+    "AdminAuthPage",
+  ),
 });
 
 const routeTree = rootRoute.addChildren([
   studentRoute.addChildren([
     loginRoute,
     appRoute.addChildren([
-    indexRoute,
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/timetable",
-      component: lazyPage(() => import("@/pages/timetable"), "TimetablePage"),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/courses",
-      component: lazyPage(() => import("@/pages/courses"), "CoursesPage"),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/assignments",
-      component: lazyPage(
-        () => import("@/pages/assignments"),
-        "AssignmentsPage",
-      ),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/grades",
-      component: lazyPage(() => import("@/pages/grades"), "GradesPage"),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/exams",
-      component: lazyPage(() => import("@/pages/exams"), "ExamsPage"),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/tuition",
-      component: lazyPage(() => import("@/pages/tuition"), "TuitionPage"),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/documents",
-      component: lazyPage(() => import("@/pages/documents"), "DocumentsPage"),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/training-points",
-      component: lazyPage(
-        () => import("@/pages/training-points"),
-        "TrainingPointsPage",
-      ),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/lookup",
-      component: lazyPage(() => import("@/pages/lookup"), "LookupPage"),
-    }),
-    createRoute({
-      getParentRoute: () => appRoute,
-      path: "/settings",
-      component: lazyPage(() => import("@/pages/settings"), "SettingsPage"),
-    }),
+      indexRoute,
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/timetable",
+        component: lazyPage(
+          () => import("@/pages/academic/timetable"),
+          "TimetablePage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/courses",
+        component: lazyPage(
+          () => import("@/pages/academic/courses"),
+          "CoursesPage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/assignments",
+        component: lazyPage(
+          () => import("@/pages/academic/assignments"),
+          "AssignmentsPage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/grades",
+        component: lazyPage(
+          () => import("@/pages/academic/grades"),
+          "GradesPage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/exams",
+        component: lazyPage(
+          () => import("@/pages/academic/exams"),
+          "ExamsPage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/tuition",
+        component: lazyPage(
+          () => import("@/pages/academic/tuition"),
+          "TuitionPage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/documents",
+        component: lazyPage(
+          () => import("@/pages/academic/documents"),
+          "DocumentsPage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/training-points",
+        component: lazyPage(
+          () => import("@/pages/academic/training-points"),
+          "TrainingPointsPage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/lookup",
+        component: lazyPage(
+          () => import("@/pages/lookup/lookup"),
+          "LookupPage",
+        ),
+      }),
+      createRoute({
+        getParentRoute: () => appRoute,
+        path: "/settings",
+        component: lazyPage(
+          () => import("@/pages/account/settings"),
+          "SettingsPage",
+        ),
+      }),
     ]),
   ]),
   adminLoginRoute,

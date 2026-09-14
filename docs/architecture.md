@@ -15,6 +15,10 @@ The frontend never calls university upstream systems directly. University-specif
 
 Memory-mode self-hosted Node/Bun deployments run the bundled worker without Cloudflare Durable Objects. They lack durable linked-pair authority and automatic VNU relogin; existing process-local access-token revocation remains available. Distributed self-hosted mode adds PostgreSQL-backed refresh/grant authority and generic session revocation, while Cloudflare retains its Durable Object implementation.
 
+## Source Organization
+
+Application entrypoints remain at each package's `src/` root. Worker domain modules live under `admin/`, `policy/`, `captcha/`, `vnu/`, and `ha/`; Node-specific implementations remain under `node/`. Web pages are grouped under `pages/{account,academic,admin,dashboard,lookup}/`, with API, session, policy, admin, grades, lookup, and export helpers grouped under `lib/`. The automation worker separates `runtime/`, `transport/`, and `browser/`, retaining its public `src/index.ts` exports. Unit tests stay beside their owners; browser and Cloudflare execution fixtures retain their dedicated test directories.
+
 ## Runtime Modes
 
 `memory` is the default self-hosted mode. It preserves single-process behavior with process-local cache/relay state and no shared replica authority.
@@ -78,9 +82,9 @@ Student reads retain the last successfully loaded policy during a later store ou
 
 ## Academic Summaries and Exports
 
-`apps/web/src/lib/term-academic-summary.ts` is the single pure definition of listed credits, included credits, derived term GPA, and running CPA. Grades and cross-transcript views normalize their rows into it. Portal-reported cumulative values stay separate; derived values never claim university authority.
+`apps/web/src/lib/grades/term-academic-summary.ts` is the single pure definition of listed credits, included credits, derived term GPA, and running CPA. Grades and cross-transcript views normalize their rows into it. Portal-reported cumulative values stay separate; derived values never claim university authority.
 
-`apps/web/src/lib/data-export.ts` builds versioned allowlisted documents from already-sanitized browser state. JSON preserves structure and calculator precision. CSV uses fixed machine columns, UTF-8 BOM, CRLF, deterministic order, formula defense, and text-safe identifiers. Downloads use temporary object URLs and always revoke them. No export path contacts an API or writes browser/server persistence.
+`apps/web/src/lib/export/data-export.ts` builds versioned allowlisted documents from already-sanitized browser state. JSON preserves structure and calculator precision. CSV uses fixed machine columns, UTF-8 BOM, CRLF, deterministic order, formula defense, and text-safe identifiers. Downloads use temporary object URLs and always revoke them. No export path contacts an API or writes browser/server persistence.
 
 ## VNU Cross-Lookup Boundary
 

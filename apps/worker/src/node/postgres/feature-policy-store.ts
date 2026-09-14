@@ -12,14 +12,22 @@ import type {
   HistoryInput,
   HistoryPage,
   PublishFeaturePolicyInput,
-} from "../../feature-policy-store";
+} from "../../policy/feature-policy-store";
 import type { PostgresPoolLike } from "./pool";
 
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 const MAX_HISTORY_LIMIT = 100;
 const AFTER_ALL_SAFE_REVISIONS = "9007199254740992";
-const publicationSchema = publishFeaturePolicySchema.extend({ actor: adminActorSchema });
+const publicationSchema = publishFeaturePolicySchema.extend({
+  actor: adminActorSchema,
+});
 
 export class PostgresFeaturePolicyStore implements FeaturePolicyStore {
   constructor(private readonly pool: PostgresPoolLike) {}
@@ -33,7 +41,9 @@ export class PostgresFeaturePolicyStore implements FeaturePolicyStore {
     return parseCurrent(result.rows[0]);
   }
 
-  async publish(input: PublishFeaturePolicyInput): Promise<FeaturePolicyAuditEntry> {
+  async publish(
+    input: PublishFeaturePolicyInput,
+  ): Promise<FeaturePolicyAuditEntry> {
     const parsed = publicationSchema.parse(input);
     return this.pool.transaction(async (connection) => {
       const currentResult = await connection.query(`
@@ -53,7 +63,10 @@ export class PostgresFeaturePolicyStore implements FeaturePolicyStore {
       }
 
       const revision = current.revision + 1;
-      if (!Number.isSafeInteger(revision)) throw new Error("PostgreSQL feature policy revision exceeds the supported range");
+      if (!Number.isSafeInteger(revision))
+        throw new Error(
+          "PostgreSQL feature policy revision exceeds the supported range",
+        );
       const entry = featurePolicyAuditEntrySchema.parse({
         revision,
         baseRevision: parsed.baseRevision,
@@ -62,36 +75,45 @@ export class PostgresFeaturePolicyStore implements FeaturePolicyStore {
         publishedAt: new Date().toISOString(),
         snapshot: { ...parsed.policy, revision },
       });
-      await connection.query(`
+      await connection.query(
+        `
         INSERT INTO hyeboard_feature_policy_history (
           revision, base_revision, actor, reason, published_at, snapshot
         ) VALUES ($1, $2, $3, $4, $5, $6)
-      `, [
-        entry.revision,
-        entry.baseRevision,
-        JSON.stringify(entry.actor),
-        entry.reason,
-        entry.publishedAt,
-        JSON.stringify(entry.snapshot),
-      ]);
-      await connection.query(`
+      `,
+        [
+          entry.revision,
+          entry.baseRevision,
+          JSON.stringify(entry.actor),
+          entry.reason,
+          entry.publishedAt,
+          JSON.stringify(entry.snapshot),
+        ],
+      );
+      await connection.query(
+        `
         UPDATE hyeboard_feature_policy_current
         SET revision = $1, snapshot = $2
         WHERE singleton = true AND revision = $3
-      `, [entry.revision, JSON.stringify(entry.snapshot), entry.baseRevision]);
+      `,
+        [entry.revision, JSON.stringify(entry.snapshot), entry.baseRevision],
+      );
       return entry;
     });
   }
 
   async history(input: HistoryInput): Promise<HistoryPage> {
     const { beforeRevision, limit } = parseHistoryInput(input);
-    const result = await this.pool.query(`
+    const result = await this.pool.query(
+      `
       SELECT revision, base_revision, actor, reason, published_at, snapshot
       FROM hyeboard_feature_policy_history
       WHERE revision < $1
       ORDER BY revision DESC
       LIMIT $2
-    `, [beforeRevision ?? AFTER_ALL_SAFE_REVISIONS, limit + 1]);
+    `,
+      [beforeRevision ?? AFTER_ALL_SAFE_REVISIONS, limit + 1],
+    );
     const items = result.rows.slice(0, limit).map(parseEntry);
     return {
       items,
@@ -101,20 +123,34 @@ export class PostgresFeaturePolicyStore implements FeaturePolicyStore {
     };
   }
 
-  async revision(revision: number): Promise<FeaturePolicyAuditEntry | undefined> {
+  async revision(
+    revision: number,
+  ): Promise<FeaturePolicyAuditEntry | undefined> {
     if (!Number.isSafeInteger(revision) || revision <= 0) return undefined;
-    const result = await this.pool.query(`
+    const result = await this.pool.query(
+      `
       SELECT revision, base_revision, actor, reason, published_at, snapshot
       FROM hyeboard_feature_policy_history
       WHERE revision = $1
-    `, [revision]);
-    return result.rows[0] === undefined ? undefined : parseEntry(result.rows[0]);
+    `,
+      [revision],
+    );
+    return result.rows[0] === undefined
+      ? undefined
+      : parseEntry(result.rows[0]);
   }
 }
 
-function parseHistoryInput(input: HistoryInput): { beforeRevision?: number; limit: number } {
-  if (!Number.isSafeInteger(input.limit) || input.limit <= 0) throw invalidHistory();
-  if (input.beforeRevision !== undefined && (!Number.isSafeInteger(input.beforeRevision) || input.beforeRevision <= 0)) {
+function parseHistoryInput(input: HistoryInput): {
+  beforeRevision?: number;
+  limit: number;
+} {
+  if (!Number.isSafeInteger(input.limit) || input.limit <= 0)
+    throw invalidHistory();
+  if (
+    input.beforeRevision !== undefined &&
+    (!Number.isSafeInteger(input.beforeRevision) || input.beforeRevision <= 0)
+  ) {
     throw invalidHistory();
   }
   return { ...input, limit: Math.min(input.limit, MAX_HISTORY_LIMIT) };
@@ -124,7 +160,8 @@ function parseCurrent(value: unknown): FeaturePolicySnapshot {
   const row = record(value, "Missing PostgreSQL feature policy current row");
   const revision = parseRevision(row.revision, true);
   const snapshot = featurePolicySnapshotSchema.parse(parseJson(row.snapshot));
-  if (snapshot.revision !== revision) throw new Error("Invalid PostgreSQL feature policy current row");
+  if (snapshot.revision !== revision)
+    throw new Error("Invalid PostgreSQL feature policy current row");
   return snapshot;
 }
 
@@ -135,18 +172,29 @@ function parseEntry(value: unknown): FeaturePolicyAuditEntry {
     baseRevision: parseRevision(row.base_revision, true),
     actor: parseJson(row.actor),
     reason: row.reason,
-    publishedAt: row.published_at instanceof Date ? row.published_at.toISOString() : row.published_at,
+    publishedAt:
+      row.published_at instanceof Date
+        ? row.published_at.toISOString()
+        : row.published_at,
     snapshot: parseJson(row.snapshot),
   });
-  if (entry.snapshot.revision !== entry.revision || entry.baseRevision !== entry.revision - 1) {
+  if (
+    entry.snapshot.revision !== entry.revision ||
+    entry.baseRevision !== entry.revision - 1
+  ) {
     throw new Error("Invalid PostgreSQL feature policy history row");
   }
   return entry;
 }
 
 function parseRevision(value: unknown, allowZero: boolean): number {
-  const revision = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
-  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < (allowZero ? 0 : 1)) {
+  const revision =
+    typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  if (
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < (allowZero ? 0 : 1)
+  ) {
     throw new Error("Invalid PostgreSQL feature policy revision");
   }
   return revision;
@@ -162,5 +210,9 @@ function record(value: unknown, message: string): Record<string, unknown> {
 }
 
 function invalidHistory(): HyeboardError {
-  return new HyeboardError("ADMIN_POLICY_INVALID", "Feature policy history request is invalid.", 400);
+  return new HyeboardError(
+    "ADMIN_POLICY_INVALID",
+    "Feature policy history request is invalid.",
+    400,
+  );
 }

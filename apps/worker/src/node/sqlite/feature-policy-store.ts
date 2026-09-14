@@ -7,18 +7,26 @@ import {
   type FeaturePolicyAuditEntry,
   type FeaturePolicySnapshot,
 } from "@hyeboard/schemas";
-import { emptyPolicy } from "../../feature-policy";
+import { emptyPolicy } from "../../policy/feature-policy";
 import type {
   FeaturePolicyStore,
   HistoryInput,
   HistoryPage,
   PublishFeaturePolicyInput,
-} from "../../feature-policy-store";
+} from "../../policy/feature-policy-store";
 
 const MAX_HISTORY_LIMIT = 100;
-const publicationSchema = publishFeaturePolicySchema.extend({ actor: adminActorSchema });
+const publicationSchema = publishFeaturePolicySchema.extend({
+  actor: adminActorSchema,
+});
 
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 type SqliteStatement = {
   run(...values: unknown[]): void;
@@ -32,7 +40,9 @@ export type SqliteDatabase = {
   close(): void;
 };
 
-export async function openFeaturePolicyDatabase(path: string): Promise<SqliteDatabase> {
+export async function openFeaturePolicyDatabase(
+  path: string,
+): Promise<SqliteDatabase> {
   if ("Bun" in globalThis) {
     const bunSqliteModule = "bun:sqlite";
     const { Database } = await import(bunSqliteModule);
@@ -42,7 +52,9 @@ export async function openFeaturePolicyDatabase(path: string): Promise<SqliteDat
   return new DatabaseSync(path) as SqliteDatabase;
 }
 
-export async function openSqliteFeaturePolicyStore(path: string): Promise<SqliteFeaturePolicyStore> {
+export async function openSqliteFeaturePolicyStore(
+  path: string,
+): Promise<SqliteFeaturePolicyStore> {
   return new SqliteFeaturePolicyStore(await openFeaturePolicyDatabase(path));
 }
 
@@ -63,17 +75,21 @@ export class SqliteFeaturePolicyStore implements FeaturePolicyStore {
         snapshot_json TEXT NOT NULL
       );
     `);
-    database.prepare(`
+    database
+      .prepare(`
       INSERT OR IGNORE INTO feature_policy_current (singleton, revision, snapshot_json)
       VALUES (1, 0, ?)
-    `).run(JSON.stringify({ ...emptyPolicy(), revision: 0 }));
+    `)
+      .run(JSON.stringify({ ...emptyPolicy(), revision: 0 }));
   }
 
   async current(): Promise<FeaturePolicySnapshot> {
     return this.readCurrent();
   }
 
-  async publish(input: PublishFeaturePolicyInput): Promise<FeaturePolicyAuditEntry> {
+  async publish(
+    input: PublishFeaturePolicyInput,
+  ): Promise<FeaturePolicyAuditEntry> {
     const parsed = publicationSchema.parse(input);
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -96,30 +112,41 @@ export class SqliteFeaturePolicyStore implements FeaturePolicyStore {
         publishedAt: new Date().toISOString(),
         snapshot: { ...parsed.policy, revision },
       });
-      this.database.prepare(`
+      this.database
+        .prepare(`
         INSERT INTO feature_policy_history (
           revision, base_revision, actor_json, reason, published_at, snapshot_json
         ) VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        entry.revision,
-        entry.baseRevision,
-        JSON.stringify(entry.actor),
-        entry.reason,
-        entry.publishedAt,
-        JSON.stringify(entry.snapshot),
-      );
-      this.database.prepare(`
+      `)
+        .run(
+          entry.revision,
+          entry.baseRevision,
+          JSON.stringify(entry.actor),
+          entry.reason,
+          entry.publishedAt,
+          JSON.stringify(entry.snapshot),
+        );
+      this.database
+        .prepare(`
         UPDATE feature_policy_current
         SET revision = ?, snapshot_json = ?
         WHERE singleton = 1 AND revision = ?
-      `).run(entry.revision, JSON.stringify(entry.snapshot), entry.baseRevision);
+      `)
+        .run(
+          entry.revision,
+          JSON.stringify(entry.snapshot),
+          entry.baseRevision,
+        );
       this.database.exec("COMMIT");
       return entry;
     } catch (error) {
       try {
         this.database.exec("ROLLBACK");
       } catch (rollbackError) {
-        throw new AggregateError([error, rollbackError], "SQLite feature policy transaction rollback failed");
+        throw new AggregateError(
+          [error, rollbackError],
+          "SQLite feature policy transaction rollback failed",
+        );
       }
       throw error;
     }
@@ -127,13 +154,15 @@ export class SqliteFeaturePolicyStore implements FeaturePolicyStore {
 
   async history(input: HistoryInput): Promise<HistoryPage> {
     const { beforeRevision, limit } = parseHistoryInput(input);
-    const rows = this.database.prepare(`
+    const rows = this.database
+      .prepare(`
       SELECT revision, base_revision, actor_json, reason, published_at, snapshot_json
       FROM feature_policy_history
       WHERE revision < ?
       ORDER BY revision DESC
       LIMIT ?
-    `).all(beforeRevision ?? Number.MAX_SAFE_INTEGER, limit + 1);
+    `)
+      .all(beforeRevision ?? Number.MAX_SAFE_INTEGER, limit + 1);
     const items = rows.slice(0, limit).map(parseEntry);
     return {
       items,
@@ -143,13 +172,17 @@ export class SqliteFeaturePolicyStore implements FeaturePolicyStore {
     };
   }
 
-  async revision(revision: number): Promise<FeaturePolicyAuditEntry | undefined> {
+  async revision(
+    revision: number,
+  ): Promise<FeaturePolicyAuditEntry | undefined> {
     if (!Number.isSafeInteger(revision) || revision <= 0) return undefined;
-    const row = this.database.prepare(`
+    const row = this.database
+      .prepare(`
       SELECT revision, base_revision, actor_json, reason, published_at, snapshot_json
       FROM feature_policy_history
       WHERE revision = ?
-    `).get(revision);
+    `)
+      .get(revision);
     return row === undefined ? undefined : parseEntry(row);
   }
 
@@ -158,20 +191,32 @@ export class SqliteFeaturePolicyStore implements FeaturePolicyStore {
   }
 
   private readCurrent(): FeaturePolicySnapshot {
-    const row = record(this.database.prepare(`
+    const row = record(
+      this.database
+        .prepare(`
       SELECT revision, snapshot_json
       FROM feature_policy_current
       WHERE singleton = 1
-    `).get());
+    `)
+        .get(),
+    );
     const snapshot = parseSnapshot(row.snapshot_json);
-    if (snapshot.revision !== row.revision) throw new Error("Invalid SQLite feature policy current row");
+    if (snapshot.revision !== row.revision)
+      throw new Error("Invalid SQLite feature policy current row");
     return snapshot;
   }
 }
 
-function parseHistoryInput(input: HistoryInput): { beforeRevision?: number; limit: number } {
-  if (!Number.isSafeInteger(input.limit) || input.limit <= 0) throw invalidHistory();
-  if (input.beforeRevision !== undefined && (!Number.isSafeInteger(input.beforeRevision) || input.beforeRevision <= 0)) {
+function parseHistoryInput(input: HistoryInput): {
+  beforeRevision?: number;
+  limit: number;
+} {
+  if (!Number.isSafeInteger(input.limit) || input.limit <= 0)
+    throw invalidHistory();
+  if (
+    input.beforeRevision !== undefined &&
+    (!Number.isSafeInteger(input.beforeRevision) || input.beforeRevision <= 0)
+  ) {
     throw invalidHistory();
   }
   return { ...input, limit: Math.min(input.limit, MAX_HISTORY_LIMIT) };
@@ -187,7 +232,10 @@ function parseEntry(value: unknown): FeaturePolicyAuditEntry {
     publishedAt: row.published_at,
     snapshot: parseJson(row.snapshot_json),
   });
-  if (entry.snapshot.revision !== entry.revision || entry.baseRevision !== entry.revision - 1) {
+  if (
+    entry.snapshot.revision !== entry.revision ||
+    entry.baseRevision !== entry.revision - 1
+  ) {
     throw new Error("Invalid SQLite feature policy history row");
   }
   return entry;
@@ -198,15 +246,21 @@ function parseSnapshot(value: unknown): FeaturePolicySnapshot {
 }
 
 function parseJson(value: unknown): JsonValue {
-  if (typeof value !== "string") throw new Error("Invalid SQLite feature policy JSON column");
+  if (typeof value !== "string")
+    throw new Error("Invalid SQLite feature policy JSON column");
   return JSON.parse(value) as JsonValue;
 }
 
 function record(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null) throw new Error("Missing SQLite feature policy row");
+  if (typeof value !== "object" || value === null)
+    throw new Error("Missing SQLite feature policy row");
   return value as Record<string, unknown>;
 }
 
 function invalidHistory(): HyeboardError {
-  return new HyeboardError("ADMIN_POLICY_INVALID", "Feature policy history request is invalid.", 400);
+  return new HyeboardError(
+    "ADMIN_POLICY_INVALID",
+    "Feature policy history request is invalid.",
+    400,
+  );
 }

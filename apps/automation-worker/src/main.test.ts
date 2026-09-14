@@ -16,9 +16,9 @@ import {
   type AutomationControl,
 } from "./index";
 import { InMemoryStreamsBroker, type NodeRedisStreamsClient } from "./index";
-import { AutomationEnvelopeCodec } from "./envelope";
-import type { AutomationWorkerConfig } from "./config";
-import type { PuppeteerBrowser } from "./provider";
+import { AutomationEnvelopeCodec } from "./transport/envelope";
+import type { AutomationWorkerConfig } from "./runtime/config";
+import type { PuppeteerBrowser } from "./browser/provider";
 
 const keyring: AutomationKeyring = {
   current: { id: "current", material: new Uint8Array(32).fill(3) },
@@ -83,8 +83,12 @@ describe("automation worker health", () => {
 describe("automation Redis clients", () => {
   it("handles asynchronous node-redis errors on both clients", () => {
     const clients = createRedisHostClients("redis://localhost:6379/0");
-    const normal = clients.normal as unknown as { listenerCount(event: string): number };
-    const blocking = clients.blocking as unknown as { listenerCount(event: string): number };
+    const normal = clients.normal as unknown as {
+      listenerCount(event: string): number;
+    };
+    const blocking = clients.blocking as unknown as {
+      listenerCount(event: string): number;
+    };
 
     expect(normal.listenerCount("error")).toBeGreaterThan(0);
     expect(blocking.listenerCount("error")).toBeGreaterThan(0);
@@ -292,7 +296,10 @@ describe("executable host readiness", () => {
       );
       await vi.advanceTimersByTimeAsync(10);
       const result = await starting;
-      expect(result.error).toHaveProperty("message", "Redis bootstrap timed out after 10ms.");
+      expect(result.error).toHaveProperty(
+        "message",
+        "Redis bootstrap timed out after 10ms.",
+      );
       expect(connect).toHaveBeenCalledTimes(2);
       expect(destroy).toHaveBeenCalledTimes(2);
       expect(close).toHaveBeenCalledOnce();

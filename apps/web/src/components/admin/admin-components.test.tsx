@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "@/lib/i18n";
-import { AdminAuthView } from "@/pages/admin-auth";
-import { AdminLoginView } from "@/pages/admin-login";
+import { AdminAuthView } from "@/pages/admin/admin-auth";
+import { AdminLoginView } from "@/pages/admin/admin-login";
 import { AdminShell } from "./admin-layout";
 import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
@@ -26,30 +26,58 @@ const emptyPolicy = (): FeaturePolicyContent => ({
 const policyView = (): AdminPolicyView => ({
   snapshot: { revision: 4, ...emptyPolicy() },
   hardLimits: { "crossLookup.bulkMaxTargets": 100 },
-  nativeUniversities: [{
-    id: "uet",
-    name: "University of Engineering and Technology",
-    shortName: "UET",
-    capabilities: {
-      profile: true, terms: true, timetable: true, courses: true,
-      assignments: false, grades: true, exams: true, attendance: false,
-      notifications: true, documents: true, tuition: true, news: true,
-      trainingPoints: true, requests: true, classLookup: true, crossLookup: true,
+  nativeUniversities: [
+    {
+      id: "uet",
+      name: "University of Engineering and Technology",
+      shortName: "UET",
+      capabilities: {
+        profile: true,
+        terms: true,
+        timetable: true,
+        courses: true,
+        assignments: false,
+        grades: true,
+        exams: true,
+        attendance: false,
+        notifications: true,
+        documents: true,
+        tuition: true,
+        news: true,
+        trainingPoints: true,
+        requests: true,
+        classLookup: true,
+        crossLookup: true,
+      },
+      limits: { crossLookup: { bulkMaxTargets: 50 } },
     },
-    limits: { crossLookup: { bulkMaxTargets: 50 } },
-  }],
-  effectiveUniversities: [{
-    id: "uet",
-    name: "University of Engineering and Technology",
-    shortName: "UET",
-    capabilities: {
-      profile: true, terms: true, timetable: true, courses: true,
-      assignments: false, grades: true, exams: true, attendance: false,
-      notifications: true, documents: true, tuition: true, news: true,
-      trainingPoints: true, requests: true, classLookup: true, crossLookup: true,
+  ],
+  effectiveUniversities: [
+    {
+      id: "uet",
+      name: "University of Engineering and Technology",
+      shortName: "UET",
+      capabilities: {
+        profile: true,
+        terms: true,
+        timetable: true,
+        courses: true,
+        assignments: false,
+        grades: true,
+        exams: true,
+        attendance: false,
+        notifications: true,
+        documents: true,
+        tuition: true,
+        news: true,
+        trainingPoints: true,
+        requests: true,
+        classLookup: true,
+        crossLookup: true,
+      },
+      limits: { crossLookup: { bulkMaxTargets: 50 } },
     },
-    limits: { crossLookup: { bulkMaxTargets: 50 } },
-  }],
+  ],
 });
 
 function localized(node: React.ReactNode): string {
@@ -58,7 +86,10 @@ function localized(node: React.ReactNode): string {
 
 describe("admin components", () => {
   beforeEach(() => {
-    vi.stubGlobal("localStorage", { getItem: () => "en", setItem: () => undefined });
+    vi.stubGlobal("localStorage", {
+      getItem: () => "en",
+      setItem: () => undefined,
+    });
     vi.stubGlobal("navigator", { language: "en" });
   });
 
@@ -83,13 +114,23 @@ describe("admin components", () => {
   });
 
   it("renders generic login loading, error, and unconfigured states", () => {
-    expect(localized(<AdminLoginView methods={[]} password="" loading />)).toContain("Checking admin session");
-    expect(localized(<AdminLoginView methods={[]} password="" error />)).toContain("Admin sign-in is unavailable");
-    expect(localized(<AdminLoginView methods={[]} password="" />)).toContain("No admin sign-in method is configured");
+    expect(
+      localized(<AdminLoginView methods={[]} password="" loading />),
+    ).toContain("Checking admin session");
+    expect(
+      localized(<AdminLoginView methods={[]} password="" error />),
+    ).toContain("Admin sign-in is unavailable");
+    expect(localized(<AdminLoginView methods={[]} password="" />)).toContain(
+      "No admin sign-in method is configured",
+    );
   });
 
   it("renders semantic admin navigation without student account data", () => {
-    const markup = localized(<AdminShell><p>Admin content</p></AdminShell>);
+    const markup = localized(
+      <AdminShell>
+        <p>Admin content</p>
+      </AdminShell>,
+    );
 
     expect(markup).toContain("<nav");
     expect(markup).toContain('href="/admin"');
@@ -117,8 +158,14 @@ describe("admin components", () => {
   });
 
   it("provides accessible local Switch and Radix Dialog primitives", () => {
-    const switchMarkup = renderToStaticMarkup(<Switch checked aria-label="Available" />);
-    const dialogMarkup = renderToStaticMarkup(<Dialog><DialogTrigger>Review</DialogTrigger></Dialog>);
+    const switchMarkup = renderToStaticMarkup(
+      <Switch checked aria-label="Available" />,
+    );
+    const dialogMarkup = renderToStaticMarkup(
+      <Dialog>
+        <DialogTrigger>Review</DialogTrigger>
+      </Dialog>,
+    );
 
     expect(switchMarkup).toContain('role="switch"');
     expect(switchMarkup).toContain('aria-checked="true"');
@@ -132,17 +179,41 @@ describe("admin components", () => {
     const killed = updateCapabilityDraft(original, "global", "grades", false);
     const disabled = updateCapabilityDraft(killed, "uet", "grades", false);
     const inherited = updateCapabilityDraft(disabled, "uet", "grades", true);
-    const limited = updateLimitDraft(inherited, "global", "crossLookup.bulkMaxTargets", 25);
-    const unlimited = updateLimitDraft(limited, "global", "crossLookup.bulkMaxTargets", null);
-    const universityLimited = updateLimitDraft(unlimited, "uet", "crossLookup.bulkMaxTargets", 10);
-    const cleared = updateLimitDraft(universityLimited, "uet", "crossLookup.bulkMaxTargets", null);
+    const limited = updateLimitDraft(
+      inherited,
+      "global",
+      "crossLookup.bulkMaxTargets",
+      25,
+    );
+    const unlimited = updateLimitDraft(
+      limited,
+      "global",
+      "crossLookup.bulkMaxTargets",
+      null,
+    );
+    const universityLimited = updateLimitDraft(
+      unlimited,
+      "uet",
+      "crossLookup.bulkMaxTargets",
+      10,
+    );
+    const cleared = updateLimitDraft(
+      universityLimited,
+      "uet",
+      "crossLookup.bulkMaxTargets",
+      null,
+    );
 
     expect(original).toEqual(emptyPolicy());
     expect(killed.global.capabilities.grades).toEqual({ enabled: false });
-    expect(disabled.universities.uet?.capabilities.grades).toEqual({ enabled: false });
+    expect(disabled.universities.uet?.capabilities.grades).toEqual({
+      enabled: false,
+    });
     expect(inherited.universities.uet).toBeUndefined();
     expect(unlimited.global.limits["crossLookup.bulkMaxTargets"]).toBeNull();
-    expect(universityLimited.universities.uet?.limits["crossLookup.bulkMaxTargets"]).toBe(10);
+    expect(
+      universityLimited.universities.uet?.limits["crossLookup.bulkMaxTargets"],
+    ).toBe(10);
     expect(cleared.universities.uet).toBeUndefined();
   });
 
@@ -162,9 +233,27 @@ describe("admin components", () => {
 
     expect(hasPolicyChanges(before, after)).toBe(true);
     expect(policyDiff(before, after)).toEqual([
-      { scope: "global", kind: "capability", key: "grades", before: true, after: false },
-      { scope: "global", kind: "limit", key: "crossLookup.bulkMaxTargets", before: undefined, after: null },
-      { scope: "uet", kind: "capability", key: "crossLookup", before: true, after: false },
+      {
+        scope: "global",
+        kind: "capability",
+        key: "grades",
+        before: true,
+        after: false,
+      },
+      {
+        scope: "global",
+        kind: "limit",
+        key: "crossLookup.bulkMaxTargets",
+        before: undefined,
+        after: null,
+      },
+      {
+        scope: "uet",
+        kind: "capability",
+        key: "crossLookup",
+        before: true,
+        after: false,
+      },
     ]);
     expect(policyDiff(after, after)).toEqual([]);
   });
@@ -182,7 +271,12 @@ describe("admin components", () => {
     const markup = localized(
       <PolicyEditor
         view={policyView()}
-        draft={updateLimitDraft(updateCapabilityDraft(emptyPolicy(), "global", "grades", false), "global", "crossLookup.bulkMaxTargets", 25)}
+        draft={updateLimitDraft(
+          updateCapabilityDraft(emptyPolicy(), "global", "grades", false),
+          "global",
+          "crossLookup.bulkMaxTargets",
+          25,
+        )}
         scope="uet"
         search=""
         onScopeChange={() => undefined}
@@ -233,8 +327,12 @@ describe("admin components", () => {
     expect(markup).toContain("Grades");
     expect(markup).toContain("Enabled → Disabled");
     expect(markup).toContain('required=""');
-    expect(markup).toContain("Revision 5 was published while this draft was open");
-    expect(markup).toContain("Draft preserved. Review the intervening revision; changes were not merged.");
+    expect(markup).toContain(
+      "Revision 5 was published while this draft was open",
+    );
+    expect(markup).toContain(
+      "Draft preserved. Review the intervening revision; changes were not merged.",
+    );
   });
 
   it("renders bounded history, detail states, and rollback review", () => {
@@ -244,7 +342,10 @@ describe("admin components", () => {
       actor: { method: "github" as const, subject: "123", label: "operator" },
       reason: "Incident response",
       publishedAt: "2026-08-23T12:00:00.000Z",
-      snapshot: { revision: 4, ...updateCapabilityDraft(emptyPolicy(), "global", "grades", false) },
+      snapshot: {
+        revision: 4,
+        ...updateCapabilityDraft(emptyPolicy(), "global", "grades", false),
+      },
     };
     const markup = localized(
       <PolicyHistory
@@ -263,17 +364,33 @@ describe("admin components", () => {
     expect(markup).toContain("GitHub");
     expect(markup).toContain("Incident response");
     expect(markup).toContain("Load more");
-    expect(localized(<PolicyHistory items={[entry]} hasMore loadingMore />)).toContain('disabled=""');
+    expect(
+      localized(<PolicyHistory items={[entry]} hasMore loadingMore />),
+    ).toContain('disabled=""');
     expect(markup).toContain("Roll back");
     expect(markup).toContain("Enabled → Disabled");
-    expect(localized(<PolicyHistory items={[]} loading />)).toContain("Loading policy history");
-    const errorMarkup = localized(<PolicyHistory items={[]} error onRetry={() => undefined} />);
+    expect(localized(<PolicyHistory items={[]} loading />)).toContain(
+      "Loading policy history",
+    );
+    const errorMarkup = localized(
+      <PolicyHistory items={[]} error onRetry={() => undefined} />,
+    );
     expect(errorMarkup).toContain("Policy history could not be loaded");
     expect(errorMarkup).toContain("Try again");
-    expect(localized(<PolicyHistory items={[]} />)).toContain("No policy revisions have been published");
-    const loadMoreErrorMarkup = localized(<PolicyHistory items={[entry]} loadMoreError onLoadMore={() => undefined} />);
+    expect(localized(<PolicyHistory items={[]} />)).toContain(
+      "No policy revisions have been published",
+    );
+    const loadMoreErrorMarkup = localized(
+      <PolicyHistory
+        items={[entry]}
+        loadMoreError
+        onLoadMore={() => undefined}
+      />,
+    );
     expect(loadMoreErrorMarkup).toContain("Revision 4");
-    expect(loadMoreErrorMarkup).toContain("More policy revisions could not be loaded");
+    expect(loadMoreErrorMarkup).toContain(
+      "More policy revisions could not be loaded",
+    );
     expect(loadMoreErrorMarkup).toContain("Try again");
   });
 });

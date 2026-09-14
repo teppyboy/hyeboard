@@ -1,7 +1,11 @@
 import { env } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import {
+  reset,
+  runDurableObjectAlarm,
+  runInDurableObject,
+} from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import type { CaptchaRelayDurableObject } from "../src/captcha-relay-durable-object";
+import type { CaptchaRelayDurableObject } from "../src/captcha/captcha-relay-durable-object";
 
 declare module "cloudflare:workers" {
   interface ProvidedEnv {
@@ -16,9 +20,14 @@ function relay(name: string) {
 }
 
 async function storedRows(stub: ReturnType<typeof relay>): Promise<number> {
-  return runInDurableObject(stub, async (_instance: CaptchaRelayDurableObject, state) => {
-    return state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM relay").one().count;
-  });
+  return runInDurableObject(
+    stub,
+    async (_instance: CaptchaRelayDurableObject, state) => {
+      return state.storage.sql
+        .exec<{ count: number }>("SELECT COUNT(*) AS count FROM relay")
+        .one().count;
+    },
+  );
 }
 
 describe("CaptchaRelayDurableObject", () => {
@@ -29,7 +38,10 @@ describe("CaptchaRelayDurableObject", () => {
     await expect(producer.prepare(Date.now() + 60_000)).resolves.toBe(true);
     await expect(storedRows(producer)).resolves.toBe(1);
     await expect(answerer.answer("ANSWER_SENTINEL")).resolves.toBe(true);
-    await expect(producer.wait()).resolves.toEqual({ kind: "answer", answer: "ANSWER_SENTINEL" });
+    await expect(producer.wait()).resolves.toEqual({
+      kind: "answer",
+      answer: "ANSWER_SENTINEL",
+    });
     await expect(runDurableObjectAlarm(producer)).resolves.toBe(false);
     await expect(storedRows(producer)).resolves.toBe(0);
   });
@@ -52,7 +64,10 @@ describe("CaptchaRelayDurableObject", () => {
 
     await expect(stub.answer("FIRST_ANSWER")).resolves.toBe(true);
     await expect(stub.answer("DUPLICATE_ANSWER")).resolves.toBe(false);
-    await expect(stub.wait()).resolves.toEqual({ kind: "answer", answer: "FIRST_ANSWER" });
+    await expect(stub.wait()).resolves.toEqual({
+      kind: "answer",
+      answer: "FIRST_ANSWER",
+    });
     await expect(stub.wait()).resolves.toEqual({ kind: "not_found" });
     await expect(stub.answer("LATE_ANSWER")).resolves.toBe(false);
     await expect(stub.cancel()).resolves.toBe(false);

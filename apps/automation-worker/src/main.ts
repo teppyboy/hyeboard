@@ -11,26 +11,32 @@ import {
   AutomationControlConsumer,
   CaptchaControlBridge,
   type AutomationControl,
-} from "./control";
+} from "./transport/control";
 import {
   parseAutomationWorkerConfig,
   safeConfigSummary,
   type AutomationWorkerConfig,
-} from "./config";
-import { AutomationEnvelopeCodec } from "./envelope";
-import { EncryptedStreamAutomationEventSink } from "./events";
-import { errorCode } from "./errors";
-import { RedisJobLeaseStore } from "./lease";
-import { RedisStreamsBroker, type NodeRedisStreamsClient } from "./broker";
+} from "./runtime/config";
+import { AutomationEnvelopeCodec } from "./transport/envelope";
+import { EncryptedStreamAutomationEventSink } from "./transport/events";
+import { errorCode } from "./runtime/errors";
+import { RedisJobLeaseStore } from "./transport/lease";
+import {
+  RedisStreamsBroker,
+  type NodeRedisStreamsClient,
+} from "./transport/broker";
 import {
   createBrowserlessPuppeteerProvider,
   type BrowserProvider,
   type PuppeteerConnector,
-} from "./provider";
-import { createUetAutomationExecutor } from "./uet-executor";
-import type { UetAutomationCredential } from "./uet-executor";
+} from "./browser/provider";
+import { createUetAutomationExecutor } from "./browser/uet-executor";
+import type { UetAutomationCredential } from "./browser/uet-executor";
 import type { ImportedSession } from "@hyeboard/university-adapters";
-import { AutomationWorker, type AutomationWorkerLogger } from "./worker";
+import {
+  AutomationWorker,
+  type AutomationWorkerLogger,
+} from "./runtime/worker";
 
 export type AutomationRedisHostClient = NodeRedisStreamsClient & {
   set(

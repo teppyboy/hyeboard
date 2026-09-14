@@ -6,7 +6,7 @@ Browser destinations retain the source assertion intent and exact source title. 
 
 | Legacy source | Assertion intent | Destination evidence | Disposition | Rationale |
 | --- | --- | --- | --- | --- |
-| 680–710, four tests | CSV parser closing-quote rejection, quoted controls, injected-record rejection, bulk order rejection | `src/lib/data-export.test.ts`, four same-purpose tests under `CSV` | exact, Vitest | Pure contracts need no browser. |
+| 680–710, four tests | CSV parser closing-quote rejection, quoted controls, injected-record rejection, bulk order rejection | `src/lib/export/data-export.test.ts`, four same-purpose tests under `CSV` | exact, Vitest | Pure contracts need no browser. |
 | 712–767, three tests | Anonymous gate; university sections; UET Google/manual paths | `auth-login.spec.ts`, same titles | exact, Chromium | Authentication integration. |
 | 769–877, three tests | No VNU plaintext persistence; expiry cleanup; account-scoped grant import | `auth-login.spec.ts`, same titles | exact, Chromium | Browser storage/auth boundary. |
 | 907–969, five logical tests | New-tab no-grant expiry and active/inactive live/expired descriptor removal | `vnu-session-lifecycle.spec.ts`, same generated titles | exact, Chromium | Tab-local session storage. |

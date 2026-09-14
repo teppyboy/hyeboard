@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { playwrightRuntimeConfig as runtime } from "./src/lib/playwright-runtime-config.mjs";
+import { playwrightRuntimeConfig as runtime } from "./src/lib/testing/playwright-runtime-config.mjs";
 
 export default defineConfig({
   testDir: "./tests",
@@ -25,7 +25,9 @@ export default defineConfig({
       timeout: 60_000,
       env: {
         ...process.env,
-        HYEB_SESSION_SECRET: process.env.HYEB_SESSION_SECRET ?? "synthetic-playwright-session-secret-32-bytes",
+        HYEB_SESSION_SECRET:
+          process.env.HYEB_SESSION_SECRET ??
+          "synthetic-playwright-session-secret-32-bytes",
       },
     },
     {
@@ -37,7 +39,11 @@ export default defineConfig({
     },
   ],
   projects: [
-    { name: "chromium", grepInvert: /@webkit/, use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "chromium",
+      grepInvert: /@webkit/,
+      use: { ...devices["Desktop Chrome"] },
+    },
     { name: "webkit", grep: /@webkit/, use: { ...devices["iPhone 13"] } },
   ],
 });
