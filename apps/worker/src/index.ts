@@ -1,6 +1,6 @@
 import { configureLogger } from "@hyeboard/core";
 import { env } from "cloudflare:workers";
-import { CloudflareAdapter } from "elysia/adapter/cloudflare-worker";
+import { CloudflareAdapter } from "./cloudflare-adapter";
 import {
   createApp,
   setAdminLoginRateLimit,

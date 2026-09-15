@@ -29,7 +29,6 @@ import {
   type CapabilityKey,
   type OperationalLimitKey,
   type University,
-  type UniversityCapabilities,
 } from "@hyeboard/schemas";
 import {
   DaotaoClient,
@@ -45,7 +44,13 @@ import {
   type VnuTranscript,
 } from "@hyeboard/university-adapters";
 import { StudentHubClient } from "@hyeboard/university-adapters/src/uet/studenthub-client";
-import { Elysia, t } from "elysia";
+import { Elysia, setupTypebox, t } from "elysia";
+import * as typeboxCompile from "typebox/compile";
+import * as typeboxSchema from "typebox/schema";
+import * as typeboxSystem from "typebox/system";
+import * as typeboxType from "typebox/type";
+import * as typeboxValue from "typebox/value";
+import { WebStandardAdapter } from "elysia/adapter/web-standard";
 import {
   LocalCaptchaRelayCoordinator,
   captchaRelayCancelled,
@@ -100,6 +105,16 @@ import {
   filterDashboardSummary,
 } from "./policy/feature-policy";
 import type { FeaturePolicyRuntime } from "./policy/feature-policy-store";
+
+setupTypebox({
+  typebox: {
+    type: typeboxType,
+    system: typeboxSystem,
+    value: typeboxValue,
+    schema: typeboxSchema,
+    compile: typeboxCompile,
+  },
+});
 
 // ─── Runtime config ───────────────────────────────────────────
 // Self-hosted (Node/Bun) loads config from config.json + env var overrides
@@ -850,7 +865,12 @@ function routeError(error: unknown, requestId?: string, requestUrl?: string) {
   const id = requestId ?? "-";
   const log = getLogger();
   const headers = new Headers({ "Content-Type": "application/json" });
-  const requestPath = requestUrl ? new URL(requestUrl).pathname : undefined;
+  let requestPath: string | undefined;
+  try {
+    requestPath = requestUrl ? new URL(requestUrl).pathname : undefined;
+  } catch {
+    requestPath = undefined;
+  }
   const isVnuRoute = requestPath?.startsWith("/api/vnu/") ?? false;
   const isVnuAuthMutation =
     requestPath === "/api/vnu/auth/refresh" ||
@@ -1494,7 +1514,11 @@ function requestId(): string {
 }
 
 export function requestLogPath(url: string): string {
-  return new URL(url).pathname;
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return "<invalid-url>";
+  }
 }
 
 // ── CAPTCHA human-relay coordination ─────────────────────────────────
@@ -2826,9 +2850,13 @@ export function createApp(
   options: {
     lifecycle?: HaLifecycleController;
     clientIp?: (request: Request) => string | undefined;
+    registerStaticAssets?: (app: unknown) => void;
   } = {},
 ) {
-  const app = new Elysia({ adapter });
+  const app = new Elysia({
+    adapter: adapter ?? WebStandardAdapter,
+    abortSignal: false,
+  });
   const lifecycle =
     options.lifecycle ?? createHaLifecycle({ config: haConfig });
 
@@ -2836,7 +2864,7 @@ export function createApp(
   if (plugin) app.use(plugin);
 
   const routed = app
-    .onRequest(({ request, set }) => {
+    .request(({ request, set }) => {
       // SAFETY: Request is extensible here; these process-local diagnostics never cross the API boundary.
       const req = request as unknown as {
         _hyebReqId?: string;
@@ -2844,7 +2872,12 @@ export function createApp(
       };
       req._hyebReqId = requestId();
       req._hyebStart = Date.now();
-      const path = new URL(request.url).pathname;
+      let path: string;
+      try {
+        path = new URL(request.url).pathname;
+      } catch {
+        path = "";
+      }
       if (
         isVnuCrossDetailResponsePath(path) ||
         path.startsWith("/api/uet/raw/") ||
@@ -2871,7 +2904,7 @@ export function createApp(
         "request received",
       );
     })
-    .onAfterResponse(({ request, set }) => {
+    .afterResponse(({ request, set }) => {
       // SAFETY: onRequest initializes these optional diagnostics on this Request instance.
       const req = request as unknown as {
         _hyebReqId?: string;
@@ -2886,7 +2919,7 @@ export function createApp(
         "request completed",
       );
     })
-    .onError(({ error, request }) => {
+    .error(({ error, request }) => {
       // SAFETY: onRequest may attach this optional diagnostic to the Request instance.
       const req = request as unknown as { _hyebReqId?: string };
       return routeError(error, req._hyebReqId, request.url);
@@ -2912,1657 +2945,1644 @@ export function createApp(
     );
   }
 
-  return (
-    routed
-      // ── Public — no session required ──
-      .get("/api/health", () => ok({ status: "ok", service: "hyeboard" }))
-      .get("/api/live", async ({ set }) => {
-        const diagnostics = await lifecycle.diagnostics();
-        set.status = diagnostics.alive ? 200 : 503;
-        return ok({
-          alive: diagnostics.alive,
-          state: diagnostics.state,
-          mode: diagnostics.mode,
-          checkedAt: diagnostics.checkedAt,
-        });
-      })
-      .get("/api/ready", async ({ set }) => {
-        await lifecycle.start();
-        const snapshot = await lifecycle.snapshot();
-        const diagnostics = safeHaDiagnostics(snapshot);
-        set.status = diagnostics.state === "ready" ? 200 : 503;
-        return ok(diagnostics);
-      })
-      .get("/api/universities", async () => ok(await serializeUniversities()))
-      .post(
-        "/api/:universityId/auth/import-session",
-        async ({ params, body, request, set }) => {
-          set.headers["Cache-Control"] = "no-store";
-          const adapterInstance = getAdapter(params.universityId);
-          // Keep parent/guardian direct API logins on this SSE route so a
-          // server-side OCR miss can relay the CAPTCHA image to the user. The
-          // same rate limit remains shared with Google automation.
-          if (params.universityId === "uet" && body.uetGoogleEmail) {
-            if (!/^ph/i.test(body.uetGoogleEmail.trim()))
-              ensureInlineAutomationAllowed();
-            await checkAndIncrementGoogleLoginAttempts(body.uetGoogleEmail);
-            const uetGoogleEmail = body.uetGoogleEmail;
-            const uetGooglePassword = body.uetGooglePassword;
-            // Google automation can take 90s+; parent direct login may pause for
-            // a human CAPTCHA answer. Stream both as Server-Sent Events. Every
-            // other branch below (vnu, manual-token/cookie paste, mock)
-            // resolves almost instantly and keeps the plain JSON response.
-            const encoder = new TextEncoder();
-            let activeRelay: PreparedCaptchaRelay | undefined;
-            let activeAutomationCancel: (() => Promise<void>) | undefined;
-            let activeAutomationOwnershipToken: string | undefined;
-            let cancelled = false;
-            let closed = false;
-            const cancelRelay = async () => {
-              if (cancelled) return;
-              cancelled = true;
-              const relay = activeRelay;
-              activeRelay = undefined;
-              await relay?.cancel().catch(() => undefined);
-              await activeAutomationCancel?.().catch(() => undefined);
-            };
-            const stream = new ReadableStream({
-              async start(controller) {
-                const send = (
-                  event: string,
-                  data: unknown,
-                  sequence?: number,
-                ) => {
-                  if (cancelled || closed) return;
-                  try {
-                    controller.enqueue(
-                      encoder.encode(
-                        `${sequence === undefined ? "" : `id: ${sequence}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-                      ),
-                    );
-                  } catch {
-                    void cancelRelay();
-                  }
-                };
-                const close = () => {
-                  if (cancelled || closed) return;
-                  closed = true;
-                  controller.close();
-                };
-                const onAbort = () => void cancelRelay();
-                request.signal.addEventListener("abort", onAbort, {
-                  once: true,
-                });
+  const api = routed
+    // ── Public — no session required ──
+    .get("/api/health", () => ok({ status: "ok", service: "hyeboard" }))
+    .get("/api/live", async ({ set }) => {
+      const diagnostics = await lifecycle.diagnostics();
+      set.status = diagnostics.alive ? 200 : 503;
+      return ok({
+        alive: diagnostics.alive,
+        state: diagnostics.state,
+        mode: diagnostics.mode,
+        checkedAt: diagnostics.checkedAt,
+      });
+    })
+    .get("/api/ready", async ({ set }) => {
+      await lifecycle.start();
+      const snapshot = await lifecycle.snapshot();
+      const diagnostics = safeHaDiagnostics(snapshot);
+      set.status = diagnostics.state === "ready" ? 200 : 503;
+      return ok(diagnostics);
+    })
+    .get("/api/universities", async () => ok(await serializeUniversities()))
+    .post(
+      "/api/:universityId/auth/import-session",
+      { body: importSessionBody },
+      async ({ params, body, request, set }) => {
+        set.headers["Cache-Control"] = "no-store";
+        const adapterInstance = getAdapter(params.universityId);
+        // Keep parent/guardian direct API logins on this SSE route so a
+        // server-side OCR miss can relay the CAPTCHA image to the user. The
+        // same rate limit remains shared with Google automation.
+        if (params.universityId === "uet" && body.uetGoogleEmail) {
+          if (!/^ph/i.test(body.uetGoogleEmail.trim()))
+            ensureInlineAutomationAllowed();
+          await checkAndIncrementGoogleLoginAttempts(body.uetGoogleEmail);
+          const uetGoogleEmail = body.uetGoogleEmail;
+          const uetGooglePassword = body.uetGooglePassword;
+          // Google automation can take 90s+; parent direct login may pause for
+          // a human CAPTCHA answer. Stream both as Server-Sent Events. Every
+          // other branch below (vnu, manual-token/cookie paste, mock)
+          // resolves almost instantly and keeps the plain JSON response.
+          const encoder = new TextEncoder();
+          let activeRelay: PreparedCaptchaRelay | undefined;
+          let activeAutomationCancel: (() => Promise<void>) | undefined;
+          let activeAutomationOwnershipToken: string | undefined;
+          let cancelled = false;
+          let closed = false;
+          const cancelRelay = async () => {
+            if (cancelled) return;
+            cancelled = true;
+            const relay = activeRelay;
+            activeRelay = undefined;
+            await relay?.cancel().catch(() => undefined);
+            await activeAutomationCancel?.().catch(() => undefined);
+          };
+          const stream = new ReadableStream({
+            async start(controller) {
+              const send = (
+                event: string,
+                data: unknown,
+                sequence?: number,
+              ) => {
+                if (cancelled || closed) return;
                 try {
-                  const distributedGoogle =
-                    haConfig.mode === "distributed" &&
-                    !/^ph/i.test(uetGoogleEmail.trim());
-                  const cursorValue =
-                    new URL(request.url).searchParams.get("cursor") ??
-                    request.headers.get("Last-Event-ID");
-                  const cursor =
-                    cursorValue === null || cursorValue === ""
-                      ? undefined
-                      : Number(cursorValue);
-                  if (
-                    cursor !== undefined &&
-                    (!Number.isSafeInteger(cursor) || cursor < -1)
-                  )
-                    throw new HyeboardError(
-                      "VALIDATION",
-                      "The automation replay cursor is invalid.",
-                      400,
-                    );
-                  const imported = distributedGoogle
-                    ? await requireDistributedAutomationBackend().importUetGoogle(
-                        {
-                          email: uetGoogleEmail,
-                          password: uetGooglePassword ?? "",
-                          idempotencyKey:
-                            request.headers.get("Idempotency-Key") ??
-                            `login:${uetGoogleEmail.trim().toLowerCase()}:${uetGooglePassword ?? ""}`,
-                          expectedStudentCode: uetGoogleEmail
-                            .trim()
-                            .split("@")[0],
-                        },
-                        {
-                          signal: request.signal,
-                          cursor,
-                          onJob: (ownershipToken) => {
-                            activeAutomationOwnershipToken = ownershipToken;
-                            activeAutomationCancel = () =>
-                              requireDistributedAutomationBackend().cancelAutomation(
-                                ownershipToken,
-                              );
-                          },
-                          onEvent: async (event) => {
-                            if (
-                              event.type === "progress" &&
-                              event.phase !== undefined &&
-                              event.percent !== undefined
-                            ) {
-                              send(
-                                "progress",
-                                {
-                                  message: event.phase,
-                                  phase: event.phase,
-                                  percent: event.percent,
-                                },
-                                event.sequence,
-                              );
-                            } else if (
-                              event.type === "challenge-required" &&
-                              event.challengeId &&
-                              event.image
-                            ) {
-                              const backend =
-                                requireDistributedAutomationBackend();
-                              if (!activeAutomationOwnershipToken)
-                                throw new HyeboardError(
-                                  "AUTOMATION_BACKEND_UNCONFIGURED",
-                                  "Distributed browser automation ownership was not established.",
-                                  503,
-                                );
-                              send(
-                                "captcha_required",
-                                {
-                                  challengeId: backend.createChallengeToken(
-                                    event,
-                                    activeAutomationOwnershipToken,
-                                  ),
-                                  image: event.image,
-                                },
-                                event.sequence,
-                              );
-                            } else if (event.type === "succeeded") {
-                              send(
-                                "result",
-                                { sequence: event.sequence },
-                                event.sequence,
-                              );
-                            }
-                          },
-                        },
-                      )
-                    : await adapterInstance.importSession(body, {
-                        signal: request.signal,
-                        browserConnection: browserConnection(),
-                        onProgress: (message) => send("progress", { message }),
-                        onCaptchaNeeded: async (image) => {
-                          if (
-                            haConfig.mode === "distributed" &&
-                            !sharedCaptchaRelayCoordinatorInstalled
-                          ) {
-                            throw distributedDependencyUnavailable(
-                              "Redis CAPTCHA relay",
-                            );
-                          }
-                          const relay =
-                            await captchaRelayCoordinator.prepare(image);
-                          activeRelay = relay;
-                          try {
-                            const relayToken = await createCaptchaRelayToken(
-                              relay.challengeId,
-                            );
-                            if (cancelled || request.signal.aborted)
-                              throw captchaRelayCancelled();
-                            send("captcha_required", {
-                              challengeId: relayToken,
-                              image: relay.image,
-                            });
-                            return await relay.wait(request.signal);
-                          } catch (error) {
-                            if (activeRelay === relay)
-                              await relay.cancel().catch(() => undefined);
-                            throw error;
-                          } finally {
-                            if (activeRelay === relay) activeRelay = undefined;
-                          }
-                        },
-                      });
-                  throwIfRequestCancelled(request.signal);
-                  const token = await encryptSession(
-                    sessionTokenPayload(imported.session),
-                    getSessionSecret(),
+                  controller.enqueue(
+                    encoder.encode(
+                      `${sequence === undefined ? "" : `id: ${sequence}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+                    ),
                   );
-                  send("done", {
-                    token,
-                    session: {
-                      universityId: imported.universityId,
-                      studentCode: imported.studentCode,
-                      expiresAt: imported.expiresAt,
-                      authenticated: true,
-                    },
-                  });
-                } catch (error) {
-                  if (!cancelled) {
-                    const { code, message, status } = errorPayload(error);
-                    const level = status >= 500 ? "error" : "warn";
-                    getLogger()[level]({ code, status }, message);
-                    send("error", { code, message, status });
-                  }
-                } finally {
-                  request.signal.removeEventListener("abort", onAbort);
-                  close();
+                } catch {
+                  void cancelRelay();
                 }
-              },
-              cancel: cancelRelay,
-            });
-            return new Response(stream, {
-              headers: {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-store, no-transform",
-                Connection: "keep-alive",
-                // Disables response buffering on proxies that respect this
-                // (e.g. nginx) so progress events actually stream incrementally
-                // instead of arriving all at once when the connection closes.
-                "X-Accel-Buffering": "no",
-              },
-            });
-          }
-          if (
-            params.universityId === "vnu" &&
-            body.vnuUsername &&
-            body.vnuPassword
-          ) {
-            const username = body.vnuUsername.trim().toLowerCase();
-            const password = body.vnuPassword;
-            const normalizedBody = {
-              ...body,
-              vnuUsername: username,
-              vnuPassword: password,
-            };
-            const cacheKey = await vnuImportCacheKey(username, password);
-            const secret = getSessionSecret();
-            const loginAndCache = async (): Promise<AuthResult> => {
-              const imported = await adapterInstance.importSession(
-                normalizedBody,
-                { signal: request.signal },
-              );
-              throwIfRequestCancelled(request.signal);
-              const normalizedSession: EncryptedSessionPayload = {
-                ...imported.session,
-                studentCode:
-                  imported.studentCode ?? imported.session.studentCode,
               };
-              if (!normalizedSession.studentCode) throw incompleteVnuProfile();
-              const session = {
-                universityId: normalizedSession.universityId,
-                studentCode: normalizedSession.studentCode,
-                expiresAt: normalizedSession.expiresAt,
-                authenticated: true as const,
+              const close = () => {
+                if (cancelled || closed) return;
+                closed = true;
+                controller.close();
               };
-              throwIfRequestCancelled(request.signal);
-              const authResult = await issueVnuAuthResult({
-                username,
-                password,
-                payload: normalizedSession,
-                session,
-                secret,
-                signal: request.signal,
+              const onAbort = () => void cancelRelay();
+              request.signal.addEventListener("abort", onAbort, {
+                once: true,
               });
-              const seed = await encryptSession(
-                sessionTokenPayload(normalizedSession),
-                secret,
-              );
-              throwIfRequestCancelled(request.signal);
-              await cachePut(
-                cacheKey,
-                { seed, session },
-                Math.floor(
-                  (Date.parse(normalizedSession.expiresAt) - Date.now()) / 1000,
-                ),
-              );
-              return authResult;
-            };
-
-            const loginAfterCacheMiss = async (): Promise<AuthResult> => {
-              if (haConfig.mode !== "distributed") return loginAndCache();
-              if (!vnuImportSingleFlight)
-                throw distributedDependencyUnavailable(
-                  "Redis VNU import single-flight",
-                );
-
-              // RedisSingleFlight also stores the result for its bounded TTL. Keep
-              // upstream failures distinct so only coordinator/Redis failures map
-              // to the distributed dependency error.
-              const workFailure = Symbol("vnu-import-work-failure");
-              let authResult: AuthResult;
               try {
-                authResult = await vnuImportSingleFlight.run(
-                  cacheKey,
-                  async () => {
-                    try {
-                      return await loginAndCache();
-                    } catch (error) {
-                      throw { workFailure, error };
-                    }
+                const distributedGoogle =
+                  haConfig.mode === "distributed" &&
+                  !/^ph/i.test(uetGoogleEmail.trim());
+                const cursorValue =
+                  new URL(request.url).searchParams.get("cursor") ??
+                  request.headers.get("Last-Event-ID");
+                const cursor =
+                  cursorValue === null || cursorValue === ""
+                    ? undefined
+                    : Number(cursorValue);
+                if (
+                  cursor !== undefined &&
+                  (!Number.isSafeInteger(cursor) || cursor < -1)
+                )
+                  throw new HyeboardError(
+                    "VALIDATION",
+                    "The automation replay cursor is invalid.",
+                    400,
+                  );
+                const imported = distributedGoogle
+                  ? await requireDistributedAutomationBackend().importUetGoogle(
+                      {
+                        email: uetGoogleEmail,
+                        password: uetGooglePassword ?? "",
+                        idempotencyKey:
+                          request.headers.get("Idempotency-Key") ??
+                          `login:${uetGoogleEmail.trim().toLowerCase()}:${uetGooglePassword ?? ""}`,
+                        expectedStudentCode: uetGoogleEmail
+                          .trim()
+                          .split("@")[0],
+                      },
+                      {
+                        signal: request.signal,
+                        cursor,
+                        onJob: (ownershipToken) => {
+                          activeAutomationOwnershipToken = ownershipToken;
+                          activeAutomationCancel = () =>
+                            requireDistributedAutomationBackend().cancelAutomation(
+                              ownershipToken,
+                            );
+                        },
+                        onEvent: async (event) => {
+                          if (
+                            event.type === "progress" &&
+                            event.phase !== undefined &&
+                            event.percent !== undefined
+                          ) {
+                            send(
+                              "progress",
+                              {
+                                message: event.phase,
+                                phase: event.phase,
+                                percent: event.percent,
+                              },
+                              event.sequence,
+                            );
+                          } else if (
+                            event.type === "challenge-required" &&
+                            event.challengeId &&
+                            event.image
+                          ) {
+                            const backend =
+                              requireDistributedAutomationBackend();
+                            if (!activeAutomationOwnershipToken)
+                              throw new HyeboardError(
+                                "AUTOMATION_BACKEND_UNCONFIGURED",
+                                "Distributed browser automation ownership was not established.",
+                                503,
+                              );
+                            send(
+                              "captcha_required",
+                              {
+                                challengeId: backend.createChallengeToken(
+                                  event,
+                                  activeAutomationOwnershipToken,
+                                ),
+                                image: event.image,
+                              },
+                              event.sequence,
+                            );
+                          } else if (event.type === "succeeded") {
+                            send(
+                              "result",
+                              { sequence: event.sequence },
+                              event.sequence,
+                            );
+                          }
+                        },
+                      },
+                    )
+                  : await adapterInstance.importSession(body, {
+                      signal: request.signal,
+                      browserConnection: browserConnection(),
+                      onProgress: (message) => send("progress", { message }),
+                      onCaptchaNeeded: async (image) => {
+                        if (
+                          haConfig.mode === "distributed" &&
+                          !sharedCaptchaRelayCoordinatorInstalled
+                        ) {
+                          throw distributedDependencyUnavailable(
+                            "Redis CAPTCHA relay",
+                          );
+                        }
+                        const relay =
+                          await captchaRelayCoordinator.prepare(image);
+                        activeRelay = relay;
+                        try {
+                          const relayToken = await createCaptchaRelayToken(
+                            relay.challengeId,
+                          );
+                          if (cancelled || request.signal.aborted)
+                            throw captchaRelayCancelled();
+                          send("captcha_required", {
+                            challengeId: relayToken,
+                            image: relay.image,
+                          });
+                          return await relay.wait(request.signal);
+                        } catch (error) {
+                          if (activeRelay === relay)
+                            await relay.cancel().catch(() => undefined);
+                          throw error;
+                        } finally {
+                          if (activeRelay === relay) activeRelay = undefined;
+                        }
+                      },
+                    });
+                throwIfRequestCancelled(request.signal);
+                const token = await encryptSession(
+                  sessionTokenPayload(imported.session),
+                  getSessionSecret(),
+                );
+                send("done", {
+                  token,
+                  session: {
+                    universityId: imported.universityId,
+                    studentCode: imported.studentCode,
+                    expiresAt: imported.expiresAt,
+                    authenticated: true,
                   },
-                );
+                });
               } catch (error) {
-                if (isRecord(error) && error.workFailure === workFailure)
-                  throw error.error;
-                throw distributedDependencyUnavailable(
-                  "Redis VNU import single-flight",
-                );
+                if (!cancelled) {
+                  const { code, message, status } = errorPayload(error);
+                  const level = status >= 500 ? "error" : "warn";
+                  getLogger()[level]({ code, status }, message);
+                  send("error", { code, message, status });
+                }
+              } finally {
+                request.signal.removeEventListener("abort", onAbort);
+                close();
               }
-              throwIfRequestCancelled(request.signal);
-              return authResult;
-            };
-
-            const cached = await restoreCachedVnuImport(
-              await cacheGet<unknown>(cacheKey),
-              secret,
-            );
-            if (!cached) return ok(await loginAfterCacheMiss());
-
-            let liveStudentCode: string | undefined;
-            try {
-              liveStudentCode = parseProfileHtml(
-                await new DaotaoClient(cached.payload).getProfileHtml(
-                  request.signal,
-                ),
-              ).studentCode;
-              throwIfRequestCancelled(request.signal);
-            } catch (error) {
-              if (
-                error instanceof HyeboardError &&
-                error.code === "VNU_SESSION_EXPIRED"
-              )
-                return ok(await loginAfterCacheMiss());
-              throw error;
-            }
-
-            if (
-              !liveStudentCode ||
-              liveStudentCode !== cached.payload.studentCode ||
-              liveStudentCode !== cached.session.studentCode
-            )
-              return ok(await loginAfterCacheMiss());
-
-            return ok(
-              await issueVnuAuthResult({
-                username,
-                password,
-                payload: cached.payload,
-                session: cached.session,
-                secret,
-                signal: request.signal,
-              }),
-            );
-          }
-          const imported = await adapterInstance.importSession(body, {
-            signal: request.signal,
+            },
+            cancel: cancelRelay,
           });
-          throwIfRequestCancelled(request.signal);
-          const token = await encryptSession(
-            sessionTokenPayload(imported.session),
-            getSessionSecret(),
-          );
-          return ok({
-            token,
-            session: {
-              universityId: imported.universityId,
-              studentCode: imported.studentCode,
-              expiresAt: imported.expiresAt,
-              authenticated: true,
+          return new Response(stream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-store, no-transform",
+              Connection: "keep-alive",
+              // Disables response buffering on proxies that respect this
+              // (e.g. nginx) so progress events actually stream incrementally
+              // instead of arriving all at once when the connection closes.
+              "X-Accel-Buffering": "no",
             },
           });
-        },
-        { body: importSessionBody },
-      )
-      // Answers a CAPTCHA challenge raised mid-login by the "captcha_required"
-      // SSE event above. No session token exists
-      // yet at this point in the flow (the whole point is to finish logging
-      // in), so this is deliberately unauthenticated. Verify the signed relay
-      // token before coordinator access so forged IDs cannot instantiate DOs.
-      .post(
-        "/api/uet/auth/solve-captcha",
-        async ({ body }) => {
-          if (
-            haConfig.mode === "distributed" &&
-            distributedAutomationBackend?.isAutomationChallengeToken(
-              body.challengeId,
-            )
-          ) {
-            await requireDistributedAutomationBackend().answerCaptcha(
-              body.challengeId,
-              body.answer,
+        }
+        if (
+          params.universityId === "vnu" &&
+          body.vnuUsername &&
+          body.vnuPassword
+        ) {
+          const username = body.vnuUsername.trim().toLowerCase();
+          const password = body.vnuPassword;
+          const normalizedBody = {
+            ...body,
+            vnuUsername: username,
+            vnuPassword: password,
+          };
+          const cacheKey = await vnuImportCacheKey(username, password);
+          const secret = getSessionSecret();
+          const loginAndCache = async (): Promise<AuthResult> => {
+            const imported = await adapterInstance.importSession(
+              normalizedBody,
+              { signal: request.signal },
             );
-            return ok({ accepted: true });
-          }
-          const relayId = await verifyCaptchaRelayToken(body.challengeId);
-          if (!relayId) throw captchaRelayNotFound();
-          await captchaRelayCoordinator.answer(relayId, body.answer);
-          return ok({ accepted: true });
-        },
-        {
-          body: t.Object({
-            challengeId: t.String({ minLength: 1, maxLength: 160 }),
-            answer: t.String({ minLength: 1, maxLength: 64 }),
-          }),
-        },
-      )
-      .post(
-        "/api/uet/auth/cancel-captcha",
-        async ({ body }) => {
-          if (
-            haConfig.mode === "distributed" &&
-            distributedAutomationBackend?.isAutomationChallengeToken(
-              body.challengeId,
-            )
-          ) {
-            await requireDistributedAutomationBackend().cancelCaptcha(
-              body.challengeId,
+            throwIfRequestCancelled(request.signal);
+            const normalizedSession: EncryptedSessionPayload = {
+              ...imported.session,
+              studentCode: imported.studentCode ?? imported.session.studentCode,
+            };
+            if (!normalizedSession.studentCode) throw incompleteVnuProfile();
+            const session = {
+              universityId: normalizedSession.universityId,
+              studentCode: normalizedSession.studentCode,
+              expiresAt: normalizedSession.expiresAt,
+              authenticated: true as const,
+            };
+            throwIfRequestCancelled(request.signal);
+            const authResult = await issueVnuAuthResult({
+              username,
+              password,
+              payload: normalizedSession,
+              session,
+              secret,
+              signal: request.signal,
+            });
+            const seed = await encryptSession(
+              sessionTokenPayload(normalizedSession),
+              secret,
             );
-            return ok({ accepted: true });
-          }
-          throw captchaRelayNotFound();
-        },
-        {
-          body: t.Object({
-            challengeId: t.String({ minLength: 1, maxLength: 512 }),
-          }),
-        },
-      )
-      .post(
-        "/api/uet/auth/cancel-automation",
-        async ({ body }) => {
-          await requireDistributedAutomationBackend().cancelAutomation(
-            body.jobToken,
-          );
-          return ok({ accepted: true });
-        },
-        {
-          body: t.Object({
-            jobToken: t.String({ minLength: 1, maxLength: 512 }),
-          }),
-        },
-      )
-      .post("/api/vnu/auth/refresh", async ({ headers, request }) => {
-        const token = parseBearerToken(
-          new Headers(headers as Record<string, string>).get("Authorization"),
-        );
-        if (!token)
-          throw new HyeboardError(
-            "MISSING_SESSION",
-            "Missing Authorization bearer token",
-            401,
-          );
+            throwIfRequestCancelled(request.signal);
+            await cachePut(
+              cacheKey,
+              { seed, session },
+              Math.floor(
+                (Date.parse(normalizedSession.expiresAt) - Date.now()) / 1000,
+              ),
+            );
+            return authResult;
+          };
 
-        const secret = getSessionSecret();
-        let session: EncryptedSessionPayload;
-        try {
-          session = await decryptSessionForVnuRefresh(token, secret);
-        } catch (error) {
+          const loginAfterCacheMiss = async (): Promise<AuthResult> => {
+            if (haConfig.mode !== "distributed") return loginAndCache();
+            if (!vnuImportSingleFlight)
+              throw distributedDependencyUnavailable(
+                "Redis VNU import single-flight",
+              );
+
+            // RedisSingleFlight also stores the result for its bounded TTL. Keep
+            // upstream failures distinct so only coordinator/Redis failures map
+            // to the distributed dependency error.
+            const workFailure = Symbol("vnu-import-work-failure");
+            let authResult: AuthResult;
+            try {
+              authResult = await vnuImportSingleFlight.run(
+                cacheKey,
+                async () => {
+                  try {
+                    return await loginAndCache();
+                  } catch (error) {
+                    throw { workFailure, error };
+                  }
+                },
+              );
+            } catch (error) {
+              if (isRecord(error) && error.workFailure === workFailure)
+                throw error.error;
+              throw distributedDependencyUnavailable(
+                "Redis VNU import single-flight",
+              );
+            }
+            throwIfRequestCancelled(request.signal);
+            return authResult;
+          };
+
+          const cached = await restoreCachedVnuImport(
+            await cacheGet<unknown>(cacheKey),
+            secret,
+          );
+          if (!cached) return ok(await loginAfterCacheMiss());
+
+          let liveStudentCode: string | undefined;
           try {
-            await decryptAuthenticatedLegacyVnuSession(token, secret);
-          } catch {
+            liveStudentCode = parseProfileHtml(
+              await new DaotaoClient(cached.payload).getProfileHtml(
+                request.signal,
+              ),
+            ).studentCode;
+            throwIfRequestCancelled(request.signal);
+          } catch (error) {
+            if (
+              error instanceof HyeboardError &&
+              error.code === "VNU_SESSION_EXPIRED"
+            )
+              return ok(await loginAfterCacheMiss());
             throw error;
           }
-          throw new HyeboardError(
-            "VNU_REFRESH_GRANT_INVALID",
-            "The VNU reconnect grant is invalid or expired.",
-            401,
+
+          if (
+            !liveStudentCode ||
+            liveStudentCode !== cached.payload.studentCode ||
+            liveStudentCode !== cached.session.studentCode
+          )
+            return ok(await loginAfterCacheMiss());
+
+          return ok(
+            await issueVnuAuthResult({
+              username,
+              password,
+              payload: cached.payload,
+              session: cached.session,
+              secret,
+              signal: request.signal,
+            }),
           );
         }
-        const body = (await parseStrictVnuAuthBody(
-          request,
-          "refresh",
-        )) as VnuRefreshBody;
-        const grant = await decryptVnuRefreshGrant(body.refreshGrant, secret);
-        const { descriptor, oldPair } = await linkedRefreshInputs(
-          session,
-          grant,
-          secret,
+        const imported = await adapterInstance.importSession(body, {
+          signal: request.signal,
+        });
+        throwIfRequestCancelled(request.signal);
+        const token = await encryptSession(
+          sessionTokenPayload(imported.session),
+          getSessionSecret(),
         );
-        const coordinator = requireVnuRefreshControlCoordinator();
-
+        return ok({
+          token,
+          session: {
+            universityId: imported.universityId,
+            studentCode: imported.studentCode,
+            expiresAt: imported.expiresAt,
+            authenticated: true,
+          },
+        });
+      },
+    )
+    // Answers a CAPTCHA challenge raised mid-login by the "captcha_required"
+    // SSE event above. No session token exists
+    // yet at this point in the flow (the whole point is to finish logging
+    // in), so this is deliberately unauthenticated. Verify the signed relay
+    // token before coordinator access so forged IDs cannot instantiate DOs.
+    .post(
+      "/api/uet/auth/solve-captcha",
+      {
+        body: t.Object({
+          challengeId: t.String({ minLength: 1, maxLength: 160 }),
+          answer: t.String({ minLength: 1, maxLength: 64 }),
+        }),
+      },
+      async ({ body }) => {
         if (
-          session.universityId !== "vnu" ||
-          !session.studentCode ||
-          session.studentCode !== grant.expectedStudentCode
+          haConfig.mode === "distributed" &&
+          distributedAutomationBackend?.isAutomationChallengeToken(
+            body.challengeId,
+          )
         ) {
-          try {
-            await coordinator.revokeExactLinkedPair(
-              descriptor.principalKey,
-              oldPair,
-            );
-          } catch {
-            throw vnuRefreshUnavailable();
-          }
-          throw vnuRefreshIdentityMismatch();
+          await requireDistributedAutomationBackend().answerCaptcha(
+            body.challengeId,
+            body.answer,
+          );
+          return ok({ accepted: true });
         }
+        const relayId = await verifyCaptchaRelayToken(body.challengeId);
+        if (!relayId) throw captchaRelayNotFound();
+        await captchaRelayCoordinator.answer(relayId, body.answer);
+        return ok({ accepted: true });
+      },
+    )
+    .post(
+      "/api/uet/auth/cancel-captcha",
+      {
+        body: t.Object({
+          challengeId: t.String({ minLength: 1, maxLength: 512 }),
+        }),
+      },
+      async ({ body }) => {
+        if (
+          haConfig.mode === "distributed" &&
+          distributedAutomationBackend?.isAutomationChallengeToken(
+            body.challengeId,
+          )
+        ) {
+          await requireDistributedAutomationBackend().cancelCaptcha(
+            body.challengeId,
+          );
+          return ok({ accepted: true });
+        }
+        throw captchaRelayNotFound();
+      },
+    )
+    .post(
+      "/api/uet/auth/cancel-automation",
+      {
+        body: t.Object({
+          jobToken: t.String({ minLength: 1, maxLength: 512 }),
+        }),
+      },
+      async ({ body }) => {
+        await requireDistributedAutomationBackend().cancelAutomation(
+          body.jobToken,
+        );
+        return ok({ accepted: true });
+      },
+    )
+    .post("/api/vnu/auth/refresh", async ({ headers, request }) => {
+      const token = parseBearerToken(
+        new Headers(headers as Record<string, string>).get("Authorization"),
+      );
+      if (!token)
+        throw new HyeboardError(
+          "MISSING_SESSION",
+          "Missing Authorization bearer token",
+          401,
+        );
 
-        let beginResult: BeginRefreshResult;
+      const secret = getSessionSecret();
+      let session: EncryptedSessionPayload;
+      try {
+        session = await decryptSessionForVnuRefresh(token, secret);
+      } catch (error) {
         try {
-          beginResult = await coordinator.beginRefresh(
+          await decryptAuthenticatedLegacyVnuSession(token, secret);
+        } catch {
+          throw error;
+        }
+        throw new HyeboardError(
+          "VNU_REFRESH_GRANT_INVALID",
+          "The VNU reconnect grant is invalid or expired.",
+          401,
+        );
+      }
+      const body = (await parseStrictVnuAuthBody(
+        request,
+        "refresh",
+      )) as VnuRefreshBody;
+      const grant = await decryptVnuRefreshGrant(body.refreshGrant, secret);
+      const { descriptor, oldPair } = await linkedRefreshInputs(
+        session,
+        grant,
+        secret,
+      );
+      const coordinator = requireVnuRefreshControlCoordinator();
+
+      if (
+        session.universityId !== "vnu" ||
+        !session.studentCode ||
+        session.studentCode !== grant.expectedStudentCode
+      ) {
+        try {
+          await coordinator.revokeExactLinkedPair(
             descriptor.principalKey,
             oldPair,
           );
         } catch {
           throw vnuRefreshUnavailable();
         }
-        if (beginResult.kind !== "accepted") beginResultError(beginResult);
+        throw vnuRefreshIdentityMismatch();
+      }
 
-        let completionSettled = false;
-        try {
-          const imported = await getAdapter("vnu").importSession(
-            {
-              vnuUsername: grant.username,
-              vnuPassword: grant.password,
-              signal: request.signal,
-            },
-            { signal: request.signal },
-          );
-          if (request.signal.aborted) throw vnuRefreshUnavailable();
-          if (
-            imported.universityId !== "vnu" ||
-            imported.studentCode !== grant.expectedStudentCode
-          )
-            throw vnuRefreshIdentityMismatch();
-          const refreshedSession: EncryptedSessionPayload = {
-            ...imported.session,
-            studentCode: imported.studentCode,
-          };
-          ensureVnuIdentityMatch(refreshedSession, grant);
-
-          const rotatedGrant = rotateVnuRefreshGrant(grant);
-          const nextDescriptor = await createVnuRefreshAccessDescriptor({
-            username: grant.username,
-            grantId: rotatedGrant.grantId,
-            accessExpiresAt: refreshedSession.expiresAt,
-            grantExpiresAt: rotatedGrant.expiresAt,
-            secret,
-          });
-          const nextPair = descriptorPair(nextDescriptor);
-          const nextPayload = {
-            ...refreshedSession,
-            vnuRefresh: nextDescriptor,
-          };
-          const [nextToken, nextGrant] = await Promise.all([
-            encryptSession(sessionTokenPayload(nextPayload, session), secret),
-            encryptVnuRefreshGrant(rotatedGrant, secret),
-          ]);
-
-          if (request.signal.aborted) throw vnuRefreshUnavailable();
-          let completion: "completed" | "revoked";
-          try {
-            completion = await coordinator.completeRefresh(
-              descriptor.principalKey,
-              { old: oldPair, next: nextPair },
-            );
-          } catch {
-            throw vnuRefreshUnavailable();
-          }
-          completionSettled = true;
-          if (completion === "revoked")
-            throw new HyeboardError(
-              "VNU_REFRESH_GRANT_REVOKED",
-              "The VNU reconnect grant has been revoked.",
-              401,
-            );
-
-          return ok({
-            token: nextToken,
-            refreshGrant: nextGrant,
-            session: {
-              universityId: refreshedSession.universityId,
-              studentCode: refreshedSession.studentCode,
-              expiresAt: refreshedSession.expiresAt,
-              authenticated: true,
-            },
-          });
-        } catch (error) {
-          if (!completionSettled) {
-            try {
-              await coordinator.abortRefresh(descriptor.principalKey, {
-                pair: oldPair,
-                terminal: isTerminalVnuRefreshFailure(error),
-              });
-            } catch {
-              throw vnuRefreshUnavailable();
-            }
-          }
-          throw publicVnuRefreshError(error);
-        }
-      })
-      .post("/api/vnu/auth/logout", async ({ headers, request }) => {
-        const token = parseBearerToken(
-          new Headers(headers as Record<string, string>).get("Authorization"),
+      let beginResult: BeginRefreshResult;
+      try {
+        beginResult = await coordinator.beginRefresh(
+          descriptor.principalKey,
+          oldPair,
         );
-        if (!token) return ok({ authenticated: false });
-        const secret = getSessionSecret();
+      } catch {
+        throw vnuRefreshUnavailable();
+      }
+      if (beginResult.kind !== "accepted") beginResultError(beginResult);
 
-        let session: EncryptedSessionPayload | undefined;
-        let legacySession: EncryptedSessionPayload | undefined;
+      let completionSettled = false;
+      try {
+        const imported = await getAdapter("vnu").importSession(
+          {
+            vnuUsername: grant.username,
+            vnuPassword: grant.password,
+            signal: request.signal,
+          },
+          { signal: request.signal },
+        );
+        if (request.signal.aborted) throw vnuRefreshUnavailable();
+        if (
+          imported.universityId !== "vnu" ||
+          imported.studentCode !== grant.expectedStudentCode
+        )
+          throw vnuRefreshIdentityMismatch();
+        const refreshedSession: EncryptedSessionPayload = {
+          ...imported.session,
+          studentCode: imported.studentCode,
+        };
+        ensureVnuIdentityMatch(refreshedSession, grant);
+
+        const rotatedGrant = rotateVnuRefreshGrant(grant);
+        const nextDescriptor = await createVnuRefreshAccessDescriptor({
+          username: grant.username,
+          grantId: rotatedGrant.grantId,
+          accessExpiresAt: refreshedSession.expiresAt,
+          grantExpiresAt: rotatedGrant.expiresAt,
+          secret,
+        });
+        const nextPair = descriptorPair(nextDescriptor);
+        const nextPayload = {
+          ...refreshedSession,
+          vnuRefresh: nextDescriptor,
+        };
+        const [nextToken, nextGrant] = await Promise.all([
+          encryptSession(sessionTokenPayload(nextPayload, session), secret),
+          encryptVnuRefreshGrant(rotatedGrant, secret),
+        ]);
+
+        if (request.signal.aborted) throw vnuRefreshUnavailable();
+        let completion: "completed" | "revoked";
         try {
-          session = await decryptSessionForVnuLogout(token, secret);
-        } catch (error) {
-          try {
-            legacySession = await decryptAuthenticatedLegacyVnuSession(
-              token,
-              secret,
-            );
-          } catch {
-            throw error;
-          }
-        }
-        const logoutBody = (await parseStrictVnuAuthBody(
-          request,
-          "logout",
-        )) as VnuLogoutBody;
-        if (legacySession) {
-          await revokeToken(token, legacySession.expiresAt);
-          return ok({ authenticated: false });
-        }
-
-        const descriptor = session!.vnuRefresh!;
-        const pair = descriptorPair(descriptor);
-        if (logoutBody.refreshGrant !== undefined) {
-          const grant = await decryptVnuRefreshGrantForLogout(
-            logoutBody.refreshGrant,
-            secret,
+          completion = await coordinator.completeRefresh(
+            descriptor.principalKey,
+            { old: oldPair, next: nextPair },
           );
-          await linkedRefreshInputs(session!, grant, secret);
-          ensureVnuIdentityMatch(session!, grant);
-        }
-
-        let result: "revoked" | "mismatch" | "expired";
-        try {
-          const coordinator = requireVnuRefreshControlCoordinator();
-          result =
-            logoutBody.refreshGrant === undefined
-              ? await coordinator.revokeLinkedPairByAccess(
-                  descriptor.principalKey,
-                  pair,
-                )
-              : await coordinator.revokePrincipalByLinkedGrant(
-                  descriptor.principalKey,
-                  pair,
-                );
         } catch {
           throw vnuRefreshUnavailable();
         }
-        if (result === "mismatch")
+        completionSettled = true;
+        if (completion === "revoked")
           throw new HyeboardError(
             "VNU_REFRESH_GRANT_REVOKED",
             "The VNU reconnect grant has been revoked.",
             401,
           );
-        const suppliedLinkedGrantIsLive =
-          logoutBody.refreshGrant !== undefined &&
-          pair.grantExpiresAt > Date.now();
-        const grantlessPairHasLiveArtifact =
-          logoutBody.refreshGrant === undefined &&
-          (pair.accessExpiresAt > Date.now() ||
-            pair.grantExpiresAt > Date.now());
-        if (
-          result === "expired" &&
-          (suppliedLinkedGrantIsLive || grantlessPairHasLiveArtifact)
-        ) {
-          throw new HyeboardError(
-            "VNU_REFRESH_GRANT_REVOKED",
-            "The VNU reconnect grant has been revoked.",
-            401,
-          );
-        }
-        await revokeSession(session!);
-        return ok({ authenticated: false });
-      })
-      .post("/api/:universityId/auth/logout", async ({ headers }) => {
-        const h =
-          headers instanceof Headers
-            ? headers
-            : new Headers(headers as Record<string, string>);
-        const token = parseBearerToken(h.get("Authorization"));
-        if (!token) return ok({ authenticated: false });
 
-        let session: EncryptedSessionPayload;
+        return ok({
+          token: nextToken,
+          refreshGrant: nextGrant,
+          session: {
+            universityId: refreshedSession.universityId,
+            studentCode: refreshedSession.studentCode,
+            expiresAt: refreshedSession.expiresAt,
+            authenticated: true,
+          },
+        });
+      } catch (error) {
+        if (!completionSettled) {
+          try {
+            await coordinator.abortRefresh(descriptor.principalKey, {
+              pair: oldPair,
+              terminal: isTerminalVnuRefreshFailure(error),
+            });
+          } catch {
+            throw vnuRefreshUnavailable();
+          }
+        }
+        throw publicVnuRefreshError(error);
+      }
+    })
+    .post("/api/vnu/auth/logout", async ({ headers, request }) => {
+      const token = parseBearerToken(
+        new Headers(headers as Record<string, string>).get("Authorization"),
+      );
+      if (!token) return ok({ authenticated: false });
+      const secret = getSessionSecret();
+
+      let session: EncryptedSessionPayload | undefined;
+      let legacySession: EncryptedSessionPayload | undefined;
+      try {
+        session = await decryptSessionForVnuLogout(token, secret);
+      } catch (error) {
         try {
-          session = await decryptSession(token, getSessionSecret());
+          legacySession = await decryptAuthenticatedLegacyVnuSession(
+            token,
+            secret,
+          );
         } catch {
-          // Already invalid/expired token — nothing to revoke.
-          return ok({ authenticated: false });
+          throw error;
         }
-
-        await revokeSession(session);
-        await revokeToken(token, session.expiresAt);
+      }
+      const logoutBody = (await parseStrictVnuAuthBody(
+        request,
+        "logout",
+      )) as VnuLogoutBody;
+      if (legacySession) {
+        await revokeToken(token, legacySession.expiresAt);
         return ok({ authenticated: false });
-      })
-      .get(
-        "/api/vnu/raw/:page",
-        async ({ headers, params, query, request }) => {
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          const capability = vnuRawCapabilities[params.page];
-          if (!capability)
-            throw new HyeboardError(
-              "VNU_RAW_PAGE_UNKNOWN",
-              `Unknown VNU raw page: ${params.page}`,
-              404,
-            );
-          await requireFeature("vnu", capability);
-          const html = await vnuRawHtml(
+      }
+
+      const descriptor = session!.vnuRefresh!;
+      const pair = descriptorPair(descriptor);
+      if (logoutBody.refreshGrant !== undefined) {
+        const grant = await decryptVnuRefreshGrantForLogout(
+          logoutBody.refreshGrant,
+          secret,
+        );
+        await linkedRefreshInputs(session!, grant, secret);
+        ensureVnuIdentityMatch(session!, grant);
+      }
+
+      let result: "revoked" | "mismatch" | "expired";
+      try {
+        const coordinator = requireVnuRefreshControlCoordinator();
+        result =
+          logoutBody.refreshGrant === undefined
+            ? await coordinator.revokeLinkedPairByAccess(
+                descriptor.principalKey,
+                pair,
+              )
+            : await coordinator.revokePrincipalByLinkedGrant(
+                descriptor.principalKey,
+                pair,
+              );
+      } catch {
+        throw vnuRefreshUnavailable();
+      }
+      if (result === "mismatch")
+        throw new HyeboardError(
+          "VNU_REFRESH_GRANT_REVOKED",
+          "The VNU reconnect grant has been revoked.",
+          401,
+        );
+      const suppliedLinkedGrantIsLive =
+        logoutBody.refreshGrant !== undefined &&
+        pair.grantExpiresAt > Date.now();
+      const grantlessPairHasLiveArtifact =
+        logoutBody.refreshGrant === undefined &&
+        (pair.accessExpiresAt > Date.now() || pair.grantExpiresAt > Date.now());
+      if (
+        result === "expired" &&
+        (suppliedLinkedGrantIsLive || grantlessPairHasLiveArtifact)
+      ) {
+        throw new HyeboardError(
+          "VNU_REFRESH_GRANT_REVOKED",
+          "The VNU reconnect grant has been revoked.",
+          401,
+        );
+      }
+      await revokeSession(session!);
+      return ok({ authenticated: false });
+    })
+    .post("/api/:universityId/auth/logout", async ({ headers }) => {
+      const h =
+        headers instanceof Headers
+          ? headers
+          : new Headers(headers as Record<string, string>);
+      const token = parseBearerToken(h.get("Authorization"));
+      if (!token) return ok({ authenticated: false });
+
+      let session: EncryptedSessionPayload;
+      try {
+        session = await decryptSession(token, getSessionSecret());
+      } catch {
+        // Already invalid/expired token — nothing to revoke.
+        return ok({ authenticated: false });
+      }
+
+      await revokeSession(session);
+      await revokeToken(token, session.expiresAt);
+      return ok({ authenticated: false });
+    })
+    .get(
+      "/api/vnu/raw/:page",
+      { query: vnuRawQuery },
+      async ({ headers, params, query, request }) => {
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
+          );
+        const capability = vnuRawCapabilities[params.page];
+        if (!capability)
+          throw new HyeboardError(
+            "VNU_RAW_PAGE_UNKNOWN",
+            `Unknown VNU raw page: ${params.page}`,
+            404,
+          );
+        await requireFeature("vnu", capability);
+        const html = await vnuRawHtml(
+          session,
+          params.page,
+          query,
+          request.signal,
+        );
+        return ok({
+          html:
+            params.page === "grades"
+              ? sanitizeGradesHtmlForBrowser(html)
+              : html,
+        });
+      },
+    )
+    .get(
+      "/api/vnu/class-lookup/catalog",
+      { query: vnuRawQuery },
+      async ({ headers, query, request }) => {
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
+          );
+        await requireFeature("vnu", "classLookup");
+        return ok({
+          html: await vnuRawHtml(session, "exams", query, request.signal),
+        });
+      },
+    )
+    .get(
+      "/api/vnu/class-lookup/point-detail",
+      { query: vnuRawQuery },
+      async ({ headers, query, request }) => {
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
+          );
+        await requireFeature("vnu", "classLookup");
+        return ok({
+          html: await vnuRawHtml(
             session,
-            params.page,
+            "point-detail",
             query,
             request.signal,
+          ),
+        });
+      },
+    )
+    // Cross-student StdID -> student-code resolver. listpoint_Brc1.asp
+    // HONORS selStd (live-verified — see har-notes.md): it renders the
+    // requested student's identity header (name / 8-digit code / managing
+    // class) for whatever selStd is passed. This deployment is authorized to
+    // expose that, gated server-side behind an explicit opt-in flag and a
+    // self-targeting rejection. Responses are NEVER cached: no shared-cache
+    // path exists here, so one caller's cross-lookup result can never bleed
+    // into another caller's cache entries. The fetched transcript HTML is
+    // parsed here, server-side, and only the resolved code/name/class
+    // ever cross the network — the target student's full grade table (which
+    // the same HTML contains) is never sent to the browser. A header-less
+    // response is a clean not-found, not an error.
+    .get(
+      "/api/vnu/cross-lookup/student-code",
+      { query: vnuCrossLookupQuery },
+      async ({ headers, query, request }) => {
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
           );
-          return ok({
-            html:
-              params.page === "grades"
-                ? sanitizeGradesHtmlForBrowser(html)
-                : html,
-          });
-        },
-        { query: vnuRawQuery },
-      )
-      .get(
-        "/api/vnu/class-lookup/catalog",
-        async ({ headers, query, request }) => {
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          await requireFeature("vnu", "classLookup");
-          return ok({
-            html: await vnuRawHtml(session, "exams", query, request.signal),
-          });
-        },
-        { query: vnuRawQuery },
-      )
-      .get(
-        "/api/vnu/class-lookup/point-detail",
-        async ({ headers, query, request }) => {
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          await requireFeature("vnu", "classLookup");
-          return ok({
-            html: await vnuRawHtml(
-              session,
-              "point-detail",
-              query,
-              request.signal,
-            ),
-          });
-        },
-        { query: vnuRawQuery },
-      )
-      // Cross-student StdID -> student-code resolver. listpoint_Brc1.asp
-      // HONORS selStd (live-verified — see har-notes.md): it renders the
-      // requested student's identity header (name / 8-digit code / managing
-      // class) for whatever selStd is passed. This deployment is authorized to
-      // expose that, gated server-side behind an explicit opt-in flag and a
-      // self-targeting rejection. Responses are NEVER cached: no shared-cache
-      // path exists here, so one caller's cross-lookup result can never bleed
-      // into another caller's cache entries. The fetched transcript HTML is
-      // parsed here, server-side, and only the resolved code/name/class
-      // ever cross the network — the target student's full grade table (which
-      // the same HTML contains) is never sent to the browser. A header-less
-      // response is a clean not-found, not an error.
-      .get(
-        "/api/vnu/cross-lookup/student-code",
-        async ({ headers, query, request }) => {
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          await requireFeature("vnu", "crossLookup");
-          if (query.allowCrossLookup !== "true")
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED",
-              "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.",
-              400,
-            );
-          if (!query.stdId || !/^\d{1,11}$/.test(query.stdId))
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_QUERY_INCOMPLETE",
-              "Cross-student student-code lookup needs a target student id.",
-              400,
-            );
-          // Fails closed when the caller's own id is unavailable or malformed:
-          // without a parsed own identity the self-targeting check below cannot
-          // run, so the request is rejected rather than allowed through
-          // unverified (see parseVnuOwnIdentity).
-          const ownIdentity = parseVnuOwnIdentity(
-            parseProfileHtml(
-              await vnuRawHtml(session, "profile", {}, request.signal),
-            ),
-            {
-              requireStudentCode: false,
-            },
+        await requireFeature("vnu", "crossLookup");
+        if (query.allowCrossLookup !== "true")
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED",
+            "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.",
+            400,
           );
-          if (isOwnStdId(ownIdentity, query.stdId))
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_SELF_TARGET",
-              "That is your own student id. Your own ID mapping is on the Lookup page; cross-lookup is only for other students.",
-              400,
-            );
-          await reserveVnuOracleProbes(session, 1);
-          const allowance = createVnuProbeAllowance(1);
-          allowance.consume();
-          const html = await withVnuOraclePermit(
-            session,
-            request.signal,
-            (signal) =>
-              new DaotaoClient(session).getTranscriptByStdIdHtml(
-                query.stdId!,
+        if (!query.stdId || !/^\d{1,11}$/.test(query.stdId))
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_QUERY_INCOMPLETE",
+            "Cross-student student-code lookup needs a target student id.",
+            400,
+          );
+        // Fails closed when the caller's own id is unavailable or malformed:
+        // without a parsed own identity the self-targeting check below cannot
+        // run, so the request is rejected rather than allowed through
+        // unverified (see parseVnuOwnIdentity).
+        const ownIdentity = parseVnuOwnIdentity(
+          parseProfileHtml(
+            await vnuRawHtml(session, "profile", {}, request.signal),
+          ),
+          {
+            requireStudentCode: false,
+          },
+        );
+        if (isOwnStdId(ownIdentity, query.stdId))
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_SELF_TARGET",
+            "That is your own student id. Your own ID mapping is on the Lookup page; cross-lookup is only for other students.",
+            400,
+          );
+        await reserveVnuOracleProbes(session, 1);
+        const allowance = createVnuProbeAllowance(1);
+        allowance.consume();
+        const html = await withVnuOraclePermit(
+          session,
+          request.signal,
+          (signal) =>
+            new DaotaoClient(session).getTranscriptByStdIdHtml(
+              query.stdId!,
+              signal,
+            ),
+        );
+        const { studentCode, studentName, className } =
+          parseTranscriptHeader(html);
+        if (!studentCode)
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_NOT_FOUND",
+            "The portal did not return a student for that identifier.",
+            404,
+          );
+        return ok({ studentCode, studentName, className });
+      },
+    )
+    // Cross-student student-code -> StdID resolver (the reverse direction of
+    // the route above). No portal endpoint maps a public student code back to
+    // an internal StdID, so this walks the live-verified Brc1 oracle. The
+    // resolver projects from the caller anchor and searches a bounded ±16
+    // candidate window using exact portal-code equality. Configured concurrency
+    // controls candidate overlap; the whole worst-case reservation is consumed
+    // conservatively before upstream work.
+    .get(
+      "/api/vnu/cross-lookup/student-id",
+      { query: vnuCrossLookupQuery },
+      async ({ headers, query, request }) => {
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
+          );
+        await requireFeature("vnu", "crossLookup");
+        if (query.allowCrossLookup !== "true")
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED",
+            "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.",
+            400,
+          );
+        if (!query.stdCode || !/^\d{8}$/.test(query.stdCode))
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_QUERY_INCOMPLETE",
+            "Cross-student student-id lookup needs a target 8-digit student code.",
+            400,
+          );
+        const ownIdentity = parseVnuOwnIdentity(
+          parseProfileHtml(
+            await vnuRawHtml(session, "profile", {}, request.signal),
+          ),
+          {
+            requireStudentCode: true,
+          },
+        );
+        if (isOwnStudentCode(ownIdentity, query.stdCode))
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_SELF_TARGET",
+            "That is your own student code. Your own ID mapping is on the Lookup page; cross-lookup is only for other students.",
+            400,
+          );
+
+        await reserveVnuOracleProbes(
+          session,
+          VNU_STUDENT_ID_RESOLVER_MAX_PROBES,
+        );
+        const allowance = createVnuProbeAllowance(
+          VNU_STUDENT_ID_RESOLVER_MAX_PROBES,
+        );
+        const client = new DaotaoClient(session);
+        return ok(
+          await resolveVnuStudentId({
+            ownStdId: ownIdentity.ownStdId,
+            ownCode: ownIdentity.ownCode,
+            targetCode: query.stdCode,
+            concurrency: effectiveVnuRuntimeConfig.codeLookupConcurrency,
+            signal: request.signal,
+            fetchStudentCode: async (stdId, signal) => {
+              allowance.consume();
+              const html = await withVnuOraclePermit(
+                session,
                 signal,
-              ),
-          );
-          const { studentCode, studentName, className } =
-            parseTranscriptHeader(html);
-          if (!studentCode)
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_NOT_FOUND",
-              "The portal did not return a student for that identifier.",
-              404,
-            );
-          return ok({ studentCode, studentName, className });
-        },
-        { query: vnuCrossLookupQuery },
-      )
-      // Cross-student student-code -> StdID resolver (the reverse direction of
-      // the route above). No portal endpoint maps a public student code back to
-      // an internal StdID, so this walks the live-verified Brc1 oracle. The
-      // resolver projects from the caller anchor and searches a bounded ±16
-      // candidate window using exact portal-code equality. Configured concurrency
-      // controls candidate overlap; the whole worst-case reservation is consumed
-      // conservatively before upstream work.
-      .get(
-        "/api/vnu/cross-lookup/student-id",
-        async ({ headers, query, request }) => {
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          await requireFeature("vnu", "crossLookup");
-          if (query.allowCrossLookup !== "true")
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED",
-              "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.",
-              400,
-            );
-          if (!query.stdCode || !/^\d{8}$/.test(query.stdCode))
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_QUERY_INCOMPLETE",
-              "Cross-student student-id lookup needs a target 8-digit student code.",
-              400,
-            );
-          const ownIdentity = parseVnuOwnIdentity(
-            parseProfileHtml(
-              await vnuRawHtml(session, "profile", {}, request.signal),
-            ),
-            {
-              requireStudentCode: true,
+                (permitSignal) =>
+                  client.getTranscriptByStdIdHtml(String(stdId), permitSignal),
+              );
+              return parseTranscriptHeader(html).studentCode;
             },
+          }),
+        );
+      },
+    )
+    .get(
+      "/api/vnu/cross-lookup/transcript",
+      { query: vnuCrossLookupQuery },
+      async ({ headers, query, set, request }) => {
+        set.headers["Cache-Control"] = "no-store, private";
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
           );
-          if (isOwnStudentCode(ownIdentity, query.stdCode))
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_SELF_TARGET",
-              "That is your own student code. Your own ID mapping is on the Lookup page; cross-lookup is only for other students.",
-              400,
-            );
+        const effective = await requireFeature("vnu", "crossLookup");
+        if (query.allowCrossLookup !== "true")
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED",
+            "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.",
+            400,
+          );
 
-          await reserveVnuOracleProbes(
+        const hasStdId = query.stdId !== undefined;
+        const hasStdCode = query.stdCode !== undefined;
+        if (
+          hasStdId === hasStdCode ||
+          (hasStdId && !/^\d{1,11}$/.test(query.stdId!)) ||
+          (hasStdCode && !/^\d{8}$/.test(query.stdCode!))
+        ) {
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_QUERY_INCOMPLETE",
+            "Cross-student transcript lookup needs exactly one valid target: stdId or 8-digit stdCode.",
+            400,
+          );
+        }
+
+        const ownIdentity = parseVnuOwnIdentity(
+          parseProfileHtml(
+            await vnuRawHtml(session, "profile", {}, request.signal),
+          ),
+          {
+            requireStudentCode: true,
+          },
+        );
+        if (hasStdId && isOwnStdId(ownIdentity, query.stdId!))
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_SELF_TARGET",
+            "That is your own student id. Your own transcript is on the Grades page; cross-lookup is only for other students.",
+            400,
+          );
+        if (hasStdCode && isOwnStudentCode(ownIdentity, query.stdCode!))
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_SELF_TARGET",
+            "That is your own student code. Your own transcript is on the Grades page; cross-lookup is only for other students.",
+            400,
+          );
+
+        const reservedUnits = hasStdCode
+          ? VNU_STUDENT_ID_RESOLVER_MAX_PROBES + 1
+          : 1;
+        await reserveVnuOracleProbes(session, reservedUnits);
+        const allowance = createVnuProbeAllowance(reservedUnits);
+        const client = new DaotaoClient(session);
+        let targetStdId = query.stdId;
+        if (query.stdCode) {
+          const resolvedTarget = await resolveVnuStudentId({
+            ownStdId: ownIdentity.ownStdId,
+            ownCode: ownIdentity.ownCode,
+            targetCode: query.stdCode,
+            concurrency: effectiveVnuRuntimeConfig.codeLookupConcurrency,
+            signal: request.signal,
+            fetchStudentCode: async (stdId, signal) => {
+              allowance.consume();
+              return parseTranscriptHeader(
+                await withVnuOraclePermit(session, signal, (permitSignal) =>
+                  client.getTranscriptByStdIdHtml(String(stdId), permitSignal),
+                ),
+              ).studentCode;
+            },
+          });
+          targetStdId = resolvedTarget.stdId;
+        }
+
+        allowance.consume();
+        const transcriptHtml = await withVnuOraclePermit(
+          session,
+          request.signal,
+          (signal) => client.getTranscriptByStdIdHtml(targetStdId!, signal),
+        );
+        const transcript = parseVnuCrossLookupTranscript(transcriptHtml);
+        if (!transcript.header.studentCode)
+          throw new HyeboardError(
+            "VNU_CROSS_LOOKUP_NOT_FOUND",
+            "The portal did not return a student for that identifier.",
+            404,
+          );
+        if (
+          !effectiveVnuRuntimeConfig.crossDetailEnabled ||
+          !probeBudgetCoordinatorInstalled ||
+          !effective.limits?.crossLookup?.crossDetail
+        )
+          return ok(transcript);
+        const limits = crossDetailLimits(effective);
+        const requesterToken = parseBearerToken(
+          new Headers(headers as Record<string, string>).get("Authorization"),
+        );
+        if (!requesterToken)
+          throw new HyeboardError(
+            "MISSING_SESSION",
+            "Missing Authorization bearer token",
+            401,
+          );
+        const minter = createVnuCrossDetailMinter({
+          secret: getSessionSecret(),
+          requesterToken,
+          maxTargets: limits.maxTargets,
+          maxRows: limits.maxRows,
+          permitTtlSeconds:
+            effectiveVnuRuntimeConfig.crossDetailPermitTtlSeconds,
+        });
+        const permitRows = await Promise.all(
+          transcript.terms.flatMap((term) =>
+            term.rows.map(async (row, index) => ({
+              termIndex: transcript.terms.indexOf(term),
+              rowIndex: index,
+              permit:
+                row.classId && row.termOrdinal
+                  ? await minter.mint({
+                      targetStdId: targetStdId!,
+                      transcriptHtml,
+                      row: {
+                        courseCode: row.courseCode,
+                        classId: row.classId,
+                        termOrdinal: row.termOrdinal,
+                      },
+                    })
+                  : undefined,
+            })),
+          ),
+        );
+        if (minter.issued.length)
+          await vnuProbeBudgetCoordinator.issueCrossDetailPermits(
+            await vnuProbeBudgetKey(session),
+            minter.issued,
+            limits,
+          );
+        return ok({
+          ...transcript,
+          detailPermits: permitRows
+            .filter(
+              (row): row is typeof row & { permit: string } =>
+                row.permit !== undefined,
+            )
+            .map(({ termIndex, rowIndex, permit }) => ({
+              termIndex,
+              rowIndex,
+              permit,
+            })),
+        });
+      },
+    )
+    .post(
+      "/api/vnu/cross-lookup/detail",
+      { parse: "none" },
+      async ({ headers, request, set }) => {
+        set.headers["Cache-Control"] = "no-store, private";
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
+          );
+        const requesterToken = parseBearerToken(
+          new Headers(headers as Record<string, string>).get("Authorization"),
+        );
+        if (!requesterToken)
+          throw new HyeboardError(
+            "MISSING_SESSION",
+            "Missing Authorization bearer token",
+            401,
+          );
+        const limits = crossDetailLimits(
+          await requireFeature("vnu", "crossLookup"),
+        );
+        const { permit } = await readVnuCrossDetailBody(
+          request,
+          "single",
+          limits.maxRows,
+        );
+        return ok({
+          permit,
+          html: await fetchVnuCrossDetail(
             session,
-            VNU_STUDENT_ID_RESOLVER_MAX_PROBES,
+            requesterToken,
+            permit,
+            request.signal,
+            undefined,
+            limits,
+          ),
+        });
+      },
+    )
+    .post(
+      "/api/vnu/cross-lookup/detail/bulk",
+      { parse: "none" },
+      async ({ headers, request, set }) => {
+        set.headers["Cache-Control"] = "no-store, private";
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
           );
-          const allowance = createVnuProbeAllowance(
-            VNU_STUDENT_ID_RESOLVER_MAX_PROBES,
+        const requesterToken = parseBearerToken(
+          new Headers(headers as Record<string, string>).get("Authorization"),
+        );
+        if (!requesterToken)
+          throw new HyeboardError(
+            "MISSING_SESSION",
+            "Missing Authorization bearer token",
+            401,
           );
-          const client = new DaotaoClient(session);
-          return ok(
-            await resolveVnuStudentId({
-              ownStdId: ownIdentity.ownStdId,
-              ownCode: ownIdentity.ownCode,
-              targetCode: query.stdCode,
-              concurrency: effectiveVnuRuntimeConfig.codeLookupConcurrency,
-              signal: request.signal,
-              fetchStudentCode: async (stdId, signal) => {
-                allowance.consume();
-                const html = await withVnuOraclePermit(
-                  session,
-                  signal,
-                  (permitSignal) =>
-                    client.getTranscriptByStdIdHtml(
-                      String(stdId),
-                      permitSignal,
-                    ),
-                );
-                return parseTranscriptHeader(html).studentCode;
-              },
-            }),
+        const limits = crossDetailLimits(
+          await requireFeature("vnu", "crossLookup"),
+        );
+        const { permits } = await readVnuCrossDetailBody(
+          request,
+          "bulk",
+          limits.maxRows,
+        );
+        const items = await fetchVnuCrossDetailBatch(
+          session,
+          requesterToken,
+          permits,
+          request.signal,
+          limits,
+        );
+        return ok({ items });
+      },
+    )
+    .post(
+      "/api/vnu/cross-lookup/detail/export",
+      { parse: "none" },
+      async ({ headers, request, set }) => {
+        set.headers["Cache-Control"] = "no-store, private";
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
           );
-        },
-        { query: vnuCrossLookupQuery },
-      )
-      .get(
-        "/api/vnu/cross-lookup/transcript",
-        async ({ headers, query, set, request }) => {
-          set.headers["Cache-Control"] = "no-store, private";
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          const effective = await requireFeature("vnu", "crossLookup");
-          if (query.allowCrossLookup !== "true")
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_NOT_EXPLICITLY_ALLOWED",
-              "Cross-student lookup requires the explicit allowCrossLookup=true opt-in.",
-              400,
-            );
+        const requesterToken = parseBearerToken(
+          new Headers(headers as Record<string, string>).get("Authorization"),
+        );
+        if (!requesterToken)
+          throw new HyeboardError(
+            "MISSING_SESSION",
+            "Missing Authorization bearer token",
+            401,
+          );
+        const limits = crossDetailLimits(
+          await requireFeature("vnu", "crossLookup"),
+        );
+        const { permits } = await readVnuCrossDetailBody(
+          request,
+          "export",
+          limits.maxRows,
+        );
+        const items = await fetchVnuCrossDetailBatch(
+          session,
+          requesterToken,
+          permits,
+          request.signal,
+          limits,
+        );
+        return ok({ items });
+      },
+    )
+    .post(
+      "/api/vnu/cross-lookup/bulk",
+      { parse: "none" },
+      async ({ headers, request }) => {
+        const session = await getSession(headers);
+        if (session.universityId !== "vnu")
+          throw new HyeboardError(
+            "SESSION_UNIVERSITY_MISMATCH",
+            "Session university does not match route",
+            403,
+          );
+        const effective = await requireFeature("vnu", "crossLookup");
+        const body = await parseVnuBulkLookupRequest(request, effective.limits);
+        const deadline = createBulkRequestDeadline(
+          request.signal,
+          effectiveVnuRuntimeConfig.crossLookupRequestTimeoutMs,
+        );
 
-          const hasStdId = query.stdId !== undefined;
-          const hasStdCode = query.stdCode !== undefined;
-          if (
-            hasStdId === hasStdCode ||
-            (hasStdId && !/^\d{1,11}$/.test(query.stdId!)) ||
-            (hasStdCode && !/^\d{8}$/.test(query.stdCode!))
-          ) {
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_QUERY_INCOMPLETE",
-              "Cross-student transcript lookup needs exactly one valid target: stdId or 8-digit stdCode.",
-              400,
-            );
-          }
-
+        try {
+          const needsOwnCode = body.mode === "code-to-stdid";
           const ownIdentity = parseVnuOwnIdentity(
             parseProfileHtml(
-              await vnuRawHtml(session, "profile", {}, request.signal),
+              await vnuRawHtml(session, "profile", {}, deadline.signal),
             ),
             {
-              requireStudentCode: true,
+              requireStudentCode: needsOwnCode,
             },
           );
-          if (hasStdId && isOwnStdId(ownIdentity, query.stdId!))
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_SELF_TARGET",
-              "That is your own student id. Your own transcript is on the Grades page; cross-lookup is only for other students.",
-              400,
-            );
-          if (hasStdCode && isOwnStudentCode(ownIdentity, query.stdCode!))
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_SELF_TARGET",
-              "That is your own student code. Your own transcript is on the Grades page; cross-lookup is only for other students.",
-              400,
-            );
 
-          const reservedUnits = hasStdCode
-            ? VNU_STUDENT_ID_RESOLVER_MAX_PROBES + 1
-            : 1;
+          const reservedUnits = vnuBulkReservationUnits(body);
           await reserveVnuOracleProbes(session, reservedUnits);
           const allowance = createVnuProbeAllowance(reservedUnits);
           const client = new DaotaoClient(session);
-          let targetStdId = query.stdId;
-          if (query.stdCode) {
-            const resolvedTarget = await resolveVnuStudentId({
-              ownStdId: ownIdentity.ownStdId,
-              ownCode: ownIdentity.ownCode,
-              targetCode: query.stdCode,
-              concurrency: effectiveVnuRuntimeConfig.codeLookupConcurrency,
-              signal: request.signal,
-              fetchStudentCode: async (stdId, signal) => {
-                allowance.consume();
-                return parseTranscriptHeader(
-                  await withVnuOraclePermit(session, signal, (permitSignal) =>
-                    client.getTranscriptByStdIdHtml(
-                      String(stdId),
-                      permitSignal,
-                    ),
-                  ),
-                ).studentCode;
-              },
-            });
-            targetStdId = resolvedTarget.stdId;
-          }
+          const items: Array<
+            | { target: string; status: "ok"; result: unknown }
+            | { target: string; status: "error"; errorCode: string }
+          > = [];
 
-          allowance.consume();
-          const transcriptHtml = await withVnuOraclePermit(
-            session,
-            request.signal,
-            (signal) => client.getTranscriptByStdIdHtml(targetStdId!, signal),
-          );
-          const transcript = parseVnuCrossLookupTranscript(transcriptHtml);
-          if (!transcript.header.studentCode)
-            throw new HyeboardError(
-              "VNU_CROSS_LOOKUP_NOT_FOUND",
-              "The portal did not return a student for that identifier.",
-              404,
+          if (body.mode === "code-to-stdid") {
+            const orderedItems = new Array<(typeof items)[number]>(
+              body.targets.length,
             );
-          if (
-            !effectiveVnuRuntimeConfig.crossDetailEnabled ||
-            !probeBudgetCoordinatorInstalled ||
-            !effective.limits?.crossLookup?.crossDetail
-          )
-            return ok(transcript);
-          const limits = crossDetailLimits(effective);
-          const requesterToken = parseBearerToken(
-            new Headers(headers as Record<string, string>).get("Authorization"),
-          );
-          if (!requesterToken)
-            throw new HyeboardError(
-              "MISSING_SESSION",
-              "Missing Authorization bearer token",
-              401,
+            const activeWorkerCount = Math.min(
+              effectiveVnuRuntimeConfig.codeLookupBulkTargetConcurrency,
+              body.targets.length,
             );
-          const minter = createVnuCrossDetailMinter({
-            secret: getSessionSecret(),
-            requesterToken,
-            maxTargets: limits.maxTargets,
-            maxRows: limits.maxRows,
-            permitTtlSeconds:
-              effectiveVnuRuntimeConfig.crossDetailPermitTtlSeconds,
-          });
-          const permitRows = await Promise.all(
-            transcript.terms.flatMap((term) =>
-              term.rows.map(async (row, index) => ({
-                termIndex: transcript.terms.indexOf(term),
-                rowIndex: index,
-                permit:
-                  row.classId && row.termOrdinal
-                    ? await minter.mint({
-                        targetStdId: targetStdId!,
-                        transcriptHtml,
-                        row: {
-                          courseCode: row.courseCode,
-                          classId: row.classId,
-                          termOrdinal: row.termOrdinal,
-                        },
-                      })
-                    : undefined,
-              })),
-            ),
-          );
-          if (minter.issued.length)
-            await vnuProbeBudgetCoordinator.issueCrossDetailPermits(
-              await vnuProbeBudgetKey(session),
-              minter.issued,
-              limits,
-            );
-          return ok({
-            ...transcript,
-            detailPermits: permitRows
-              .filter(
-                (row): row is typeof row & { permit: string } =>
-                  row.permit !== undefined,
-              )
-              .map(({ termIndex, rowIndex, permit }) => ({
-                termIndex,
-                rowIndex,
-                permit,
-              })),
-          });
-        },
-        { query: vnuCrossLookupQuery },
-      )
-      .post(
-        "/api/vnu/cross-lookup/detail",
-        async ({ headers, request, set }) => {
-          set.headers["Cache-Control"] = "no-store, private";
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          const requesterToken = parseBearerToken(
-            new Headers(headers as Record<string, string>).get("Authorization"),
-          );
-          if (!requesterToken)
-            throw new HyeboardError(
-              "MISSING_SESSION",
-              "Missing Authorization bearer token",
-              401,
-            );
-          const limits = crossDetailLimits(
-            await requireFeature("vnu", "crossLookup"),
-          );
-          const { permit } = await readVnuCrossDetailBody(
-            request,
-            "single",
-            limits.maxRows,
-          );
-          return ok({
-            permit,
-            html: await fetchVnuCrossDetail(
-              session,
-              requesterToken,
-              permit,
-              request.signal,
-              undefined,
-              limits,
-            ),
-          });
-        },
-        { parse: "none" },
-      )
-      .post(
-        "/api/vnu/cross-lookup/detail/bulk",
-        async ({ headers, request, set }) => {
-          set.headers["Cache-Control"] = "no-store, private";
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          const requesterToken = parseBearerToken(
-            new Headers(headers as Record<string, string>).get("Authorization"),
-          );
-          if (!requesterToken)
-            throw new HyeboardError(
-              "MISSING_SESSION",
-              "Missing Authorization bearer token",
-              401,
-            );
-          const limits = crossDetailLimits(
-            await requireFeature("vnu", "crossLookup"),
-          );
-          const { permits } = await readVnuCrossDetailBody(
-            request,
-            "bulk",
-            limits.maxRows,
-          );
-          const items = await fetchVnuCrossDetailBatch(
-            session,
-            requesterToken,
-            permits,
-            request.signal,
-            limits,
-          );
-          return ok({ items });
-        },
-        { parse: "none" },
-      )
-      .post(
-        "/api/vnu/cross-lookup/detail/export",
-        async ({ headers, request, set }) => {
-          set.headers["Cache-Control"] = "no-store, private";
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          const requesterToken = parseBearerToken(
-            new Headers(headers as Record<string, string>).get("Authorization"),
-          );
-          if (!requesterToken)
-            throw new HyeboardError(
-              "MISSING_SESSION",
-              "Missing Authorization bearer token",
-              401,
-            );
-          const limits = crossDetailLimits(
-            await requireFeature("vnu", "crossLookup"),
-          );
-          const { permits } = await readVnuCrossDetailBody(
-            request,
-            "export",
-            limits.maxRows,
-          );
-          const items = await fetchVnuCrossDetailBatch(
-            session,
-            requesterToken,
-            permits,
-            request.signal,
-            limits,
-          );
-          return ok({ items });
-        },
-        { parse: "none" },
-      )
-      .post(
-        "/api/vnu/cross-lookup/bulk",
-        async ({ headers, request }) => {
-          const session = await getSession(headers);
-          if (session.universityId !== "vnu")
-            throw new HyeboardError(
-              "SESSION_UNIVERSITY_MISMATCH",
-              "Session university does not match route",
-              403,
-            );
-          const effective = await requireFeature("vnu", "crossLookup");
-          const body = await parseVnuBulkLookupRequest(
-            request,
-            effective.limits,
-          );
-          const deadline = createBulkRequestDeadline(
-            request.signal,
-            effectiveVnuRuntimeConfig.crossLookupRequestTimeoutMs,
-          );
-
-          try {
-            const needsOwnCode = body.mode === "code-to-stdid";
-            const ownIdentity = parseVnuOwnIdentity(
-              parseProfileHtml(
-                await vnuRawHtml(session, "profile", {}, deadline.signal),
-              ),
-              {
-                requireStudentCode: needsOwnCode,
-              },
-            );
-
-            const reservedUnits = vnuBulkReservationUnits(body);
-            await reserveVnuOracleProbes(session, reservedUnits);
-            const allowance = createVnuProbeAllowance(reservedUnits);
-            const client = new DaotaoClient(session);
-            const items: Array<
-              | { target: string; status: "ok"; result: unknown }
-              | { target: string; status: "error"; errorCode: string }
-            > = [];
-
-            if (body.mode === "code-to-stdid") {
-              const orderedItems = new Array<(typeof items)[number]>(
-                body.targets.length,
-              );
-              const activeWorkerCount = Math.min(
-                effectiveVnuRuntimeConfig.codeLookupBulkTargetConcurrency,
-                body.targets.length,
-              );
-              const candidateConcurrency =
-                bulkResolverCandidateWidth(activeWorkerCount);
-              let nextIndex = 0;
-              const resolveTarget = async (index: number): Promise<void> => {
-                throwIfRequestCancelled(deadline.signal);
-                const rawTarget = body.targets[index];
-                const target = typeof rawTarget === "string" ? rawTarget : "";
-                if (typeof rawTarget !== "string" || !/^\d{8}$/.test(target)) {
-                  orderedItems[index] = {
-                    target,
-                    status: "error",
-                    errorCode: "VNU_CROSS_LOOKUP_INVALID_TARGET",
-                  };
-                  return;
-                }
-                if (isOwnStudentCode(ownIdentity, target)) {
-                  orderedItems[index] = {
-                    target,
-                    status: "error",
-                    errorCode: "VNU_CROSS_LOOKUP_SELF_TARGET",
-                  };
-                  return;
-                }
-                try {
-                  const resolution = await resolveVnuStudentId({
-                    ownStdId: ownIdentity.ownStdId,
-                    ownCode: ownIdentity.ownCode!,
-                    targetCode: target,
-                    concurrency: candidateConcurrency,
-                    signal: deadline.signal,
-                    fetchStudentCode: async (stdId, signal) => {
-                      allowance.consume();
-                      return parseTranscriptHeader(
-                        await withVnuOraclePermit(
-                          session,
-                          signal,
-                          (permitSignal) =>
-                            client.getTranscriptByStdIdHtml(
-                              String(stdId),
-                              permitSignal,
-                            ),
-                        ),
-                      ).studentCode;
-                    },
-                  });
-                  orderedItems[index] = {
-                    target,
-                    status: "ok",
-                    result: resolution,
-                  };
-                } catch (error) {
-                  if (isIsolatedBulkLookupError(error)) {
-                    orderedItems[index] = {
-                      target,
-                      status: "error",
-                      errorCode: error.code,
-                    };
-                    return;
-                  }
-                  deadline.abort(error);
-                  throw error;
-                }
-              };
-              const worker = async (): Promise<void> => {
-                while (!deadline.signal.aborted) {
-                  const index = nextIndex;
-                  nextIndex += 1;
-                  if (index >= body.targets.length) return;
-                  await resolveTarget(index);
-                }
-                throwIfRequestCancelled(deadline.signal);
-              };
-              const workers = Array.from({ length: activeWorkerCount }, () =>
-                worker(),
-              );
-              const settled = await Promise.allSettled(workers);
-              const fatal = settled.find(
-                (result): result is PromiseRejectedResult =>
-                  result.status === "rejected",
-              );
-              if (fatal) throw fatal.reason;
-              return ok({ items: orderedItems });
-            }
-
-            for (let index = 0; index < body.targets.length; index += 1) {
+            const candidateConcurrency =
+              bulkResolverCandidateWidth(activeWorkerCount);
+            let nextIndex = 0;
+            const resolveTarget = async (index: number): Promise<void> => {
               throwIfRequestCancelled(deadline.signal);
               const rawTarget = body.targets[index];
               const target = typeof rawTarget === "string" ? rawTarget : "";
-              if (typeof rawTarget !== "string" || !/^\d{1,11}$/.test(target)) {
-                items.push({
+              if (typeof rawTarget !== "string" || !/^\d{8}$/.test(target)) {
+                orderedItems[index] = {
                   target,
                   status: "error",
                   errorCode: "VNU_CROSS_LOOKUP_INVALID_TARGET",
-                });
-                continue;
+                };
+                return;
               }
-
-              if (isOwnStdId(ownIdentity, target)) {
-                items.push({
+              if (isOwnStudentCode(ownIdentity, target)) {
+                orderedItems[index] = {
                   target,
                   status: "error",
                   errorCode: "VNU_CROSS_LOOKUP_SELF_TARGET",
+                };
+                return;
+              }
+              try {
+                const resolution = await resolveVnuStudentId({
+                  ownStdId: ownIdentity.ownStdId,
+                  ownCode: ownIdentity.ownCode!,
+                  targetCode: target,
+                  concurrency: candidateConcurrency,
+                  signal: deadline.signal,
+                  fetchStudentCode: async (stdId, signal) => {
+                    allowance.consume();
+                    return parseTranscriptHeader(
+                      await withVnuOraclePermit(
+                        session,
+                        signal,
+                        (permitSignal) =>
+                          client.getTranscriptByStdIdHtml(
+                            String(stdId),
+                            permitSignal,
+                          ),
+                      ),
+                    ).studentCode;
+                  },
+                });
+                orderedItems[index] = {
+                  target,
+                  status: "ok",
+                  result: resolution,
+                };
+              } catch (error) {
+                if (isIsolatedBulkLookupError(error)) {
+                  orderedItems[index] = {
+                    target,
+                    status: "error",
+                    errorCode: error.code,
+                  };
+                  return;
+                }
+                deadline.abort(error);
+                throw error;
+              }
+            };
+            const worker = async (): Promise<void> => {
+              while (!deadline.signal.aborted) {
+                const index = nextIndex;
+                nextIndex += 1;
+                if (index >= body.targets.length) return;
+                await resolveTarget(index);
+              }
+              throwIfRequestCancelled(deadline.signal);
+            };
+            const workers = Array.from({ length: activeWorkerCount }, () =>
+              worker(),
+            );
+            const settled = await Promise.allSettled(workers);
+            const fatal = settled.find(
+              (result): result is PromiseRejectedResult =>
+                result.status === "rejected",
+            );
+            if (fatal) throw fatal.reason;
+            return ok({ items: orderedItems });
+          }
+
+          for (let index = 0; index < body.targets.length; index += 1) {
+            throwIfRequestCancelled(deadline.signal);
+            const rawTarget = body.targets[index];
+            const target = typeof rawTarget === "string" ? rawTarget : "";
+            if (typeof rawTarget !== "string" || !/^\d{1,11}$/.test(target)) {
+              items.push({
+                target,
+                status: "error",
+                errorCode: "VNU_CROSS_LOOKUP_INVALID_TARGET",
+              });
+              continue;
+            }
+
+            if (isOwnStdId(ownIdentity, target)) {
+              items.push({
+                target,
+                status: "error",
+                errorCode: "VNU_CROSS_LOOKUP_SELF_TARGET",
+              });
+              continue;
+            }
+
+            try {
+              if (body.mode === "stdid-to-code") {
+                allowance.consume();
+                const header = parseTranscriptHeader(
+                  await withVnuOraclePermit(
+                    session,
+                    deadline.signal,
+                    (signal) => client.getTranscriptByStdIdHtml(target, signal),
+                  ),
+                );
+                if (!header.studentCode)
+                  throw new HyeboardError(
+                    "VNU_CROSS_LOOKUP_NOT_FOUND",
+                    "Student not found",
+                    404,
+                  );
+                items.push({
+                  target,
+                  status: "ok",
+                  result: {
+                    studentCode: header.studentCode,
+                    studentName: header.studentName,
+                    className: header.className,
+                  },
                 });
                 continue;
               }
 
-              try {
-                if (body.mode === "stdid-to-code") {
-                  allowance.consume();
-                  const header = parseTranscriptHeader(
-                    await withVnuOraclePermit(
-                      session,
-                      deadline.signal,
-                      (signal) =>
-                        client.getTranscriptByStdIdHtml(target, signal),
-                    ),
-                  );
-                  if (!header.studentCode)
-                    throw new HyeboardError(
-                      "VNU_CROSS_LOOKUP_NOT_FOUND",
-                      "Student not found",
-                      404,
-                    );
-                  items.push({
-                    target,
-                    status: "ok",
-                    result: {
-                      studentCode: header.studentCode,
-                      studentName: header.studentName,
-                      className: header.className,
-                    },
-                  });
-                  continue;
-                }
-
-                if (body.mode === "stdid-to-transcript") {
-                  allowance.consume();
-                  const transcript = parseVnuCrossLookupTranscript(
-                    await withVnuOraclePermit(
-                      session,
-                      deadline.signal,
-                      (signal) =>
-                        client.getTranscriptByStdIdHtml(target, signal),
-                    ),
-                  );
-                  if (!transcript.header.studentCode)
-                    throw new HyeboardError(
-                      "VNU_CROSS_LOOKUP_NOT_FOUND",
-                      "Student not found",
-                      404,
-                    );
-                  items.push({ target, status: "ok", result: transcript });
-                }
-              } catch (error) {
-                if (!isIsolatedBulkLookupError(error)) throw error;
-                items.push({
-                  target,
-                  status: "error",
-                  errorCode: error.code,
-                });
-              }
-            }
-
-            return ok({ items });
-          } finally {
-            deadline.cancel();
-          }
-        },
-        { parse: "none" },
-      )
-
-      .group("/api/uet", (g) =>
-        g
-          .resolve(async ({ headers, request }) => {
-            const { session, refreshedToken } = await resolveSession(
-              headers,
-              request.signal,
-            );
-            if (session.universityId !== "uet")
-              throw new HyeboardError(
-                "SESSION_UNIVERSITY_MISMATCH",
-                "Session university does not match route",
-                403,
-              );
-            return { session, refreshedToken };
-          })
-          .onAfterHandle(({ response, refreshedToken }) => {
-            if (!refreshedToken || !response || typeof response !== "object")
-              return response;
-            const typed = response as {
-              data?: unknown;
-              error?: unknown;
-              meta?: Record<string, unknown>;
-            };
-            if (!("data" in typed)) return response;
-            return {
-              ...typed,
-              meta: { ...(typed.meta ?? {}), refreshedToken },
-            };
-          })
-          .get(
-            "/raw/:resource",
-            async ({ session, params, query, set }) => {
-              set.headers["Cache-Control"] = "no-store, private";
-              const capability = uetRawCapabilities[params.resource];
-              if (!capability)
-                throw new HyeboardError(
-                  "UET_RAW_RESOURCE_UNKNOWN",
-                  "Unknown UET raw resource",
-                  404,
+              if (body.mode === "stdid-to-transcript") {
+                allowance.consume();
+                const transcript = parseVnuCrossLookupTranscript(
+                  await withVnuOraclePermit(
+                    session,
+                    deadline.signal,
+                    (signal) => client.getTranscriptByStdIdHtml(target, signal),
+                  ),
                 );
-              await requireFeature("uet", capability);
-              return ok(
-                await uetRawRead(session, params.resource, query.termCode),
-              );
-            },
-            { query: termCodeQuery },
-          ),
-      )
+                if (!transcript.header.studentCode)
+                  throw new HyeboardError(
+                    "VNU_CROSS_LOOKUP_NOT_FOUND",
+                    "Student not found",
+                    404,
+                  );
+                items.push({ target, status: "ok", result: transcript });
+              }
+            } catch (error) {
+              if (!isIsolatedBulkLookupError(error)) throw error;
+              items.push({
+                target,
+                status: "error",
+                errorCode: error.code,
+              });
+            }
+          }
 
-      // ── Authenticated — session+adapter injected via resolve() ──
-      .group("/api/:universityId", (g) =>
-        g
-          .resolve(async ({ headers, params, request }) => {
-            const { session, refreshedToken } = await resolveSession(
-              headers,
-              request.signal,
+          return ok({ items });
+        } finally {
+          deadline.cancel();
+        }
+      },
+    )
+
+    .group("/api/uet", (g) =>
+      g
+        .derive(async ({ headers, request }) => {
+          const { session, refreshedToken } = await resolveSession(
+            headers,
+            request.signal,
+          );
+          if (session.universityId !== "uet")
+            throw new HyeboardError(
+              "SESSION_UNIVERSITY_MISMATCH",
+              "Session university does not match route",
+              403,
             );
-            if (session.universityId !== params.universityId)
+          return { session, refreshedToken };
+        })
+        .afterHandle(({ responseValue: response, refreshedToken }) => {
+          if (!refreshedToken || !response || typeof response !== "object")
+            return response;
+          const typed = response as {
+            data?: unknown;
+            error?: unknown;
+            meta?: Record<string, unknown>;
+          };
+          if (!("data" in typed)) return response;
+          return {
+            ...typed,
+            meta: { ...(typed.meta ?? {}), refreshedToken },
+          };
+        })
+        .get(
+          "/raw/:resource",
+          { query: termCodeQuery },
+          async ({ session, params, query, set }) => {
+            set.headers["Cache-Control"] = "no-store, private";
+            const capability = uetRawCapabilities[params.resource];
+            if (!capability)
               throw new HyeboardError(
-                "SESSION_UNIVERSITY_MISMATCH",
-                "Session university does not match route",
-                403,
+                "UET_RAW_RESOURCE_UNKNOWN",
+                "Unknown UET raw resource",
+                404,
               );
-            return {
+            await requireFeature("uet", capability);
+            return ok(
+              await uetRawRead(session, params.resource, query.termCode),
+            );
+          },
+        ),
+    )
+
+    // ── Authenticated — session+adapter injected via resolve() ──
+    .group("/api/:universityId", (g) =>
+      g
+        .derive(async ({ headers, params, request }) => {
+          const { session, refreshedToken } = await resolveSession(
+            headers,
+            request.signal,
+          );
+          if (session.universityId !== params.universityId)
+            throw new HyeboardError(
+              "SESSION_UNIVERSITY_MISMATCH",
+              "Session university does not match route",
+              403,
+            );
+          return {
+            session,
+            refreshedToken,
+            adapter: getAdapter(params.universityId),
+          };
+        })
+        .afterHandle(({ responseValue: response, refreshedToken }) => {
+          if (!refreshedToken || !response || typeof response !== "object")
+            return response;
+          const typed = response as {
+            data?: unknown;
+            error?: unknown;
+            meta?: Record<string, unknown>;
+          };
+          if (!("data" in typed)) return response;
+          return {
+            ...typed,
+            meta: { ...(typed.meta ?? {}), refreshedToken },
+          };
+        })
+        .get("/auth/session", async ({ session }) => {
+          const effective = await resolveEffectiveUniversity(
+            session.universityId,
+          );
+          return ok({
+            universityId: session.universityId,
+            expiresAt: session.expiresAt,
+            authenticated: true,
+            ...(effective.capabilities.profile === true
+              ? { studentCode: session.studentCode }
+              : {}),
+          });
+        })
+        .get("/me", async ({ adapter, session, request }) => {
+          await requireFeature(session.universityId, "profile");
+          return ok(
+            await adapter.getStudentProfile({
               session,
-              refreshedToken,
-              adapter: getAdapter(params.universityId),
-            };
-          })
-          .onAfterHandle(({ response, refreshedToken }) => {
-            if (!refreshedToken || !response || typeof response !== "object")
-              return response;
-            const typed = response as {
-              data?: unknown;
-              error?: unknown;
-              meta?: Record<string, unknown>;
-            };
-            if (!("data" in typed)) return response;
-            return {
-              ...typed,
-              meta: { ...(typed.meta ?? {}), refreshedToken },
-            };
-          })
-          .get("/auth/session", async ({ session }) => {
+              signal: request.signal,
+            }),
+          );
+        })
+        .get(
+          "/dashboard",
+          { query: termCodeQuery },
+          async ({ adapter, session, query, request }) => {
             const effective = await resolveEffectiveUniversity(
               session.universityId,
             );
-            return ok({
-              universityId: session.universityId,
-              expiresAt: session.expiresAt,
-              authenticated: true,
-              ...(effective.capabilities.profile === true
-                ? { studentCode: session.studentCode }
-                : {}),
-            });
-          })
-          .get("/me", async ({ adapter, session, request }) => {
-            await requireFeature(session.universityId, "profile");
+            const dashboardRequest = {
+              session,
+              termCode: query.termCode,
+              capabilities: effective.capabilities,
+              signal: request.signal,
+            };
+            const dashboard = await adapter.getDashboard(dashboardRequest);
             return ok(
-              await adapter.getStudentProfile({
-                session,
-                signal: request.signal,
-              }),
+              filterDashboardSummary(dashboard, effective.capabilities),
             );
-          })
-          .get(
-            "/dashboard",
-            async ({ adapter, session, query, request }) => {
-              const effective = await resolveEffectiveUniversity(
-                session.universityId,
-              );
-              const dashboardRequest = {
+          },
+        )
+        .get("/terms", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "terms");
+          return ok(await adapter.getTerms({ session }));
+        })
+        .get(
+          "/timetable",
+          { query: termCodeQuery },
+          async ({ adapter, session, query }) => {
+            await requireFeature(session.universityId, "timetable");
+            return ok(
+              await adapter.getTimetable({
                 session,
                 termCode: query.termCode,
-                capabilities: effective.capabilities,
-                signal: request.signal,
-              };
-              const dashboard = await adapter.getDashboard(dashboardRequest);
-              return ok(
-                filterDashboardSummary(dashboard, effective.capabilities),
-              );
-            },
-            { query: termCodeQuery },
-          )
-          .get("/terms", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "terms");
-            return ok(await adapter.getTerms({ session }));
-          })
-          .get(
-            "/timetable",
-            async ({ adapter, session, query }) => {
-              await requireFeature(session.universityId, "timetable");
-              return ok(
-                await adapter.getTimetable({
-                  session,
-                  termCode: query.termCode,
-                }),
-              );
-            },
-            { query: termCodeQuery },
-          )
-          .get("/courses", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "courses");
-            return ok(await adapter.getCourses({ session }));
-          })
-          .get("/courses/:courseId", async ({ adapter, session, params }) => {
-            await requireFeature(session.universityId, "courses");
-            return ok(
-              await adapter.getCourseDetail({
-                session,
-                courseId: params.courseId,
               }),
             );
-          })
-          .get("/assignments", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "assignments");
-            return ok(await adapter.getAssignments({ session }));
-          })
-          .get("/grades", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "grades");
-            return ok(await adapter.getGrades({ session }));
-          })
-          .get("/gpa", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "grades");
-            return ok(await adapter.getGpaSummary({ session }));
-          })
-          .get(
-            "/exams",
-            async ({ adapter, session, query }) => {
-              await requireFeature(session.universityId, "exams");
-              return ok(
-                await adapter.getExams({ session, termCode: query.termCode }),
-              );
-            },
-            { query: termCodeQuery },
-          )
-          .get("/attendance", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "attendance");
-            return ok(await adapter.getAttendance({ session }));
-          })
-          .get("/notifications", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "notifications");
-            return ok(await adapter.getNotifications({ session }));
-          })
-          .get("/news", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "news");
-            return ok(await adapter.getNews({ session }));
-          })
-          .get("/documents", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "documents");
-            return ok(await adapter.getDocuments({ session }));
-          })
-          .get("/tuition", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "tuition");
-            return ok(await adapter.getTuition({ session }));
-          })
-          .get("/training-points", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "trainingPoints");
-            return ok(await adapter.getTrainingPoints({ session }));
-          })
-          .get("/requests", async ({ adapter, session }) => {
-            await requireFeature(session.universityId, "requests");
-            return ok(await adapter.getRequests({ session }));
-          }),
-      )
-      .compile()
-  );
+          },
+        )
+        .get("/courses", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "courses");
+          return ok(await adapter.getCourses({ session }));
+        })
+        .get("/courses/:courseId", async ({ adapter, session, params }) => {
+          await requireFeature(session.universityId, "courses");
+          return ok(
+            await adapter.getCourseDetail({
+              session,
+              courseId: params.courseId,
+            }),
+          );
+        })
+        .get("/assignments", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "assignments");
+          return ok(await adapter.getAssignments({ session }));
+        })
+        .get("/grades", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "grades");
+          return ok(await adapter.getGrades({ session }));
+        })
+        .get("/gpa", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "grades");
+          return ok(await adapter.getGpaSummary({ session }));
+        })
+        .get(
+          "/exams",
+          { query: termCodeQuery },
+          async ({ adapter, session, query }) => {
+            await requireFeature(session.universityId, "exams");
+            return ok(
+              await adapter.getExams({ session, termCode: query.termCode }),
+            );
+          },
+        )
+        .get("/attendance", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "attendance");
+          return ok(await adapter.getAttendance({ session }));
+        })
+        .get("/notifications", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "notifications");
+          return ok(await adapter.getNotifications({ session }));
+        })
+        .get("/news", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "news");
+          return ok(await adapter.getNews({ session }));
+        })
+        .get("/documents", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "documents");
+          return ok(await adapter.getDocuments({ session }));
+        })
+        .get("/tuition", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "tuition");
+          return ok(await adapter.getTuition({ session }));
+        })
+        .get("/training-points", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "trainingPoints");
+          return ok(await adapter.getTrainingPoints({ session }));
+        })
+        .get("/requests", async ({ adapter, session }) => {
+          await requireFeature(session.universityId, "requests");
+          return ok(await adapter.getRequests({ session }));
+        }),
+    );
+
+  options.registerStaticAssets?.(api);
+  return api;
 }

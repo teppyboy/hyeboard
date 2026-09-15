@@ -380,7 +380,12 @@ function redisAppCache(cache: {
 }): AppCache {
   return {
     async match(request) {
-      const key = new URL(request.url).pathname.replace(/^\/cache\//, "");
+      let key: string;
+      try {
+        key = new URL(request.url).pathname.replace(/^\/cache\//, "");
+      } catch {
+        return undefined;
+      }
       const value = await cache.get<unknown>(key);
       return value === undefined
         ? undefined
@@ -389,7 +394,12 @@ function redisAppCache(cache: {
           });
     },
     async put(request, response) {
-      const key = new URL(request.url).pathname.replace(/^\/cache\//, "");
+      let key: string;
+      try {
+        key = new URL(request.url).pathname.replace(/^\/cache\//, "");
+      } catch {
+        return;
+      }
       const maxAge = Number(
         /max-age=(\d+)/.exec(
           response.headers.get("Cache-Control") ?? "",
@@ -737,7 +747,7 @@ export async function start(): Promise<unknown> {
 
   const adapter = isBun
     ? (await import("elysia/adapter/bun")).BunAdapter
-    : (await import("@elysiajs/node")).node();
+    : (await import("@elysia/node")).node();
   let app: ReturnType<typeof createApp>;
   app = createApp(adapter, {
     lifecycle,
@@ -751,14 +761,14 @@ export async function start(): Promise<unknown> {
               };
             }
           ).runtime?.node?.req?.socket?.remoteAddress,
+    registerStaticAssets: (instance) => {
+      const distDir =
+        process.env.HYEB_STATIC_DIR ??
+        fileConfig.HYEB_STATIC_DIR ??
+        new URL("../../web/dist", import.meta.url).pathname;
+      registerStaticAssets(instance, distDir);
+    },
   });
-
-  const { fileURLToPath } = await import("node:url");
-  const distDir =
-    process.env.HYEB_STATIC_DIR ??
-    fileConfig.HYEB_STATIC_DIR ??
-    fileURLToPath(new URL("../../web/dist", import.meta.url));
-  registerStaticAssets(app, distDir);
 
   const port = Number(process.env.PORT ?? fileConfig.PORT ?? 8787);
   const host = process.env.HOST ?? fileConfig.HOST ?? "127.0.0.1";
