@@ -12,7 +12,7 @@ x-api-base: &api-base
   restart: unless-stopped
   init: true
   healthcheck:
-    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8787/api/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
     interval: 30s
     timeout: 5s
     start_period: 45s
@@ -45,7 +45,7 @@ x-automation-base: &automation-base
     # Compose health means the process is serving its control endpoint. The
     # Kubernetes readiness probe remains /readyz so a cluster never routes
     # work to a worker whose Redis/Browserless startup is incomplete.
-    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
     interval: 30s
     timeout: 5s
     start_period: 60s

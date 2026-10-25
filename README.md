@@ -23,8 +23,8 @@ Hyeboard API/BFF
 The same API supports three deployment modes:
 
 - **Cloudflare** — one Worker serves `/api/*` and the built React assets. Durable Objects coordinate CAPTCHA relay, VNU probe budgets, and VNU refresh authority.
-- **Memory** — one self-hosted Node.js or Bun process with process-local state.
-- **Distributed** — replicated self-hosted API and automation workers backed by PostgreSQL, Redis, and Browserless.
+- **Memory** — one self-hosted Bun or Node.js process with process-local state.
+- **Distributed** — replicated self-hosted API and automation workers backed by PostgreSQL, Redis, and Browserless; the published API and automation-worker containers run on Bun.
 
 See [Architecture](docs/architecture.md) for session flow, runtime boundaries, exports, cross-lookup limits, and HA behavior.
 
@@ -34,7 +34,7 @@ See [Architecture](docs/architecture.md) for session flow, runtime boundaries, e
 apps/
   web/                 React 19 + Vite client
   worker/              Elysia API; Cloudflare and Node/Bun entry points
-  automation-worker/   Node-only Browserless/Puppeteer job executor
+  automation-worker/   Browserless/Puppeteer job executor
 packages/
   schemas/             Shared Zod schemas and inferred types
   core/                Envelopes, errors, encryption, logging, safe helpers
@@ -47,7 +47,7 @@ scripts/                Packaging, validation, benchmarks, bundle audit
 
 ## Requirements
 
-- Node.js 22+
+- Node.js 22+ or Bun 1.4.4+
 - pnpm 11.5.2 through Corepack
 - A 32-byte-or-longer `HYEB_SESSION_SECRET`
 - Docker Engine with a running daemon and Docker Compose v2 for container builds, Compose, and HA integration tests
@@ -92,12 +92,12 @@ pnpm dev:web
 pnpm dev:worker
 ```
 
-For the self-hosted Node/Bun runtime, copy `apps/worker/.env.example` to `apps/worker/.env`, set `HYEB_SESSION_SECRET`, then run:
+For self-hosted Node.js or Bun, copy `apps/worker/.env.example` to `apps/worker/.env`, set `HYEB_SESSION_SECRET`, then run:
 
 ```bash
-pnpm dev:node
-# or
 pnpm dev:bun
+# or, for Node.js
+pnpm dev:node
 ```
 
 Non-secret self-hosted defaults live in `apps/worker/config.json`. Environment variables override them.
@@ -188,10 +188,10 @@ Container and Kubernetes deployment details live in the [HA runbook](docs/ha-run
 
 The repository contains two production container definitions:
 
-- `Dockerfile` builds the self-hosted API image and starts `node dist/index.js` on port `8787`.
-- `apps/automation-worker/Dockerfile` builds the Node-only automation worker image and starts `node dist/cli.cjs` on port `8080`.
+- `Dockerfile` builds the self-hosted API image and starts `bun dist/index.js` on port `8787`.
+- `apps/automation-worker/Dockerfile` builds the automation worker image and starts `bun dist/cli.cjs` on port `8080`.
 
-The images use Node `22.22.0-bookworm-slim`, refresh Debian security packages in the runtime stage, remove the unused runtime npm toolchain, use BuildKit cache mounts, lockfile-resolved production dependencies, and a non-root runtime user. BuildKit/buildx and a running Docker daemon are required:
+Both runtime images use Bun `1.4.4-slim` and a non-root runtime user. Their build stages use Node `22.22.0-bookworm-slim` with pnpm and BuildKit cache mounts to build lockfile-resolved artifacts. BuildKit/buildx and a running Docker daemon are required:
 
 ```bash
 docker info

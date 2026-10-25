@@ -1,6 +1,6 @@
 # HA Runbook
 
-This runbook covers self-hosted memory/distributed containers and the Kubernetes deployment templates. Kubernetes keeps PostgreSQL external, can run Browserless in-cluster, and uses the OT-CONTAINER-KIT Redis Operator for production Redis replication and Sentinel failover.
+This runbook covers self-hosted memory/distributed containers and the Kubernetes deployment templates. API and automation-worker containers run on Bun; standalone Node.js remains supported. Kubernetes keeps PostgreSQL external, can run Browserless in-cluster, and uses the OT-CONTAINER-KIT Redis Operator for production Redis replication and Sentinel failover.
 
 ## Prerequisites
 
@@ -18,8 +18,8 @@ PostgreSQL, Redis, and Browserless must be reachable from the API/worker in dist
 
 ## Modes
 
-- `memory`: single-process Node/Bun operation. It is the safe default for local development and preserves process-local behavior; it is not replica-safe.
-- `distributed`: Node/Bun API replicas share PostgreSQL and Redis. Both dependencies are required for ready operation.
+- `memory`: single-process Bun/Node.js operation. It is the safe default for local development and preserves process-local behavior; it is not replica-safe.
+- `distributed`: Bun container replicas (or Node.js self-hosted processes) share PostgreSQL and Redis. Both dependencies are required for ready operation.
 - `cloudflare`: the Wrangler entry point with the existing Durable Object bindings. Use Cloudflare configuration, not this Node/Bun runbook, for that mode.
 
 Do not use `HYEB_HA_MODE=cloudflare` to make a self-hosted process emulate Durable Objects. The Cloudflare entry point selects and installs those bindings.
@@ -34,7 +34,7 @@ docker compose --env-file compose.env --profile memory config --quiet
 docker compose --env-file compose.env --profile distributed config --quiet
 ```
 
-The `memory` profile starts only `api-memory` and forces `HYEB_AUTOMATION_EXECUTOR_READY=false`. The `distributed` profile starts `api`, `postgres`, `redis`, `browserless`, and `automation-worker`; only the API port is published to the host. The other services use the private `hyeboard` network. PostgreSQL and Redis data persist in named volumes.
+The `memory` profile starts only `api-memory` and forces `HYEB_AUTOMATION_EXECUTOR_READY=false`. The API and automation-worker containers use Bun. The `distributed` profile starts `api`, `postgres`, `redis`, `browserless`, and `automation-worker`; only the API port is published to the host. The other services use the private `hyeboard` network. PostgreSQL and Redis data persist in named volumes.
 
 Start and inspect a selected profile as follows:
 
@@ -87,7 +87,7 @@ HYEB_SHUTDOWN_TIMEOUT_MS=10000
 
 `apps/worker/config.json` may carry non-secret defaults. Environment variables override matching values. `HYEB_HA_MODE=distributed` without both shared URLs starts the process degraded; it does not downgrade to memory mode.
 
-Start the self-hosted API with `pnpm dev:node`, `pnpm dev:bun`, or the packaged `node dist/index.js`/`bun run dist/index.js` entry point. The distributed entry point runs ordered PostgreSQL migrations before marking PostgreSQL-backed dependencies ready.
+Start the self-hosted API with `pnpm dev:bun` (recommended) or `pnpm dev:node`. The package bundle can run with either `bun dist/index.js` or `node dist/index.js`. The distributed entry point runs ordered PostgreSQL migrations before marking PostgreSQL-backed dependencies ready.
 
 ## Shared Storage Roles
 
@@ -254,9 +254,9 @@ The overlays are intentionally different:
 | `staging` | `hyeboard-staging` | `staging.hyeboard.example.com` | 2 API, 2 workers | `ghcr.io/teppyboy` |
 | `production` | `hyeboard-production` | `hyeboard.example.com` | 3 API, 3 workers, 3 Browserless | `registry.internal.example` placeholder |
 
-CI validates `deploy/k8s/overlays/ci` as manifests and renders the example, staging, and production overlays with temporary immutable image tags. It does not create a cluster, apply an overlay, or replace target-cluster and real UET credential validation.
+CI validates `deploy/k8s/overlays/ci` with disposable local images, a CI-only runtime Secret, and mock dependencies, then renders the example, staging, and production overlays with temporary immutable image tags. The CI Secret values are not for deployment. CI does not create a cluster, apply an overlay, or replace target-cluster and real UET credential validation.
 
-The base starts `HYEB_AUTOMATION_EXECUTOR_READY=false` and uses distributed mode with Browserless as the configured provider. The setting is not changed by any overlay. Keep it false: a running worker, Browserless endpoint, or healthy rollout does not establish Browserless/UET parity.
+The base and deployment overlays start `HYEB_AUTOMATION_EXECUTOR_READY=false` and use distributed mode with Browserless as the configured provider. Only the disposable CI overlay sets the gate true to exercise the test stack; it is not a production readiness signal. Keep it false in real deployments: a running worker, Browserless endpoint, or healthy rollout does not establish Browserless/UET parity.
 
 ### Images and secrets
 

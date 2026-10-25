@@ -44,12 +44,13 @@ import {
   type VnuTranscript,
 } from "@hyeboard/university-adapters";
 import { StudentHubClient } from "@hyeboard/university-adapters/src/uet/studenthub-client";
-import { Elysia, setupTypebox, t } from "elysia";
+import { Elysia, setupTypebox, t, type AnyElysia } from "elysia";
 import * as typeboxCompile from "typebox/compile";
 import * as typeboxSchema from "typebox/schema";
 import * as typeboxSystem from "typebox/system";
 import * as typeboxType from "typebox/type";
 import * as typeboxValue from "typebox/value";
+import type { ElysiaAdapterOptions } from "elysia/adapter";
 import { WebStandardAdapter } from "elysia/adapter/web-standard";
 import {
   LocalCaptchaRelayCoordinator,
@@ -2844,13 +2845,12 @@ function effectiveAdminLoginRateLimit(): AdminLoginRateLimit {
   throw distributedDependencyUnavailable("admin login limiter");
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createApp(
-  adapter: any,
+  adapter: ElysiaAdapterOptions<void> | undefined,
   options: {
     lifecycle?: HaLifecycleController;
     clientIp?: (request: Request) => string | undefined;
-    registerStaticAssets?: (app: unknown) => void;
+    registerStaticAssets?: (app: AnyElysia) => void;
   } = {},
 ) {
   const app = new Elysia({

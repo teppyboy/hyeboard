@@ -25,6 +25,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
       - run: pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
       - run: pnpm test:k8s
       - run: docker compose config --quiet

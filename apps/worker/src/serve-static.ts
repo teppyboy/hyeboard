@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
+import type { AnyElysia } from "elysia";
+import type { Context } from "elysia/context";
 
 // Minimal static-file + SPA-fallback handler for self-hosted (Node/Bun)
 // deployments. Cloudflare's managed `assets` binding (wrangler.jsonc's
@@ -28,11 +30,10 @@ const MIME_TYPES: Record<string, string> = {
   ".webmanifest": "application/manifest+json",
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function registerStaticAssets(app: any, distDir: string): void {
+export function registerStaticAssets(app: AnyElysia, distDir: string): void {
   const root = resolve(distDir);
 
-  app.get("*", async ({ path: reqPath, set }: { path: string; set: { status: number; headers: Record<string, string> } }) => {
+  app.get("*", async ({ path: reqPath, set }: Pick<Context, "path" | "set">) => {
     const safeRelative = reqPath.replace(/^\/+/, "").replace(/\.\.(\/|\\|$)/g, "");
     const candidate = safeRelative ? join(root, safeRelative) : join(root, "index.html");
 

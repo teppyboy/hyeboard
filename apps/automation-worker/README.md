@@ -1,6 +1,6 @@
 # Automation Worker
 
-This package is a Node-only execution boundary for encrypted automation jobs.
+This package is the execution boundary for encrypted automation jobs. Its production container runs on Bun; the source and bundled CLI remain compatible with Node.js.
 
 ## Integration hooks
 
@@ -28,7 +28,7 @@ The event sink is injectable. `StreamAutomationEventSink` writes JSON events to 
 
 ## Containers
 
-`apps/automation-worker/Dockerfile` builds the executable bridge as a non-root Node `22.22.0-bookworm-slim` image. It starts `node dist/cli.cjs`, listens on port `8080`, and exposes `/healthz` and `/readyz` for container probes.
+`apps/automation-worker/Dockerfile` builds the executable bridge with Node and runs it in a non-root Bun `1.4.4-slim` image. It starts `bun dist/cli.cjs`, listens on port `8080`, and exposes `/healthz` and `/readyz` for container probes.
 
 Build the image from the repository root and publish it with an immutable SHA tag:
 

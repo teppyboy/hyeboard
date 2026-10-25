@@ -9,8 +9,9 @@ const bundle = await rolldown({
   external: [
     "cloudflare:workers",
     "bun:sqlite",
+    "elysia",
     "elysia/adapter/cloudflare-worker",
-    "@elysiajs/node",
+    "@elysia/node",
     "elysia/adapter/bun",
     // Only ever dynamically imported in the Node-only startup path; keep it
     // out of the bundle entirely so it's resolved from node_modules only

@@ -485,6 +485,32 @@ function validateAdminRuntimeCasesWithHelm() {
 }
 
 function validateHelmSemanticCases(managedRuntimeNames) {
+  const secretRuntimeCase = spawnSync("helm", [
+    "template", defaultReleaseName, chartPath,
+    "--set", "secrets.create=true",
+    "--set-string", "secrets.runtime.HYEB_SESSION_SECRET=student-session-secret-sentinel",
+    "--set-string", "secrets.runtime.HYEB_ADMIN_SESSION_SECRET=admin-session-secret-sentinel",
+    "--set-string", "secrets.runtime.HYEB_POSTGRES_URL=postgres-url-sentinel",
+    "--set-string", "secrets.runtime.HYEB_REDIS_URL=redis-url-sentinel",
+    "--set-string", "secrets.runtime.AUTOMATION_KEY_CURRENT_ID=current-key-sentinel",
+    "--set-string", "secrets.runtime.AUTOMATION_KEY_CURRENT_B64=key-material-sentinel",
+    "--set-string", "secrets.runtime.BROWSERLESS_ENDPOINT=browserless-endpoint-sentinel",
+    "--set-string", "secrets.runtime.BROWSERLESS_TOKEN=browserless-token-sentinel",
+    "--set-string", "secrets.redisAuth.password=redis-password-sentinel",
+  ], { cwd: repositoryRoot, encoding: "utf8" });
+  assert.equal(secretRuntimeCase.status, 0, `renders configured runtime Secrets:\n${secretRuntimeCase.stdout || ""}\n${secretRuntimeCase.stderr || ""}`);
+  const runtimeSecret = findResource(documentSections(secretRuntimeCase.stdout), "Secret", /runtime/);
+  assertField(runtimeSecret, /^\s+HYEB_SESSION_SECRET: "student-session-secret-sentinel"$/m, "student session Secret key");
+  assertField(runtimeSecret, /^\s+HYEB_ADMIN_SESSION_SECRET: "admin-session-secret-sentinel"$/m, "admin session Secret key");
+  assert(!runtimeSecret.includes("redis-password-sentinel"), "runtime Secret must not contain the separate Redis auth value");
+  const secretMissingAdminCase = spawnSync("helm", [
+    "template", defaultReleaseName, chartPath,
+    "--set", "secrets.create=true",
+    "--set-string", "secrets.runtime.HYEB_SESSION_SECRET=student-session-secret-sentinel",
+  ], { cwd: repositoryRoot, encoding: "utf8" });
+  assert.notEqual(secretMissingAdminCase.status, 0, "requires admin session secret when chart creates Secrets");
+  assert(`${secretMissingAdminCase.stdout || ""}\n${secretMissingAdminCase.stderr || ""}`.includes("secrets.runtime.HYEB_ADMIN_SESSION_SECRET is required"), "missing admin session Secret must produce a clear validation error");
+
   const renderCases = [
     ["rejects config.extraData-runtime collision", false, [
       "--set-string", "config.runtime.HYEB_COLLISION=runtime-value-sentinel",
@@ -552,7 +578,12 @@ function validateHelmSemanticCases(managedRuntimeNames) {
 
 function validateSourceContracts() {
   const values = readFileSync(resolve(chartPath, "values.yaml"), "utf8");
-  const schema = JSON.parse(readFileSync(resolve(chartPath, "values.schema.json"), "utf8"));
+  let schema;
+  try {
+    schema = JSON.parse(readFileSync(resolve(chartPath, "values.schema.json"), "utf8"));
+  } catch (error) {
+    throw new Error(`Helm validation failed: values.schema.json is not valid JSON: ${error instanceof Error ? error.message : error}`);
+  }
   const apiTemplate = readFileSync(resolve(chartPath, "templates/api-deployment.yaml"), "utf8");
   const configMapTemplate = readFileSync(resolve(chartPath, "templates/configmap.yaml"), "utf8");
   const helpersTemplate = readFileSync(resolve(chartPath, "templates/_helpers.tpl"), "utf8");
@@ -571,6 +602,9 @@ function validateSourceContracts() {
     assert(helpersTemplate.includes(name), `Helm api.extraEnv validation does not protect ${name}`);
   }
   const requiredKeys = schema.properties?.secrets?.properties?.keys?.required ?? [];
+  const secretTemplate = readFileSync(resolve(chartPath, "templates/secrets.yaml"), "utf8");
+  assert(secretTemplate.includes("HYEB_ADMIN_SESSION_SECRET: {{ required"), "Secret template must require and render the admin session secret");
+  assert(secretTemplate.includes("$runtime.HYEB_ADMIN_SESSION_SECRET"), "Secret template is missing secrets.runtime.HYEB_ADMIN_SESSION_SECRET");
   for (const [valueKey, envKey] of Object.entries({
     adminSessionSecret: "HYEB_ADMIN_SESSION_SECRET",
     adminPasswordHash: "HYEB_ADMIN_PASSWORD_HASH",

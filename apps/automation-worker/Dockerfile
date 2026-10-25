@@ -25,20 +25,13 @@ RUN pnpm pm deploy --filter=@hyeboard/automation-worker --prod --legacy runtime 
   && mkdir -p runtime/dist \
   && cp apps/automation-worker/dist/cli.cjs runtime/dist/cli.cjs
 
-FROM node:22.22.0-bookworm-slim AS runtime
+FROM oven/bun:1.4.4-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /workspace/runtime/ ./
-RUN apt-get update \
-  && apt-get upgrade -y \
-  && rm -rf /var/lib/apt/lists/* \
-  && rm -rf /usr/local/lib/node_modules/npm \
-  && rm -f /usr/local/bin/npm /usr/local/bin/npx \
-  && groupadd --system --gid 10001 hyeboard \
-  && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent hyeboard
-USER 10001:10001
+USER bun
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-ENTRYPOINT ["node", "dist/cli.cjs"]
+  CMD ["bun", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+ENTRYPOINT ["bun", "dist/cli.cjs"]

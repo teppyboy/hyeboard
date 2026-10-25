@@ -27,7 +27,7 @@ RUN pnpm pm deploy --filter=@hyeboard/worker --prod --legacy runtime
 
 # Elysia declares TypeScript as an optional peer. pnpm materializes the
 # compiler and its platform-specific Go binary in the virtual store even
-# for a production deploy; neither is needed by the runtime image.
+# for a production deploy; neither is needed by the Bun runtime image.
 RUN rm -rf runtime/node_modules/.pnpm/typescript@* \
     runtime/node_modules/.pnpm/@typescript+typescript-* \
     runtime/node_modules/.pnpm/node_modules/typescript \
@@ -41,22 +41,15 @@ RUN rm -rf runtime/node_modules/.pnpm/typescript@* \
   && cp dist/config.json runtime/config.json \
   && cp dist/package.json runtime/package.json
 
-FROM node:22.22.0-bookworm-slim AS runtime
+FROM oven/bun:1.4.4-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /workspace/runtime/ ./
-RUN apt-get update \
-  && apt-get upgrade -y \
-  && rm -rf /var/lib/apt/lists/* \
-  && rm -rf /usr/local/lib/node_modules/npm \
-  && rm -f /usr/local/bin/npm /usr/local/bin/npx \
-  && groupadd --system --gid 10001 hyeboard \
-  && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent hyeboard \
-  && mkdir -p /app/data \
-  && chown 10001:10001 /app/data
-USER 10001:10001
+USER root
+RUN mkdir -p /app/data && chown 1000:1000 /app/data
+USER bun
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8787/api/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-ENTRYPOINT ["node", "dist/index.js"]
+  CMD ["bun", "-e", "fetch('http://127.0.0.1:8787/api/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+ENTRYPOINT ["bun", "dist/index.js"]

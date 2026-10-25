@@ -47,6 +47,8 @@ secrets:
     automationCurrentB64: AUTOMATION_KEY_CURRENT_B64
     automationPreviousId: AUTOMATION_KEY_PREVIOUS_ID
     automationPreviousB64: AUTOMATION_KEY_PREVIOUS_B64
+  # When create is true, provide HYEB_ADMIN_SESSION_SECRET here as a separate
+  # random value alongside the other required runtime credentials.
   runtime: {}
   redisAuth:
     existingSecret: hyeboard-redis-auth

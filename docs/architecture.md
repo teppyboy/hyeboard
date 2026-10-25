@@ -1,6 +1,6 @@
 # Hyeboard Architecture
 
-Hyeboard has one frontend/API contract and three runtime modes. Cloudflare deployments use one Worker containing the client-heavy dashboard and its API/BFF. Self-hosted Node/Bun deployments use the same API code through a separate Node-only entry point.
+Hyeboard has one frontend/API contract and three runtime modes. Cloudflare deployments use one Worker containing the client-heavy dashboard and its API/BFF. Self-hosted deployments use the same API code through a separate Node/Bun entry point; the published API and automation-worker containers run on Bun, while standalone Node.js startup remains supported.
 
 ```txt
 Cloudflare Worker
@@ -42,7 +42,7 @@ PostgreSQL migrations are ordered, checksum-checked, and protected by an advisor
 
 Redis single-flight/lock and refresh-coordination implementations exist as standalone primitives, but not every primitive is wired into the API. The currently wired distributed API uses PostgreSQL for VNU refresh authority and Redis for the shared cache, CAPTCHA relay, and VNU probe/permit coordination.
 
-`cloudflare` is selected by the Cloudflare entry point and keeps the existing Durable Object implementations for CAPTCHA relay, VNU probe budgets, and VNU refresh control. `config.json` and Node-only PostgreSQL/Redis imports are outside the Cloudflare bundle.
+`cloudflare` is selected by the Cloudflare entry point and keeps the existing Durable Object implementations for CAPTCHA relay, VNU probe budgets, and VNU refresh control. `config.json` and Node-only PostgreSQL/Redis imports are outside the Cloudflare bundle. Kubernetes and container deployments use Bun for both the API and automation worker; the standalone self-hosted Node.js entry point remains supported.
 
 Distributed startup is intentionally fail-closed. If PostgreSQL or Redis is absent or unavailable, `/api/live` can still report the process as alive, while `/api/ready` reports `503` and dependent operations return a typed dependency-unavailable error. There is no hidden fallback from distributed authority to process-local state.
 
@@ -102,7 +102,7 @@ The browser coordinates one refresh per local account and failed access token. I
 
 ## Automation Boundary
 
-The automation protocol and `apps/automation-worker` provide encrypted job envelopes, Redis Streams interfaces, consumer-group reclaim, fencing, heartbeats, cancellation, result envelopes, and graceful worker drain. The Browserless provider keeps its token in the connector closure and exposes only safe ownership metadata. The executable host CLI bridge supplies the Redis clients, Browserless/Puppeteer connector, and UET executor. The UET adapter receives the worker-owned Puppeteer session and checks ownership before browser operations.
+The automation protocol and `apps/automation-worker` provide encrypted job envelopes, Redis Streams interfaces, consumer-group reclaim, fencing, heartbeats, cancellation, result envelopes, and graceful worker drain. Its container runs on Bun. The Browserless provider keeps its token in the connector closure and exposes only safe ownership metadata. The executable host CLI bridge supplies the Redis clients, Browserless/Puppeteer connector, and UET executor. The UET adapter receives the worker-owned Puppeteer session and checks ownership before browser operations.
 
 The distributed API produces those jobs and consumes their result/event stream. The Browserless image is pinned to `ghcr.io/browserless/chromium:v2.55.4`, was pulled manually, and started successfully; a live Puppeteer CDP smoke test passed against `ws://127.0.0.1:3000/chromium`, including a token query. A real distributed Browserless/UET Google login was attempted with credentials supplied through the local ignored `.env`, local PostgreSQL/Redis, the API, and the automation worker. `/api/ready` reached ready and `pnpm test:ha` passed PostgreSQL 5/5 and Redis 4/4. Login progress reached `0, 10, 35, 35, 60` before HTTP 502 code `GOOGLE_SIGNIN_FAILURE`; the worker logged Puppeteer `Attempted to use detached Frame ...` while waiting for Keycloak `#username`. Because the real login did not pass, the distributed API does not claim full browser-automation feature parity. The node-redis stream read-shape fix was committed as `f7c78fd`. `AUTOMATION_EXECUTOR_READY` remains an explicit opt-in gate, and inline Google browser automation is rejected with an explicit backend-unconfigured error until the bridge is enabled. Patchright remains permitted only for local/single-worker execution; distributed API and worker configuration reject it.
 

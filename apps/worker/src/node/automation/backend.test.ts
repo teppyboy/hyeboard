@@ -164,6 +164,8 @@ describe("RedisDistributedAutomationBackend", () => {
     let job!: UetImportJob;
     let challengeToken = "";
     let jobToken = "";
+    let resolveChallengeToken!: () => void;
+    const challengeTokenReady = new Promise<void>((resolve) => { resolveChallengeToken = resolve; });
     redis.onAdd = async (stream, fields) => {
       if (stream === "hyeboard:automation:jobs") {
         job = await decryptEnvelope<UetImportJob>(fields.jobEnvelope, { keyring: KEYRING, aad: "hyeboard:automation:job:v1" });
@@ -176,11 +178,14 @@ describe("RedisDistributedAutomationBackend", () => {
     const pending = backend.importUetGoogle({ email: "student@vnu.edu.vn", password: "password", idempotencyKey: "captcha-request" }, {
       onJob: (token) => { jobToken = token; },
       onEvent: (event) => {
-        if (event.type === "challenge-required") challengeToken = backend.createChallengeToken(event, jobToken);
+        if (event.type === "challenge-required") {
+          challengeToken = backend.createChallengeToken(event, jobToken);
+          resolveChallengeToken();
+        }
       },
     });
     const pendingRejection = expect(pending).rejects.toMatchObject({ code: "GOOGLE_AUTOMATION_TIMEOUT" });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await challengeTokenReady;
     await expect(backend.answerCaptcha(`${challengeToken}forged`, "answer")).rejects.toMatchObject({ code: "STUDENTHUB_CAPTCHA_CHALLENGE_NOT_FOUND" });
     await backend.answerCaptcha(challengeToken, "ANSWER");
     await backend.cancelAutomation(jobToken);

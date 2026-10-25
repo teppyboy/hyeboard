@@ -16,13 +16,14 @@ async function linkDependency(root, name, source) {
   await symlink(source, target, "junction");
 }
 
-async function verifyStartup(ocrEnabled) {
-  const root = await mkdtemp(join(tempRoot, ocrEnabled ? "ocr-on-" : "ocr-off-"));
+async function verifyStartup(ocrEnabled, runtime = process.execPath, runtimeName = "Node") {
+  const root = await mkdtemp(join(tempRoot, `${runtimeName.toLowerCase()}-${ocrEnabled ? "ocr-on" : "ocr-off"}-`));
   try {
     await mkdir(join(root, "dist"), { recursive: true });
     await cp(bundlePath, join(root, "dist/index.js"));
     await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
-    await linkDependency(root, "@elysiajs/node", join(workerRoot, "node_modules/@elysiajs/node"));
+    await linkDependency(root, "elysia", join(workerRoot, "node_modules/elysia"));
+    await linkDependency(root, "@elysia/node", join(workerRoot, "node_modules/@elysia/node"));
     if (ocrEnabled) {
       const tesseractPath = join(workspaceRoot, "packages/university-adapters/node_modules/tesseract.js");
       if (!existsSync(tesseractPath)) throw new Error("tesseract.js is not installed for the OCR-enabled package check");
@@ -38,7 +39,7 @@ async function verifyStartup(ocrEnabled) {
       let output = "";
       let settled = false;
       let startupSeen = false;
-      const child = spawn(process.execPath, ["dist/index.js"], {
+      const child = spawn(runtime, ["dist/index.js"], {
         cwd: root,
         env: {
           ...process.env,
@@ -60,7 +61,7 @@ async function verifyStartup(ocrEnabled) {
       };
       const inspect = (chunk) => {
         output += chunk.toString();
-        if (!startupSeen && output.includes("Hyeboard (Node) listening")) {
+        if (!startupSeen && output.includes(`Hyeboard (${runtimeName}) listening`)) {
           startupSeen = true;
           child.kill("SIGTERM");
         }
@@ -83,12 +84,15 @@ try {
   if (bundle.includes("@hyeboard/university-adapters/src/uet/captcha-ocr")) {
     throw new Error("Node bundle retains unresolved captcha-ocr workspace import");
   }
+  if (!bundle.includes('import("@elysia/node")')) throw new Error("Node bundle must keep the Elysia Node adapter external");
   if (!bundle.includes('await import("tesseract.js")')) throw new Error("Node bundle lost dynamic bare tesseract.js import");
   if (!bundle.includes("function solveCaptchaImage(") || !bundle.includes(".solveCaptchaImage);")) {
     throw new Error("Node bundle lost local OCR solver implementation or registration");
   }
-  await verifyStartup(false);
-  await verifyStartup(true);
+  await verifyStartup(false, process.execPath, "Node");
+  await verifyStartup(true, process.execPath, "Node");
+  await execFileAsync("bun", ["--version"]);
+  await verifyStartup(false, "bun", "Bun");
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
 }
