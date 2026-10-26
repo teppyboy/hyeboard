@@ -397,6 +397,19 @@ describe("admin components", () => {
     expect(loadingMoreMarkup).toContain("Loading older policy revisions…");
     expect(markup).toContain("Roll back");
     expect(markup).toContain("Enabled → Disabled");
+    const longActor = "a".repeat(128);
+    const longReason = "r".repeat(500);
+    const longEntry = {
+      ...entry,
+      actor: { method: "github" as const, subject: longActor },
+      reason: longReason,
+    };
+    const longMarkup = localized(
+      <PolicyHistory items={[longEntry]} selected={longEntry} />,
+    );
+    expect(longMarkup).toContain(`class="break-words">${longActor} · GitHub`);
+    expect(longMarkup).toContain(`class="break-words">${longReason}</dd>`);
+    expect(longMarkup).toContain("grid min-w-0 gap-2");
     expect(localized(<PolicyHistory items={[]} loading />)).toContain(
       "Loading policy history",
     );
