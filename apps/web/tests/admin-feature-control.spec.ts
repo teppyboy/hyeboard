@@ -34,11 +34,16 @@ const mockUniversity: University = {
   },
 };
 
+const adminUniversity: University = {
+  ...mockUniversity,
+  capabilities: { ...mockUniversity.capabilities, assignments: false },
+};
+
 const view = (revision: number, content: FeaturePolicyContent): AdminPolicyView => ({
   snapshot: { revision, ...content },
   hardLimits: {},
-  nativeUniversities: [mockUniversity],
-  effectiveUniversities: [mockUniversity],
+  nativeUniversities: [adminUniversity],
+  effectiveUniversities: [adminUniversity],
 });
 
 const entry = (revision: number, baseRevision: number, content: FeaturePolicyContent, reason: string): FeaturePolicyAuditEntry => ({
@@ -229,68 +234,80 @@ test("student policy revision removes disabled UI without clearing the student s
   }))).toEqual(storedAccount);
 });
 
-for (const { name, viewport, mobile } of [
-  { name: "desktop", viewport: { width: 1440, height: 900 }, mobile: false },
-  { name: "mobile @webkit", viewport: { width: 390, height: 844 }, mobile: true },
-]) {
-  test(`admin control is accessible without page overflow on ${name}`, async ({ page }) => {
-    await page.setViewportSize(viewport);
-    await page.addInitScript(() => {
-      localStorage.setItem("hyeboard.accounts", JSON.stringify([{ id: "student", token: "student-token" }]));
-      sessionStorage.setItem("hyeboard.relogin.vnu.username", "student-secret-marker");
-    });
-    await mockAuthenticatedAdmin(page, () => view(1, policy()));
-    await page.goto("/admin");
+for (const locale of ["en", "vi"] as const) {
+  for (const { name, viewport, mobile } of [
+    { name: "desktop", viewport: { width: 1440, height: 900 }, mobile: false },
+    { name: "mobile @webkit", viewport: { width: 390, height: 844 }, mobile: true },
+  ]) {
+    test(`admin control is accessible without page overflow in ${locale} on ${name}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.addInitScript((selectedLocale) => {
+        localStorage.setItem("hyeboard.accounts", JSON.stringify([{ id: "student", token: "student-token" }]));
+        localStorage.setItem("hyeboard.locale", selectedLocale);
+        sessionStorage.setItem("hyeboard.relogin.vnu.username", "student-secret-marker");
+      }, locale);
+      await mockAuthenticatedAdmin(page, () => view(1, policy("grades")));
+      await page.goto("/admin");
 
-    await expectNoPageOverflow(page);
-    await expect(page.getByRole("navigation", { name: "Admin navigation" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "How policy changes work" })).toBeVisible();
-    const dismissOrientation = page.getByRole("button", { name: "Dismiss orientation" });
-    await expect(dismissOrientation).toBeVisible();
-    if (mobile) {
-      const orientationBox = await dismissOrientation.boundingBox();
-      expect(orientationBox).not.toBeNull();
-      expect(orientationBox!.width).toBeGreaterThanOrEqual(43.9);
-      expect(orientationBox!.height).toBeGreaterThanOrEqual(43.9);
-    }
-    const studentStorageBefore = await page.evaluate(() => ({
-      accounts: localStorage.getItem("hyeboard.accounts"),
-      studentSecret: sessionStorage.getItem("hyeboard.relogin.vnu.username"),
-    }));
-    await dismissOrientation.click();
-    await expect(page.getByRole("heading", { name: "How policy changes work" })).toHaveCount(0);
-    await page.reload();
-    await expect(page.getByRole("heading", { name: "Feature control" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "How policy changes work" })).toHaveCount(0);
-    expect(await page.evaluate(() => ({
-      accounts: localStorage.getItem("hyeboard.accounts"),
-      studentSecret: sessionStorage.getItem("hyeboard.relogin.vnu.username"),
-    }))).toEqual(studentStorageBefore);
-    await expect(page.getByRole("searchbox", { name: "Search capabilities and limits" })).toBeVisible();
-    const grades = page.getByRole("switch", { name: "Grades: Available" });
-    await grades.focus();
-    await page.keyboard.press("Space");
-    await expect(grades).not.toBeChecked();
-    const review = page.getByRole("button", { name: "Review changes" });
-    await review.focus();
-    await page.keyboard.press("Enter");
-
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    await expect(dialog.locator("h2", { hasText: "Review policy changes" }).last()).toBeVisible();
-    await expect(page.getByLabel("Reason")).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Publish", exact: true })).toBeVisible();
-    await expectNoPageOverflow(page);
-    await page.keyboard.press("Escape");
-    await expect(dialog).toBeHidden();
-
-    if (mobile) {
-      for (const locator of [grades, review, page.getByRole("link", { name: "Feature control" })]) {
-        const box = await locator.boundingBox();
-        expect(box).not.toBeNull();
-        expect(box!.width).toBeGreaterThanOrEqual(43.9);
-        expect(box!.height).toBeGreaterThanOrEqual(43.9);
+      await expectNoPageOverflow(page);
+      await expect(page.getByRole("navigation", { name: locale === "en" ? "Admin navigation" : "Điều hướng quản trị" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: locale === "en" ? "How policy changes work" : "Cách thay đổi chính sách hoạt động" })).toBeVisible();
+      const dismissOrientation = page.getByRole("button", { name: locale === "en" ? "Dismiss orientation" : "Bỏ qua hướng dẫn" });
+      await expect(dismissOrientation).toBeVisible();
+      if (mobile) {
+        const orientationBox = await dismissOrientation.boundingBox();
+        expect(orientationBox).not.toBeNull();
+        expect(orientationBox!.width).toBeGreaterThanOrEqual(43.9);
+        expect(orientationBox!.height).toBeGreaterThanOrEqual(43.9);
       }
-    }
-  });
+      const studentStorageBefore = await page.evaluate(() => ({
+        accounts: localStorage.getItem("hyeboard.accounts"),
+        studentSecret: sessionStorage.getItem("hyeboard.relogin.vnu.username"),
+      }));
+      await dismissOrientation.click();
+      await expect(page.getByRole("heading", { name: locale === "en" ? "How policy changes work" : "Cách thay đổi chính sách hoạt động" })).toHaveCount(0);
+      await page.reload();
+      await expect(page.getByRole("heading", { name: locale === "en" ? "Feature control" : "Điều khiển tính năng" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: locale === "en" ? "How policy changes work" : "Cách thay đổi chính sách hoạt động" })).toHaveCount(0);
+      expect(await page.evaluate(() => ({
+        accounts: localStorage.getItem("hyeboard.accounts"),
+        studentSecret: sessionStorage.getItem("hyeboard.relogin.vnu.username"),
+      }))).toEqual(studentStorageBefore);
+      await expect(page.getByRole("searchbox", { name: locale === "en" ? "Search capabilities and limits" : "Tìm tính năng và giới hạn" })).toBeVisible();
+      await page.getByRole("tab", { name: "Mock" }).click();
+      const available = locale === "en" ? "Available" : "Khả dụng";
+      const assignments = page.getByRole("switch", { name: `${locale === "en" ? "Assignments" : "Bài tập"}: ${available}` });
+      const grades = page.getByRole("switch", { name: `${locale === "en" ? "Grades" : "Điểm số"}: ${available}` });
+      await expect(assignments).toBeDisabled();
+      await expect(assignments.locator("..")).toContainText(locale === "en" ? "Adapter does not support this capability." : "Bộ điều hợp không hỗ trợ tính năng này.");
+      await expect(grades).toBeDisabled();
+      await expect(grades.locator("..")).toContainText(locale === "en" ? "Locked by the global kill switch." : "Bị khóa bởi công tắc tắt toàn cục.");
+      await page.getByRole("tab", { name: locale === "en" ? "Global" : "Toàn cục" }).click();
+      const globalGrades = page.getByRole("switch", { name: `${locale === "en" ? "Grades" : "Điểm số"}: ${available}` });
+      await globalGrades.focus();
+      await page.keyboard.press("Space");
+      await expect(globalGrades).toBeChecked();
+      const review = page.getByRole("button", { name: locale === "en" ? "Review changes" : "Xem lại thay đổi" });
+      await review.focus();
+      await page.keyboard.press("Enter");
+
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible();
+      await expect(dialog.locator("h2", { hasText: locale === "en" ? "Review policy changes" : "Xem lại thay đổi chính sách" }).last()).toBeVisible();
+      await expect(page.getByLabel(locale === "en" ? "Reason" : "Lý do")).toBeVisible();
+      await expect(dialog.getByRole("button", { name: locale === "en" ? "Publish" : "Phát hành", exact: true })).toBeVisible();
+      await expectNoPageOverflow(page);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeHidden();
+
+      if (mobile) {
+        for (const locator of [globalGrades, review, page.getByRole("link", { name: locale === "en" ? "Feature control" : "Điều khiển tính năng" })]) {
+          const box = await locator.boundingBox();
+          expect(box).not.toBeNull();
+          expect(box!.width).toBeGreaterThanOrEqual(43.9);
+          expect(box!.height).toBeGreaterThanOrEqual(43.9);
+        }
+      }
+    });
+  }
 }
