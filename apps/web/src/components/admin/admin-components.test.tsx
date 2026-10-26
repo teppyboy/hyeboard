@@ -389,10 +389,12 @@ describe("admin components", () => {
     expect(markup).toContain("operator");
     expect(markup).toContain("GitHub");
     expect(markup).toContain("Incident response");
+    expect(markup).toContain("Published revisions are immutable and shown newest first.");
+    expect(markup).toContain("Older revisions are available below.");
     expect(markup).toContain("Load more");
-    expect(
-      localized(<PolicyHistory items={[entry]} hasMore loadingMore />),
-    ).toContain('disabled=""');
+    const loadingMoreMarkup = localized(<PolicyHistory items={[entry]} hasMore loadingMore />);
+    expect(loadingMoreMarkup).toContain('disabled=""');
+    expect(loadingMoreMarkup).toContain("Loading older policy revisions…");
     expect(markup).toContain("Roll back");
     expect(markup).toContain("Enabled → Disabled");
     expect(localized(<PolicyHistory items={[]} loading />)).toContain(
@@ -403,8 +405,11 @@ describe("admin components", () => {
     );
     expect(errorMarkup).toContain("Policy history could not be loaded");
     expect(errorMarkup).toContain("Try again");
-    expect(localized(<PolicyHistory items={[]} />)).toContain(
-      "No policy revisions have been published",
+    const emptyMarkup = localized(<PolicyHistory items={[]} />);
+    expect(emptyMarkup).toContain("No policy revisions have been published");
+    expect(emptyMarkup).toContain("A revision is created when an approved policy change is published.");
+    expect(localizedAs(<PolicyHistory items={[entry]} />, "vi")).toContain(
+      "Các bản sửa đổi đã phát hành là bất biến và hiển thị từ mới đến cũ.",
     );
     const loadMoreErrorMarkup = localized(
       <PolicyHistory

@@ -159,6 +159,7 @@ test("committed rollback uses its response when the async history refresh fails"
 
   await page.goto("/admin/history");
   await expect.poll(() => historyReads).toBe(1);
+  await expect(page.getByText("Published revisions are immutable and shown newest first.")).toBeVisible();
   await page.getByRole("button", { name: "View revision" }).click();
   await page.getByRole("button", { name: "Roll back" }).click();
   await page.getByLabel("Rollback reason").fill("Restore revision 4");
@@ -202,6 +203,17 @@ test("external revision resets paginated history to the newest page", async ({ p
 
   await expect(page.getByRole("heading", { name: "Revision 5" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Revision 3" })).toHaveCount(0);
+});
+
+test("empty history explains how revisions are created", async ({ page }) => {
+  await mockSession(page);
+  await page.route("**/api/admin/policy", (route) => route.fulfill(response(view(1, policy()))));
+  await page.route("**/api/admin/policy/events", (route) => route.abort());
+  await page.route("**/api/admin/policy/history?**", (route) => route.fulfill(response({ items: [] })));
+
+  await page.goto("/admin/history");
+  await expect(page.getByRole("status")).toContainText("No policy revisions have been published");
+  await expect(page.getByRole("status")).toContainText("A revision is created when an approved policy change is published");
 });
 
 test("history retry recovers a failed revision detail", async ({ page }) => {
