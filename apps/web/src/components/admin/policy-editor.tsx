@@ -8,6 +8,7 @@ import {
 } from "@hyeboard/schemas";
 import { Search } from "lucide-react";
 import type { KeyboardEvent } from "react";
+import { AdminOrientation } from "@/components/admin/admin-orientation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -176,6 +177,7 @@ export function PolicyEditor({ view, draft, scope, search, onScopeChange, onSear
   return (
     <section className="space-y-5 pb-24">
       <header><h1 className="text-2xl font-semibold tracking-tight">{t.admin.control.title}</h1><p className="mt-1 text-sm text-muted-foreground">{t.admin.control.description}</p></header>
+      {!diff.length ? <AdminOrientation /> : null}
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-4">
         {[
           [t.admin.control.summary.capabilities, capabilityKeys.length],

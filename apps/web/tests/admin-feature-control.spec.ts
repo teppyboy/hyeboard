@@ -235,11 +235,37 @@ for (const { name, viewport, mobile } of [
 ]) {
   test(`admin control is accessible without page overflow on ${name}`, async ({ page }) => {
     await page.setViewportSize(viewport);
+    await page.addInitScript(() => {
+      localStorage.setItem("hyeboard.accounts", JSON.stringify([{ id: "student", token: "student-token" }]));
+      sessionStorage.setItem("hyeboard.relogin.vnu.username", "student-secret-marker");
+    });
     await mockAuthenticatedAdmin(page, () => view(1, policy()));
     await page.goto("/admin");
 
     await expectNoPageOverflow(page);
     await expect(page.getByRole("navigation", { name: "Admin navigation" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "How policy changes work" })).toBeVisible();
+    const dismissOrientation = page.getByRole("button", { name: "Dismiss orientation" });
+    await expect(dismissOrientation).toBeVisible();
+    if (mobile) {
+      const orientationBox = await dismissOrientation.boundingBox();
+      expect(orientationBox).not.toBeNull();
+      expect(orientationBox!.width).toBeGreaterThanOrEqual(43.9);
+      expect(orientationBox!.height).toBeGreaterThanOrEqual(43.9);
+    }
+    const studentStorageBefore = await page.evaluate(() => ({
+      accounts: localStorage.getItem("hyeboard.accounts"),
+      studentSecret: sessionStorage.getItem("hyeboard.relogin.vnu.username"),
+    }));
+    await dismissOrientation.click();
+    await expect(page.getByRole("heading", { name: "How policy changes work" })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Feature control" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "How policy changes work" })).toHaveCount(0);
+    expect(await page.evaluate(() => ({
+      accounts: localStorage.getItem("hyeboard.accounts"),
+      studentSecret: sessionStorage.getItem("hyeboard.relogin.vnu.username"),
+    }))).toEqual(studentStorageBefore);
     await expect(page.getByRole("searchbox", { name: "Search capabilities and limits" })).toBeVisible();
     const grades = page.getByRole("switch", { name: "Grades: Available" });
     await grades.focus();

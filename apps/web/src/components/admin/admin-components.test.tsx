@@ -4,6 +4,7 @@ import { LocaleProvider } from "@/lib/i18n";
 import { AdminAuthView } from "@/pages/admin/admin-auth";
 import { AdminLoginView } from "@/pages/admin/admin-login";
 import { AdminShell } from "./admin-layout";
+import { AdminOrientation } from "./admin-orientation";
 import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import type { AdminPolicyView, FeaturePolicyContent } from "@hyeboard/schemas";
@@ -82,6 +83,15 @@ const policyView = (): AdminPolicyView => ({
 
 function localized(node: React.ReactNode): string {
   return renderToStaticMarkup(<LocaleProvider>{node}</LocaleProvider>);
+}
+
+function localizedAs(node: React.ReactNode, locale: "en" | "vi"): string {
+  vi.stubGlobal("localStorage", { getItem: () => locale, setItem: () => undefined });
+  try {
+    return localized(node);
+  } finally {
+    vi.stubGlobal("localStorage", { getItem: () => "en", setItem: () => undefined });
+  }
 }
 
 describe("admin components", () => {
@@ -265,6 +275,22 @@ describe("admin components", () => {
     expect(nextPolicyScopeIndex("Home", 2, 3)).toBe(0);
     expect(nextPolicyScopeIndex("End", 0, 3)).toBe(2);
     expect(nextPolicyScopeIndex("Enter", 0, 3)).toBeUndefined();
+  });
+
+  it("renders localized first-time orientation steps, lock guidance, and a dismiss control", () => {
+    const markup = localized(<AdminOrientation onDismiss={() => undefined} />);
+
+    expect(markup).toContain("How policy changes work");
+    expect(markup).toContain("Stage changes in the global policy or a university override.");
+    expect(markup).toContain("Review the exact diff before publishing.");
+    expect(markup).toContain("Publish with a reason; the reason is required for the audit trail.");
+    expect(markup).toContain("Locked controls stay locked");
+    expect(markup).toContain('aria-label="Dismiss orientation"');
+    expect(markup).toContain("min-h-11");
+
+    const vietnamese = localizedAs(<AdminOrientation />, "vi");
+    expect(vietnamese).toContain("Cách thay đổi chính sách hoạt động");
+    expect(vietnamese).toContain("Bỏ qua hướng dẫn");
   });
 
   it("renders summary, tabs, searchable rows, registered limits, locks, provenance, and staged controls", () => {

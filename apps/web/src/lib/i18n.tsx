@@ -563,6 +563,17 @@ function buildDictionary() {
         stagedCount: "staged changes",
         publishSuccess: "Policy published.",
       },
+      orientation: {
+        title: "How policy changes work",
+        description: "Prepare policy changes here; students are unaffected until publication.",
+        steps: {
+          stage: "Stage changes in the global policy or a university override.",
+          review: "Review the exact diff before publishing.",
+          publish: "Publish with a reason; the reason is required for the audit trail.",
+        },
+        locked: "Locked controls stay locked when an adapter does not support a capability or a policy ceiling disables it. This guidance does not change switch state.",
+        dismiss: "Dismiss orientation",
+      },
       publish: {
         title: "Review policy changes",
         description: "Publish this exact diff atomically.",
@@ -1188,6 +1199,17 @@ function vi(): typeof en {
         inherit: "Kế thừa",
         stagedCount: "thay đổi đang chờ",
         publishSuccess: "Đã phát hành chính sách.",
+      },
+      orientation: {
+        title: "Cách thay đổi chính sách hoạt động",
+        description: "Chuẩn bị thay đổi chính sách tại đây; sinh viên không bị ảnh hưởng cho đến khi phát hành.",
+        steps: {
+          stage: "Chuẩn bị thay đổi trong chính sách toàn cục hoặc ghi đè theo trường.",
+          review: "Xem lại chênh lệch chính xác trước khi phát hành.",
+          publish: "Phát hành kèm lý do; lý do là bắt buộc cho nhật ký kiểm toán.",
+        },
+        locked: "Các điều khiển bị khóa vẫn giữ nguyên khi bộ điều hợp không hỗ trợ tính năng hoặc trần chính sách vô hiệu hóa tính năng đó. Nội dung hướng dẫn này không thay đổi trạng thái công tắc.",
+        dismiss: "Bỏ qua hướng dẫn",
       },
       publish: {
         title: "Xem lại thay đổi chính sách",
