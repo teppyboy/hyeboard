@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-25T18:45:00.000Z",
+  "title": "Design System: Hyeboard",
+  "extensions": {
+    "colorMeta": {
+      "neutral-background": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#262626", "#404040", "#595959", "#737373", "#8c8c8c", "#b3b3b3", "#d9d9d9", "#ffffff"]
+      },
+      "neutral-foreground": {
+        "role": "neutral",
+        "displayName": "Neutral Ink",
+        "canonical": "#0a0a0a",
+        "tonalRamp": ["#0a0a0a", "#262626", "#404040", "#595959", "#737373", "#8c8c8c", "#b3b3b3", "#d9d9d9"]
+      },
+      "neutral-muted": {
+        "role": "neutral",
+        "displayName": "Soft Mist",
+        "canonical": "#f5f5f5",
+        "tonalRamp": ["#262626", "#404040", "#595959", "#737373", "#8c8c8c", "#b3b3b3", "#d9d9d9", "#f5f5f5"]
+      },
+      "neutral-muted-foreground": {
+        "role": "neutral",
+        "displayName": "Quiet Gray",
+        "canonical": "#6b6b6b",
+        "tonalRamp": ["#1f1f1f", "#363636", "#4d4d4d", "#6b6b6b", "#858585", "#a3a3a3", "#c2c2c2", "#e0e0e0"]
+      },
+      "neutral-border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e6e6e6",
+        "tonalRamp": ["#262626", "#404040", "#595959", "#737373", "#8c8c8c", "#b3b3b3", "#d9d9d9", "#e6e6e6"]
+      },
+      "neutral-accent": {
+        "role": "neutral",
+        "displayName": "Soft Accent",
+        "canonical": "#f0f0f0",
+        "tonalRamp": ["#262626", "#404040", "#595959", "#737373", "#8c8c8c", "#b3b3b3", "#d9d9d9", "#f0f0f0"]
+      },
+      "uet-primary": {
+        "role": "primary",
+        "displayName": "UET Deep Blue",
+        "canonical": "#003a70",
+        "tonalRamp": ["#001426", "#00264a", "#003a70", "#00569e", "#1979bd", "#4b9bd0", "#8bc0e5", "#d7effb"]
+      },
+      "vnu-primary": {
+        "role": "primary",
+        "displayName": "VNU Burgundy",
+        "canonical": "#7b1e2b",
+        "tonalRamp": ["#2b0a0f", "#4b1019", "#7b1e2b", "#9e3442", "#bd5965", "#d98a93", "#edbcc1", "#fae3e5"]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Confirmed Green",
+        "canonical": "#1d873d",
+        "tonalRamp": ["#092511", "#104e22", "#1d873d", "#36a956", "#65c17c", "#97d8a5", "#c6ecd0", "#e8f8eb"]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Caution Amber",
+        "canonical": "#c2740a",
+        "tonalRamp": ["#321d02", "#653b05", "#9b5b07", "#c2740a", "#d9932f", "#e7b66a", "#f2d7a3", "#fcf1da"]
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Geist Body",
+        "purpose": "Readable dashboard copy, descriptions, labels, and data tables."
+      },
+      "title": {
+        "displayName": "Geist Titles",
+        "purpose": "Page and section headings; weight carries hierarchy."
+      },
+      "label": {
+        "displayName": "Geist Labels",
+        "purpose": "Compact metadata, provenance, and control labels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "persistent-action-bar",
+        "value": "0 10px 30px rgba(0, 0, 0, 0.12)",
+        "purpose": "Separate the staged-change action bar from scrolling policy content."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-quint",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Short interaction transitions and press feedback."
+      },
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Page and card entrance motion where present."
+      }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Committed action such as publish, sign in, or rollback.",
+      "html": "<button class=\"ds-btn-primary\">Publish changes</button>",
+      "css": ".ds-btn-primary { background: #0a0a0a; color: #ffffff; border: 0; border-radius: 6px; padding: 8px 16px; min-height: 44px; font: 500 14px/1.5 Geist, ui-sans-serif, system-ui, sans-serif; transition: background 150ms cubic-bezier(0.22,1,0.36,1), transform 120ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-primary:hover { background: #262626; } .ds-btn-primary:active { transform: scale(0.98); } .ds-btn-primary:focus-visible { outline: 2px solid #0a0a0a; outline-offset: 2px; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary or reversible action with a quiet border.",
+      "html": "<button class=\"ds-btn-outline\">Review changes</button>",
+      "css": ".ds-btn-outline { background: #ffffff; color: #0a0a0a; border: 1px solid #e6e6e6; border-radius: 6px; padding: 8px 16px; min-height: 44px; font: 500 14px/1.5 Geist, ui-sans-serif, system-ui, sans-serif; transition: background 150ms cubic-bezier(0.22,1,0.36,1), color 150ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-outline:hover { background: #f0f0f0; } .ds-btn-outline:focus-visible { outline: 2px solid #0a0a0a; outline-offset: 2px; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Search and policy value field with a visible focus ring.",
+      "html": "<input class=\"ds-input\" type=\"search\" placeholder=\"Search capabilities\" aria-label=\"Search capabilities\" />",
+      "css": ".ds-input { width: 100%; height: 44px; border: 1px solid #e6e6e6; border-radius: 6px; background: #ffffff; color: #0a0a0a; padding: 8px 12px; font: 400 14px/1.5 Geist, ui-sans-serif, system-ui, sans-serif; } .ds-input::placeholder { color: #6b6b6b; } .ds-input:focus-visible { outline: 2px solid #0a0a0a; outline-offset: 1px; }"
+    },
+    {
+      "name": "Admin Navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Quiet desktop rail that becomes a horizontal mobile navigation.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-link ds-nav-link-active\" href=\"/admin\">Feature control</a><a class=\"ds-nav-link\" href=\"/admin/history\">History</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 4px; padding: 12px; } .ds-nav-link { display: inline-flex; align-items: center; min-height: 44px; border-radius: 6px; padding: 8px 12px; color: #6b6b6b; font: 400 14px/1.5 Geist, ui-sans-serif, system-ui, sans-serif; text-decoration: none; } .ds-nav-link:hover, .ds-nav-link-active { background: #f0f0f0; color: #0a0a0a; } .ds-nav-link:focus-visible { outline: 2px solid #0a0a0a; outline-offset: 2px; }"
+    },
+    {
+      "name": "Policy Section",
+      "kind": "custom",
+      "refersTo": "bordered-section",
+      "description": "Flat bordered collection for capabilities or limits.",
+      "html": "<section class=\"ds-section\"><h2 class=\"ds-section-title\">Capabilities</h2><div class=\"ds-row\"><div><strong>Grades</strong><p>Academic transcript and grade detail.</p></div><span class=\"ds-status\">Available</span></div></section>",
+      "css": ".ds-section { border: 1px solid #e6e6e6; border-radius: 8px; background: #ffffff; overflow: hidden; } .ds-section-title { margin: 0; padding: 16px; font: 600 18px/1.25 Geist, ui-sans-serif, system-ui, sans-serif; } .ds-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #e6e6e6; padding: 12px 16px; min-height: 64px; } .ds-row p { margin: 4px 0 0; color: #6b6b6b; font: 400 14px/1.5 Geist, ui-sans-serif, system-ui, sans-serif; } .ds-status { color: #1d873d; font: 600 12px/1.4 Geist, ui-sans-serif, system-ui, sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Command Center",
+    "overview": "Hyeboard’s incumbent interface is a calm, precise workspace for academic operations. Its warmth comes from approachable copy, generous touch targets, soft neutral surfaces, and university-aware accents—not from decorative effects. The system is intentionally readable at a glance: a student or operator should know where they are, what is available, what changed, and what action is safe to take.\n\nThe visual language is restrained but not sterile. Thin borders, tonal surfaces, and compact rows create structure without turning every section into a floating card. The admin dashboard uses the same foundation as the student product while giving policy controls and audit history enough emphasis to support careful operational work.",
+    "keyCharacteristics": [
+      "Quiet neutral foundation with theme-aware UET and VNU accents.",
+      "Warm, direct copy carried by a compact operational layout.",
+      "Flat bordered sections, divided rows, and minimal decorative chrome.",
+      "Explicit loading, error, empty, disabled, and conflict states."
+    ],
+    "rules": [
+      { "name": "The Rare Accent Rule", "body": "Use color to identify university context or communicate state; do not flood an operational screen with accent color.", "section": "colors" },
+      { "name": "The Clear Hierarchy Rule", "body": "Prefer weight, spacing, and grouping before adding color or decoration to make a distinction.", "section": "typography" },
+      { "name": "The Flat-by-Default Rule", "body": "Surfaces are flat at rest; elevation appears only when a persistent or transient layer must be distinguished.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do preserve theme tokens for neutral, UET, VNU, dark-mode, success, warning, and destructive states.",
+      "Do use semantic controls, visible labels, keyboard operation, clear focus rings, and practical 44px targets.",
+      "Do keep collections in one bordered section with loading, error, and empty states.",
+      "Do make policy provenance, native ceilings, revision numbers, conflicts, and reasons explicit.",
+      "Do localize app-authored strings in both English and Vietnamese."
+    ],
+    "donts": [
+      "Don't make the interface look like an institutional form dump; retain clear hierarchy and a recognizable Hyeboard identity.",
+      "Don't use gradients, glassmorphism, glow effects, decorative sparklines, or ornamental dashboard chrome.",
+      "Don't nest cards inside cards or turn every metric into a floating tile; prefer flat bordered sections and rows.",
+      "Don't invent university capabilities, data, testimonials, or operational claims."
+    ]
+  }
+}
